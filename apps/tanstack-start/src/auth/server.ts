@@ -11,6 +11,7 @@ export const auth = initAuth({
   secret: env.AUTH_SECRET,
   discordClientId: env.AUTH_DISCORD_ID,
   discordClientSecret: env.AUTH_DISCORD_SECRET,
+  allowedDiscordIds: env.AUTH_ALLOWED_DISCORD_IDS,
 
   extraPlugins: [reactStartCookies()],
 });

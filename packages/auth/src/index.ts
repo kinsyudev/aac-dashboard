@@ -14,6 +14,7 @@ export function initAuth<
 
   discordClientId: string;
   discordClientSecret: string;
+  allowedDiscordIds: Set<string>;
   extraPlugins?: TExtraPlugins;
 }) {
   const config = {
@@ -22,6 +23,20 @@ export function initAuth<
     }),
     baseURL: options.baseUrl,
     secret: options.secret,
+    databaseHooks: {
+      account: {
+        create: {
+          before: async (accountData) => {
+            if (
+              accountData.providerId === "discord" &&
+              !options.allowedDiscordIds.has(accountData.accountId)
+            ) {
+              throw new Error("Access denied: Discord account not in allowlist");
+            }
+          },
+        },
+      },
+    },
     plugins: [
       oAuthProxy({
         productionURL: options.productionUrl,
