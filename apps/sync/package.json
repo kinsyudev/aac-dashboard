@@ -1,0 +1,24 @@
+{
+  "name": "@acme/sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync-items": "pnpm with-env tsx src/sync-items.ts",
+    "sync-items:full-refresh": "pnpm with-env tsx src/sync-items.ts --full-refresh",
+    "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
+    "with-env": "dotenv -e ../../.env --",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config"
+  },
+  "dependencies": {
+    "@acme/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@acme/eslint-config": "workspace:*",
+    "@acme/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "tsx": "4.21.0",
+    "typescript": "catalog:"
+  }
+}
