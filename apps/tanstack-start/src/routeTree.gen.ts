@@ -9,14 +9,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as CraftRouteImport } from './routes/craft'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CraftIndexRouteImport } from './routes/craft.index'
+import { Route as CraftItemIdRouteImport } from './routes/craft.$itemId'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
+const CraftRoute = CraftRouteImport.update({
+  id: '/craft',
+  path: '/craft',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const CraftIndexRoute = CraftIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CraftRoute,
+} as any)
+const CraftItemIdRoute = CraftItemIdRouteImport.update({
+  id: '/$itemId',
+  path: '/$itemId',
+  getParentRoute: () => CraftRoute,
 } as any)
 const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
   id: '/api/trpc/$',
@@ -31,42 +49,85 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/craft': typeof CraftRouteWithChildren
+  '/craft/$itemId': typeof CraftItemIdRoute
+  '/craft/': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/craft/$itemId': typeof CraftItemIdRoute
+  '/craft': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/craft': typeof CraftRouteWithChildren
+  '/craft/$itemId': typeof CraftItemIdRoute
+  '/craft/': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/auth/$' | '/api/trpc/$'
+  fullPaths:
+    | '/'
+    | '/craft'
+    | '/craft/$itemId'
+    | '/craft/'
+    | '/api/auth/$'
+    | '/api/trpc/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/auth/$' | '/api/trpc/$'
-  id: '__root__' | '/' | '/api/auth/$' | '/api/trpc/$'
+  to: '/' | '/craft/$itemId' | '/craft' | '/api/auth/$' | '/api/trpc/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/craft'
+    | '/craft/$itemId'
+    | '/craft/'
+    | '/api/auth/$'
+    | '/api/trpc/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CraftRoute: typeof CraftRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/craft': {
+      id: '/craft'
+      path: '/craft'
+      fullPath: '/craft'
+      preLoaderRoute: typeof CraftRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/craft/': {
+      id: '/craft/'
+      path: '/'
+      fullPath: '/craft/'
+      preLoaderRoute: typeof CraftIndexRouteImport
+      parentRoute: typeof CraftRoute
+    }
+    '/craft/$itemId': {
+      id: '/craft/$itemId'
+      path: '/$itemId'
+      fullPath: '/craft/$itemId'
+      preLoaderRoute: typeof CraftItemIdRouteImport
+      parentRoute: typeof CraftRoute
     }
     '/api/trpc/$': {
       id: '/api/trpc/$'
@@ -85,8 +146,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface CraftRouteChildren {
+  CraftItemIdRoute: typeof CraftItemIdRoute
+  CraftIndexRoute: typeof CraftIndexRoute
+}
+
+const CraftRouteChildren: CraftRouteChildren = {
+  CraftItemIdRoute: CraftItemIdRoute,
+  CraftIndexRoute: CraftIndexRoute,
+}
+
+const CraftRouteWithChildren = CraftRoute._addFileChildren(CraftRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CraftRoute: CraftRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
 }

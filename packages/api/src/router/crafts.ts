@@ -2,12 +2,7 @@ import type { TRPCRouterRecord } from "@trpc/server";
 import { z } from "zod/v4";
 
 import { eq, inArray } from "@acme/db";
-import {
-  craftMaterials,
-  craftProducts,
-  crafts,
-  items,
-} from "@acme/db/schema";
+import { craftMaterials, craftProducts, crafts, items } from "@acme/db/schema";
 
 import { protectedProcedure } from "../trpc";
 
@@ -15,7 +10,6 @@ export const craftsRouter = {
   all: protectedProcedure.query(({ ctx }) => {
     return ctx.db.select().from(crafts);
   }),
-
   byId: protectedProcedure
     .input(z.number().int())
     .query(async ({ ctx, input }) => {

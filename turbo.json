@@ -46,11 +46,13 @@
     }
   },
   "globalEnv": [
-    "POSTGRES_URL",
+    "AUTH_ALLOWED_DISCORD_IDS",
     "AUTH_DISCORD_ID",
     "AUTH_DISCORD_SECRET",
     "AUTH_REDIRECT_PROXY_URL",
     "AUTH_SECRET",
+    "DATABASE_URL",
+
     "PORT"
   ],
   "globalPassThroughEnv": [

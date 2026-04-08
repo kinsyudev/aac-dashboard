@@ -12,5 +12,5 @@ export function getBaseUrl() {
   }
 
   // eslint-disable-next-line no-restricted-properties
-  return `http://localhost:${process.env.PORT ?? 3001}`;
+  return `http://localhost:${process.env.PORT ?? 3000}`;
 }
