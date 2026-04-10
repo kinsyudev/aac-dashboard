@@ -1,5 +1,37 @@
 import { relations } from "drizzle-orm";
-import { index, pgTable, primaryKey } from "drizzle-orm/pg-core";
+import { index, pgEnum, pgTable, primaryKey } from "drizzle-orm/pg-core";
+
+import { user } from "./auth-schema";
+
+export const proficiencyEnum = pgEnum("proficiency", [
+  // Harvesting
+  "Husbandry",
+  "Farming",
+  "Fishing",
+  "Logging",
+  "Gathering",
+  "Mining",
+  // Crafting
+  "Alchemy",
+  "Cooking",
+  "Handicrafts",
+  "Machining",
+  "Metalwork",
+  "Printing",
+  "Masonry",
+  "Tailoring",
+  "Leatherwork",
+  "Weaponry",
+  "Carpentry",
+  // Special
+  "Construction",
+  "Larceny",
+  "Commerce",
+  "Artistry",
+  "Exploration",
+]);
+
+export type Proficiency = (typeof proficiencyEnum.enumValues)[number];
 
 export const items = pgTable("items", (t) => ({
   id: t.integer().primaryKey(),
@@ -27,6 +59,7 @@ export const crafts = pgTable("crafts", (t) => ({
   labor: t.integer().notNull().default(0),
   castDelayMs: t.integer().notNull().default(0),
   primaryProductId: t.integer().references(() => items.id),
+  proficiency: proficiencyEnum(),
 }));
 
 export const craftMaterials = pgTable(
@@ -154,3 +187,37 @@ export const pricesRelations = relations(prices, ({ one }) => ({
     references: [items.id],
   }),
 }));
+
+export const userPriceOverrides = pgTable(
+  "user_price_overrides",
+  (t) => ({
+    userId: t
+      .text()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    itemId: t
+      .integer()
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    price: t.numeric({ precision: 15, scale: 2 }).notNull(),
+    updatedAt: t.timestamp().notNull().defaultNow(),
+  }),
+  (table) => [
+    primaryKey({ columns: [table.userId, table.itemId] }),
+    index("idx_user_price_overrides_user").on(table.userId),
+  ],
+);
+
+export const userPriceOverridesRelations = relations(
+  userPriceOverrides,
+  ({ one }) => ({
+    user: one(user, {
+      fields: [userPriceOverrides.userId],
+      references: [user.id],
+    }),
+    item: one(items, {
+      fields: [userPriceOverrides.itemId],
+      references: [items.id],
+    }),
+  }),
+);

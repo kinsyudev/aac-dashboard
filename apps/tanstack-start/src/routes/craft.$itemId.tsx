@@ -28,11 +28,12 @@ export const Route = createFileRoute("/craft/$itemId")({
         craftDetails.flatMap((d) => d?.materials.map((m) => m.item.id) ?? []),
       ),
     ];
-    await Promise.all(
-      materialItemIds.map((id) =>
+    await Promise.all([
+      ...materialItemIds.map((id) =>
         queryClient.prefetchQuery(trpc.items.price.queryOptions(id)),
       ),
-    );
+      queryClient.prefetchQuery(trpc.profile.getPriceOverrides.queryOptions()),
+    ]);
   },
   component: RouteComponent,
   notFoundComponent: () => <p>Item not found.</p>,
@@ -118,6 +119,9 @@ function StatCard({
 function CraftRecipe({ craftId }: { craftId: number }) {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(trpc.crafts.byId.queryOptions(craftId));
+  const { data: overrides } = useSuspenseQuery(
+    trpc.profile.getPriceOverrides.queryOptions(),
+  );
 
   const priceQueries = useQueries({
     queries:
@@ -128,13 +132,20 @@ function CraftRecipe({ craftId }: { craftId: number }) {
 
   const { craft, materials } = data;
 
+  const overrideMap = new Map(overrides?.map((o) => [o.itemId, parseFloat(o.price)]));
+
   const total = materials.reduce((sum, { item, amount }, i) => {
+    const customPrice = overrideMap.get(item.id);
     const price = priceQueries[i]?.data;
-    const unit = parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+    const unit =
+      customPrice != null
+        ? customPrice
+        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
     return sum + unit * amount;
   }, 0);
 
-  const hasPrices = priceQueries.some((q) => q.data);
+  const hasPrices =
+    priceQueries.some((q) => q.data) || overrideMap.size > 0;
 
   return (
     <div className="rounded-md border p-4">
@@ -158,9 +169,14 @@ function CraftRecipe({ craftId }: { craftId: number }) {
       </div>
       <ul className="flex flex-col gap-2">
         {materials.map(({ item, amount }, i) => {
+          const customPrice = overrideMap.get(item.id);
           const price = priceQueries[i]?.data;
-          const unit = parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+          const isCustom = customPrice != null;
+          const unit = isCustom
+            ? customPrice
+            : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
           const lineTotal = unit * amount;
+          const hasPrice = isCustom || !!price;
 
           return (
             <li key={item.id} className="flex items-center gap-2 text-sm">
@@ -179,8 +195,11 @@ function CraftRecipe({ craftId }: { craftId: number }) {
                   <span className="text-muted-foreground ml-1">×{amount}</span>
                 )}
               </span>
-              {price && (
+              {hasPrice && (
                 <span className="text-muted-foreground tabular-nums">
+                  {isCustom && (
+                    <span className="text-primary mr-1 text-xs">(custom)</span>
+                  )}
                   {unit.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
                   {amount > 1 && (
                     <span className="text-foreground ml-2 font-medium">

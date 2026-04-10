@@ -5,8 +5,10 @@ import type * as React from "react";
 import {
   createRootRouteWithContext,
   HeadContent,
+  Link,
   Outlet,
   Scripts,
+  useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
@@ -34,6 +36,17 @@ function RootComponent() {
   );
 }
 
+function NavigationProgress() {
+  const isLoading = useRouterState({ select: (s) => s.status === "pending" });
+  if (!isLoading) return null;
+  return (
+    <div
+      className="bg-primary fixed top-0 left-0 z-50 h-0.5"
+      style={{ animation: "nav-progress 10s ease-out forwards" }}
+    />
+  );
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
@@ -42,6 +55,17 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           <HeadContent />
         </head>
         <body className="bg-background text-foreground min-h-screen font-sans antialiased">
+          <NavigationProgress />
+          <nav className="border-b px-6 py-3">
+            <div className="container flex items-center gap-6">
+              <Link to="/craft" className="text-sm font-medium hover:underline">
+                Craft
+              </Link>
+              <Link to="/profile" className="text-sm font-medium hover:underline">
+                Profile
+              </Link>
+            </div>
+          </nav>
           {children}
           <div className="absolute right-4 bottom-12">
             <ThemeToggle />
