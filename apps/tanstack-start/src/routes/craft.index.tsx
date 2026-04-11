@@ -5,6 +5,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Badge } from "@acme/ui/badge";
 import { Input } from "@acme/ui/input";
 
+import { ItemIcon } from "~/component/item-icon";
 import { useTRPC } from "~/lib/trpc";
 import { useRecentSearches, type RecentItem } from "~/lib/recent-searches";
 
@@ -83,15 +84,7 @@ function SearchResults({
             }
             className="hover:bg-muted/50 flex items-center gap-3 rounded-md px-2 py-2 transition-colors"
           >
-            {item.icon ? (
-              <img
-                src={`https://aa-classic.com/game/icons/${item.icon}`}
-                alt={item.name}
-                className="h-8 w-8 shrink-0"
-              />
-            ) : (
-              <div className="bg-muted h-8 w-8 shrink-0 rounded" />
-            )}
+            <ItemIcon icon={item.icon} name={item.name} size="md" />
             <span className="flex-1 font-medium">{item.name}</span>
             <span className="text-muted-foreground text-xs">{item.category}</span>
             {item.labor != null && item.labor > 0 && (
@@ -130,15 +123,7 @@ function RecentList({
               params={{ itemId: item.id }}
               className="hover:bg-muted/50 flex flex-1 items-center gap-3 rounded-md px-2 py-2 transition-colors"
             >
-              {item.icon ? (
-                <img
-                  src={`https://aa-classic.com/game/icons/${item.icon}`}
-                  alt={item.name}
-                  className="h-8 w-8 shrink-0"
-                />
-              ) : (
-                <div className="bg-muted h-8 w-8 shrink-0 rounded" />
-              )}
+              <ItemIcon icon={item.icon} name={item.name} size="md" />
               <span className="flex-1 font-medium">{item.name}</span>
               {item.labor != null && item.labor > 0 && (
                 <Badge variant="secondary">{item.labor} labor</Badge>

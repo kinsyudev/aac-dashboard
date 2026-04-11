@@ -83,6 +83,27 @@ export const profileRouter = {
         );
     }),
 
+  getUserData: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.session.user.id;
+    const [proficiencies, overrides] = await Promise.all([
+      ctx.db
+        .select({
+          proficiency: userProficiencies.proficiency,
+          value: userProficiencies.value,
+        })
+        .from(userProficiencies)
+        .where(eq(userProficiencies.userId, userId)),
+      ctx.db
+        .select({
+          itemId: userPriceOverrides.itemId,
+          price: userPriceOverrides.price,
+        })
+        .from(userPriceOverrides)
+        .where(eq(userPriceOverrides.userId, userId)),
+    ]);
+    return { proficiencies, overrides };
+  }),
+
   getProficiencies: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
     return ctx.db

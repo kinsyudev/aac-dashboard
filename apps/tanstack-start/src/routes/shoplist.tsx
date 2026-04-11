@@ -7,8 +7,13 @@ import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
+import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
+import { pickPreferredCraft } from "~/lib/craft-helpers";
+import { getDiscountedLabor } from "~/lib/proficiency";
+import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
+import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/shoplist")({
   validateSearch: z.object({
@@ -48,39 +53,6 @@ type SubcraftMap = Record<number, SubcraftEntry[]>;
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 
-// ─── Helpers (mirrored from craft.$itemId.tsx) ────────────────────────────────
-
-function pickPreferredCraft(
-  entries: SubcraftEntry[],
-  itemId: number,
-): SubcraftEntry {
-  return [...entries].sort((a, b) => {
-    const amt = (e: SubcraftEntry) =>
-      e.products.find((p) => p.item.id === itemId)?.amount ?? 999;
-    return amt(a) - amt(b);
-  })[0]!;
-}
-
-function ItemIcon({
-  icon,
-  name,
-  size = "sm",
-}: {
-  icon: string | null;
-  name: string;
-  size?: "sm" | "lg";
-}) {
-  const cls = size === "lg" ? "h-16 w-16" : "h-5 w-5";
-  return icon ? (
-    <img
-      src={`https://aa-classic.com/game/icons/${icon}`}
-      alt={name}
-      className={`${cls} shrink-0`}
-    />
-  ) : (
-    <div className={`bg-muted ${cls} shrink-0 rounded`} />
-  );
-}
 
 // ─── Flat shopping list ───────────────────────────────────────────────────────
 
@@ -130,11 +102,17 @@ function buildLaborByProficiency(
   depth: number,
   scaleFactor: number,
   acc: Map<string, number>,
+  proficiencyMap: ProficiencyMap,
 ): void {
   const batches = Math.ceil(scaleFactor);
   if (craft.labor > 0) {
     const key = craft.proficiency ?? "Unknown";
-    acc.set(key, (acc.get(key) ?? 0) + batches * craft.labor);
+    const perBatch = getDiscountedLabor(
+      craft.labor,
+      craft.proficiency,
+      proficiencyMap,
+    );
+    acc.set(key, (acc.get(key) ?? 0) + batches * perBatch);
   }
   for (const { item, amount } of materials) {
     const scaled = amount * scaleFactor;
@@ -151,6 +129,7 @@ function buildLaborByProficiency(
         depth + 1,
         scaled / produced,
         acc,
+        proficiencyMap,
       );
     }
   }
@@ -181,6 +160,7 @@ function RecipeTree({
   entry,
   priceMap,
   overrideMap,
+  proficiencyMap,
   subcraftMap,
   craftModeSet,
   toggleMode,
@@ -193,6 +173,7 @@ function RecipeTree({
   } | SubcraftEntry;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
+  proficiencyMap: ProficiencyMap;
   subcraftMap: SubcraftMap;
   craftModeSet: Set<number>;
   toggleMode: (itemId: number) => void;
@@ -250,7 +231,12 @@ function RecipeTree({
           <ProficiencyBadge proficiency={craft.proficiency} />
           {craft.labor > 0 && (
             <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {craft.labor} labor
+              {getDiscountedLabor(
+                craft.labor,
+                craft.proficiency,
+                proficiencyMap,
+              )}{" "}
+              labor
             </span>
           )}
         </div>
@@ -285,7 +271,13 @@ function RecipeTree({
           const subEntry = isCraftable
             ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
             : null;
-          const subLabor = subEntry?.craft.labor ?? 0;
+          const subLabor = subEntry
+            ? getDiscountedLabor(
+                subEntry.craft.labor,
+                subEntry.craft.proficiency,
+                proficiencyMap,
+              )
+            : 0;
 
           return (
             <Fragment key={item.id}>
@@ -378,6 +370,7 @@ function RecipeTree({
                     entry={subEntry}
                     priceMap={priceMap}
                     overrideMap={overrideMap}
+                    proficiencyMap={proficiencyMap}
                     subcraftMap={subcraftMap}
                     craftModeSet={craftModeSet}
                     toggleMode={toggleMode}
@@ -421,17 +414,13 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
   const { qty, sub } = Route.useSearch();
 
   const { data } = useSuspenseQuery(trpc.crafts.forCraft.queryOptions(craftId));
+  const { proficiencyMap, overrideMap } = useUserData();
 
   const [localQty, setLocalQty] = useState(qty);
   useEffect(() => { setLocalQty(qty); }, [qty]);
 
   const priceMap: PriceMap = useMemo(
     () => new Map(data?.prices.map((p) => [p.itemId, p])),
-    [data],
-  );
-  const overrideMap: OverrideMap = useMemo(
-    () =>
-      new Map(data?.overrides.map((o) => [o.itemId, parseFloat(o.price)])),
     [data],
   );
 
@@ -478,9 +467,18 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
 
   const laborByProficiency = useMemo(() => {
     const acc = new Map<string, number>();
-    buildLaborByProficiency(data.craft, data.materials, craftModeSet, subcraftMap, 0, qty, acc);
+    buildLaborByProficiency(
+      data.craft,
+      data.materials,
+      craftModeSet,
+      subcraftMap,
+      0,
+      qty,
+      acc,
+      proficiencyMap,
+    );
     return acc;
-  }, [data.craft, data.materials, craftModeSet, subcraftMap, qty]);
+  }, [data.craft, data.materials, craftModeSet, subcraftMap, qty, proficiencyMap]);
 
   const totalLabor = useMemo(
     () => [...laborByProficiency.values()].reduce((s, v) => s + v, 0),
@@ -550,6 +548,7 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
           entry={scaledEntry}
           priceMap={priceMap}
           overrideMap={overrideMap}
+          proficiencyMap={proficiencyMap}
           subcraftMap={subcraftMap}
           craftModeSet={craftModeSet}
           toggleMode={toggleMode}

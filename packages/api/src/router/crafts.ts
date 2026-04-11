@@ -8,7 +8,6 @@ import {
   crafts,
   items,
   prices,
-  userPriceOverrides,
 } from "@acme/db/schema";
 
 import { protectedProcedure } from "../trpc";
@@ -76,27 +75,24 @@ export const craftsRouter = {
   forItem: protectedProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: itemId }) => {
-      const userId = ctx.session.user.id;
-
-      // Round 1: item + crafts for item + user overrides (parallel)
-      const [item, craftsForItem, overrides] = await Promise.all([
+      // Round 1: item + crafts for item (parallel)
+      const [item, craftsForItem] = await Promise.all([
         ctx.db
           .select()
           .from(items)
           .where(eq(items.id, itemId))
           .then((r) => r[0] ?? null),
         ctx.db.select().from(crafts).where(eq(crafts.primaryProductId, itemId)),
-        ctx.db
-          .select({
-            itemId: userPriceOverrides.itemId,
-            price: userPriceOverrides.price,
-          })
-          .from(userPriceOverrides)
-          .where(eq(userPriceOverrides.userId, userId)),
       ]);
 
       if (!item) return null;
-      if (!craftsForItem.length) return { item, crafts: [], prices: [], overrides };
+      if (!craftsForItem.length)
+        return {
+          item,
+          crafts: [] as { craft: typeof crafts.$inferSelect; materials: { craftId: number; amount: number; item: typeof items.$inferSelect }[]; products: { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect }[] }[],
+          prices: [] as { itemId: number; avg24h: string | null; avg7d: string | null }[],
+          subcraftsByItemId: {} as Record<number, { craft: typeof crafts.$inferSelect; materials: { craftId: number; amount: number; item: typeof items.$inferSelect }[]; products: { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect }[] }[]>,
+        };
 
       const craftIds = craftsForItem.map((c) => c.id);
 
@@ -232,30 +228,17 @@ export const craftsRouter = {
           products: productsByCraft[craft.id] ?? [],
         })),
         prices: latestPrices,
-        overrides,
         subcraftsByItemId,
       };
     }),
   forCraft: protectedProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: craftId }) => {
-      const userId = ctx.session.user.id;
-
-      // Round 1: craft + user overrides (parallel)
-      const [craft, overrides] = await Promise.all([
-        ctx.db
-          .select()
-          .from(crafts)
-          .where(eq(crafts.id, craftId))
-          .then((r) => r[0] ?? null),
-        ctx.db
-          .select({
-            itemId: userPriceOverrides.itemId,
-            price: userPriceOverrides.price,
-          })
-          .from(userPriceOverrides)
-          .where(eq(userPriceOverrides.userId, userId)),
-      ]);
+      const craft = await ctx.db
+        .select()
+        .from(crafts)
+        .where(eq(crafts.id, craftId))
+        .then((r) => r[0] ?? null);
       if (!craft) return null;
 
       // Round 2: materials, products, primary item (parallel)
@@ -402,7 +385,6 @@ export const craftsRouter = {
         materials,
         products,
         prices: latestPrices,
-        overrides,
         subcraftsByItemId,
       };
     }),

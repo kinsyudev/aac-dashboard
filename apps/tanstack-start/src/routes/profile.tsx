@@ -11,16 +11,22 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
-import { ProficiencyBadge } from "~/component/proficiency";
-import { useTRPC } from "~/lib/trpc";
-
 import type { Proficiency } from "@acme/db/schema";
+
+import { ItemIcon } from "~/component/item-icon";
+import { ProficiencyBadge } from "~/component/proficiency";
+import { PROFICIENCY_CATEGORIES, getRank } from "~/lib/proficiency";
+import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/profile")({
   loader: ({ context }) => {
     const { trpc, queryClient } = context;
-    void queryClient.prefetchQuery(trpc.profile.getPriceOverrides.queryOptions());
-    void queryClient.prefetchQuery(trpc.profile.getProficiencies.queryOptions());
+    void queryClient.prefetchQuery(
+      trpc.profile.getPriceOverrides.queryOptions(),
+    );
+    void queryClient.prefetchQuery(
+      trpc.profile.getProficiencies.queryOptions(),
+    );
   },
   component: RouteComponent,
 });
@@ -32,7 +38,8 @@ function RouteComponent() {
       <section className="mb-12">
         <h2 className="mb-4 text-xl font-semibold">Proficiencies</h2>
         <p className="text-muted-foreground mb-6 text-sm">
-          Set your proficiency levels to calculate accurate labor costs for crafting.
+          Set your proficiency levels to calculate accurate labor costs for
+          crafting.
         </p>
         <Suspense fallback={<p>Loading...</p>}>
           <ProficiencyEditor />
@@ -41,8 +48,8 @@ function RouteComponent() {
       <section>
         <h2 className="mb-4 text-xl font-semibold">Price Overrides</h2>
         <p className="text-muted-foreground mb-6 text-sm">
-          Set custom prices for crafting materials. These will be used instead of
-          market prices when calculating craft costs.
+          Set custom prices for crafting materials. These will be used instead
+          of market prices when calculating craft costs.
         </p>
         <Suspense fallback={<p>Loading...</p>}>
           <PriceOverrides />
@@ -107,19 +114,16 @@ function AddOverrideForm({ onAdded }: { onAdded: () => void }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end">
+    <form
+      onSubmit={handleSubmit}
+      className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end"
+    >
       <div className="relative flex-1">
-        <label className="text-muted-foreground mb-1 block text-xs">
-          Item
-        </label>
+        <label className="text-muted-foreground mb-1 block text-xs">Item</label>
         {selected ? (
           <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
             {selected.icon && (
-              <img
-                src={`https://aa-classic.com/game/icons/${selected.icon}`}
-                alt={selected.name}
-                className="h-5 w-5 shrink-0"
-              />
+              <ItemIcon icon={selected.icon} name={selected.name} />
             )}
             <span className="flex-1">{selected.name}</span>
             <button
@@ -156,11 +160,7 @@ function AddOverrideForm({ onAdded }: { onAdded: () => void }) {
                     }}
                   >
                     {item.icon && (
-                      <img
-                        src={`https://aa-classic.com/game/icons/${item.icon}`}
-                        alt={item.name}
-                        className="h-5 w-5 shrink-0"
-                      />
+                      <ItemIcon icon={item.icon} name={item.name} />
                     )}
                     {item.name}
                   </button>
@@ -289,15 +289,7 @@ function PriceOverrides() {
                   <tr key={o.itemId} className="border-b last:border-0">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        {o.itemIcon ? (
-                          <img
-                            src={`https://aa-classic.com/game/icons/${o.itemIcon}`}
-                            alt={o.itemName}
-                            className="h-8 w-8 shrink-0"
-                          />
-                        ) : (
-                          <div className="bg-muted h-8 w-8 shrink-0 rounded" />
-                        )}
+                        <ItemIcon icon={o.itemIcon ?? null} name={o.itemName} size="md" />
                         <span className="font-medium">{o.itemName}</span>
                       </div>
                     </td>
@@ -342,16 +334,24 @@ function PriceOverrides() {
                         <div className="flex flex-col items-end">
                           <span
                             className={
-                              diff24h.positive ? "text-green-600" : "text-red-500"
+                              diff24h.positive
+                                ? "text-green-600"
+                                : "text-red-500"
                             }
                           >
                             {diff24h.gold}
-                            <span className={`ml-1 text-xs ${diff24h.positive ? "text-green-800" : "text-red-800"}`}>
+                            <span
+                              className={`ml-1 text-xs ${diff24h.positive ? "text-green-800" : "text-red-800"}`}
+                            >
                               ({diff24h.pct})
                             </span>
                           </span>
                           <span className="text-muted-foreground text-xs">
-                            avg {avg24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}g
+                            avg{" "}
+                            {avg24h.toLocaleString(undefined, {
+                              maximumFractionDigits: 2,
+                            })}
+                            g
                           </span>
                         </div>
                       ) : (
@@ -363,16 +363,24 @@ function PriceOverrides() {
                         <div className="flex flex-col items-end">
                           <span
                             className={
-                              diff7d.positive ? "text-green-600" : "text-red-500"
+                              diff7d.positive
+                                ? "text-green-600"
+                                : "text-red-500"
                             }
                           >
                             {diff7d.gold}
-                            <span className={`ml-1 text-xs ${diff7d.positive ? "text-green-800" : "text-red-800"}`}>
+                            <span
+                              className={`ml-1 text-xs ${diff7d.positive ? "text-green-800" : "text-red-800"}`}
+                            >
                               ({diff7d.pct})
                             </span>
                           </span>
                           <span className="text-muted-foreground text-xs">
-                            avg {avg7d.toLocaleString(undefined, { maximumFractionDigits: 2 })}g
+                            avg{" "}
+                            {avg7d.toLocaleString(undefined, {
+                              maximumFractionDigits: 2,
+                            })}
+                            g
                           </span>
                         </div>
                       ) : (
@@ -412,61 +420,6 @@ function PriceOverrides() {
   );
 }
 
-const PROFICIENCY_CATEGORIES: {
-  label: string;
-  proficiencies: Proficiency[];
-}[] = [
-  {
-    label: "Harvesting",
-    proficiencies: [
-      "Husbandry",
-      "Farming",
-      "Fishing",
-      "Logging",
-      "Gathering",
-      "Mining",
-    ],
-  },
-  {
-    label: "Crafting",
-    proficiencies: [
-      "Alchemy",
-      "Cooking",
-      "Handicrafts",
-      "Machining",
-      "Metalwork",
-      "Printing",
-      "Masonry",
-      "Tailoring",
-      "Leatherwork",
-      "Weaponry",
-      "Carpentry",
-    ],
-  },
-  {
-    label: "Special",
-    proficiencies: ["Construction", "Larceny", "Commerce", "Artistry", "Exploration"],
-  },
-];
-
-const RANKS: { name: string; min: number; laborReduction: number }[] = [
-  { name: "Famed", min: 230000, laborReduction: 40 },
-  { name: "Celebrity", min: 180000, laborReduction: 30 },
-  { name: "Virtuoso", min: 150000, laborReduction: 25 },
-  { name: "Herald", min: 130000, laborReduction: 20 },
-  { name: "Adept", min: 110000, laborReduction: 20 },
-  { name: "Champion", min: 90000, laborReduction: 15 },
-  { name: "Authority", min: 70000, laborReduction: 15 },
-  { name: "Master", min: 50000, laborReduction: 15 },
-  { name: "Expert", min: 40000, laborReduction: 15 },
-  { name: "Journeyman", min: 30000, laborReduction: 15 },
-  { name: "Apprentice", min: 20000, laborReduction: 10 },
-  { name: "Novice", min: 10000, laborReduction: 5 },
-];
-
-function getRank(value: number) {
-  return RANKS.find((r) => value >= r.min) ?? null;
-}
 
 function ProficiencyEditor() {
   const trpc = useTRPC();
@@ -485,8 +438,9 @@ function ProficiencyEditor() {
       onMutate: async ({ proficiency, value }) => {
         await queryClient.cancelQueries(queryOptions);
         const previous = queryClient.getQueryData(queryOptions.queryKey);
-        queryClient.setQueryData(queryOptions.queryKey, (old: typeof saved) => {
-          const existing = old.find((p) => p.proficiency === proficiency);
+        queryClient.setQueryData(queryOptions.queryKey, (old) => {
+          if (!old) return [];
+          const existing = old?.find((p) => p.proficiency === proficiency);
           if (existing) {
             return old.map((p) =>
               p.proficiency === proficiency ? { ...p, value } : p,
@@ -525,14 +479,13 @@ function ProficiencyEditor() {
     <div className="space-y-6">
       {PROFICIENCY_CATEGORIES.map(({ label, proficiencies }) => (
         <div key={label}>
-          <h3 className="text-muted-foreground mb-3 text-sm font-medium uppercase tracking-wide">
+          <h3 className="text-muted-foreground mb-3 text-sm font-medium tracking-wide uppercase">
             {label}
           </h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {proficiencies.map((prof) => {
               const savedVal = savedMap.get(prof) ?? 0;
-              const displayVal =
-                drafts[prof] !== undefined ? drafts[prof] : savedVal.toString();
+              const displayVal = drafts[prof] ?? savedVal.toString();
               const rank = getRank(
                 drafts[prof] !== undefined
                   ? (parseInt(drafts[prof], 10) ?? savedVal)

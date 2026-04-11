@@ -7,7 +7,12 @@ import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
+import { ItemIcon } from "~/component/item-icon";
+import { pickPreferredCraft } from "~/lib/craft-helpers";
+import { getDiscountedLabor } from "~/lib/proficiency";
+import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
+import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/craft/$itemId")({
   params: {
@@ -105,48 +110,19 @@ type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 
-function pickPreferredCraft(
-  entries: SubcraftEntry[],
-  itemId: number,
-): SubcraftEntry {
-  return [...entries].sort((a, b) => {
-    const amt = (e: SubcraftEntry) =>
-      e.products.find((p) => p.item.id === itemId)?.amount ?? 999;
-    return amt(a) - amt(b);
-  })[0]!;
-}
-
-function ItemIcon({
-  icon,
-  name,
-  size = "sm",
-}: {
-  icon: string | null;
-  name: string;
-  size?: "sm" | "lg";
-}) {
-  const cls = size === "lg" ? "h-16 w-16" : "h-5 w-5";
-  return icon ? (
-    <img
-      src={`https://aa-classic.com/game/icons/${icon}`}
-      alt={name}
-      className={`${cls} shrink-0`}
-    />
-  ) : (
-    <div className={`bg-muted ${cls} shrink-0 rounded`} />
-  );
-}
 
 function CraftRecipe({
   entry,
   priceMap,
   overrideMap,
+  proficiencyMap,
   subcraftMap = {},
   depth = 0,
 }: {
   entry: CraftEntry | SubcraftEntry;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
+  proficiencyMap: ProficiencyMap;
   subcraftMap?: SubcraftMap;
   depth?: number;
 }) {
@@ -205,7 +181,12 @@ function CraftRecipe({
           </p>
           {craft.labor > 0 && (
             <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {craft.labor} labor
+              {getDiscountedLabor(
+                craft.labor,
+                craft.proficiency,
+                proficiencyMap,
+              )}{" "}
+              labor
             </span>
           )}
         </div>
@@ -252,7 +233,13 @@ function CraftRecipe({
           const subEntry = isCraftable
             ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
             : null;
-          const subLabor = subEntry?.craft.labor ?? 0;
+          const subLabor = subEntry
+            ? getDiscountedLabor(
+                subEntry.craft.labor,
+                subEntry.craft.proficiency,
+                proficiencyMap,
+              )
+            : 0;
 
           return (
             <Fragment key={item.id}>
@@ -345,12 +332,13 @@ function CraftRecipe({
                 )}
               </li>
 
-              {mode === "craft" && isCraftable && (
+              {mode === "craft" && isCraftable && subEntry && (
                 <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
                   <CraftRecipe
                     entry={subEntry}
                     priceMap={priceMap}
                     overrideMap={overrideMap}
+                    proficiencyMap={proficiencyMap}
                     subcraftMap={subcraftMap}
                     depth={depth + 1}
                   />
@@ -388,13 +376,10 @@ function CraftRecipe({
 function ItemDetail({ itemId }: { itemId: number }) {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(trpc.crafts.forItem.queryOptions(itemId));
+  const { proficiencyMap, overrideMap } = useUserData();
 
   const priceMap: PriceMap = useMemo(
     () => new Map(data?.prices.map((p) => [p.itemId, p])),
-    [data],
-  );
-  const overrideMap: OverrideMap = useMemo(
-    () => new Map(data?.overrides.map((o) => [o.itemId, parseFloat(o.price)])),
     [data],
   );
 
@@ -423,6 +408,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
               entry={entry}
               priceMap={priceMap}
               overrideMap={overrideMap}
+              proficiencyMap={proficiencyMap}
               subcraftMap={data.subcraftsByItemId ?? {}}
             />
           ))}

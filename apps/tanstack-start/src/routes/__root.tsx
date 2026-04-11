@@ -26,6 +26,11 @@ export const Route = createRootRouteWithContext<{
   head: () => ({
     links: [{ rel: "stylesheet", href: appCss }],
   }),
+  loader: ({ context }) => {
+    void context.queryClient.prefetchQuery(
+      context.trpc.profile.getUserData.queryOptions(),
+    );
+  },
   component: RootComponent,
 });
 
