@@ -1,8 +1,11 @@
 import type React from "react";
-import { Suspense } from "react";
-import { useQueries, useSuspenseQuery } from "@tanstack/react-query";
+import { Suspense, useMemo } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import type { inferProcedureOutput } from "@trpc/server";
 import { z } from "zod";
+
+import type { AppRouter } from "@acme/api";
 
 import { useTRPC } from "~/lib/trpc";
 
@@ -13,27 +16,10 @@ export const Route = createFileRoute("/craft/$itemId")({
   },
   loader: async ({ context, params }) => {
     const { trpc, queryClient } = context;
-    const [item, craftsForItem] = await Promise.all([
-      queryClient.fetchQuery(trpc.items.byId.queryOptions(params.itemId)),
-      queryClient.fetchQuery(trpc.crafts.byItemId.queryOptions(params.itemId)),
-    ]);
-    if (!item) throw notFound();
-    const craftDetails = await Promise.all(
-      craftsForItem.map((craft) =>
-        queryClient.fetchQuery(trpc.crafts.byId.queryOptions(craft.id)),
-      ),
+    const data = await queryClient.fetchQuery(
+      trpc.crafts.forItem.queryOptions(params.itemId),
     );
-    const materialItemIds = [
-      ...new Set(
-        craftDetails.flatMap((d) => d?.materials.map((m) => m.item.id) ?? []),
-      ),
-    ];
-    await Promise.all([
-      ...materialItemIds.map((id) =>
-        queryClient.prefetchQuery(trpc.items.price.queryOptions(id)),
-      ),
-      queryClient.prefetchQuery(trpc.profile.getPriceOverrides.queryOptions()),
-    ]);
+    if (!data) throw notFound();
   },
   component: RouteComponent,
   notFoundComponent: () => <p>Item not found.</p>,
@@ -116,27 +102,25 @@ function StatCard({
   );
 }
 
-function CraftRecipe({ craftId }: { craftId: number }) {
-  const trpc = useTRPC();
-  const { data } = useSuspenseQuery(trpc.crafts.byId.queryOptions(craftId));
-  const { data: overrides } = useSuspenseQuery(
-    trpc.profile.getPriceOverrides.queryOptions(),
-  );
+type PageData = NonNullable<inferProcedureOutput<AppRouter["crafts"]["forItem"]>>;
+type CraftEntry = PageData["crafts"][number];
+type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
+type OverrideMap = Map<number, number>;
 
-  const priceQueries = useQueries({
-    queries:
-      data?.materials.map(({ item }) => trpc.items.price.queryOptions(item.id)) ?? [],
-  });
+function CraftRecipe({
+  entry,
+  priceMap,
+  overrideMap,
+}: {
+  entry: CraftEntry;
+  priceMap: PriceMap;
+  overrideMap: OverrideMap;
+}) {
+  const { craft, materials } = entry;
 
-  if (!data) return null;
-
-  const { craft, materials } = data;
-
-  const overrideMap = new Map(overrides?.map((o) => [o.itemId, parseFloat(o.price)]));
-
-  const total = materials.reduce((sum, { item, amount }, i) => {
+  const total = materials.reduce((sum, { item, amount }) => {
     const customPrice = overrideMap.get(item.id);
-    const price = priceQueries[i]?.data;
+    const price = priceMap.get(item.id);
     const unit =
       customPrice != null
         ? customPrice
@@ -144,8 +128,7 @@ function CraftRecipe({ craftId }: { craftId: number }) {
     return sum + unit * amount;
   }, 0);
 
-  const hasPrices =
-    priceQueries.some((q) => q.data) || overrideMap.size > 0;
+  const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
 
   return (
     <div className="rounded-md border p-4">
@@ -168,9 +151,9 @@ function CraftRecipe({ craftId }: { craftId: number }) {
         )}
       </div>
       <ul className="flex flex-col gap-2">
-        {materials.map(({ item, amount }, i) => {
+        {materials.map(({ item, amount }) => {
           const customPrice = overrideMap.get(item.id);
-          const price = priceQueries[i]?.data;
+          const price = priceMap.get(item.id);
           const isCustom = customPrice != null;
           const unit = isCustom
             ? customPrice
@@ -203,7 +186,11 @@ function CraftRecipe({ craftId }: { craftId: number }) {
                   {unit.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
                   {amount > 1 && (
                     <span className="text-foreground ml-2 font-medium">
-                      = {lineTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
+                      ={" "}
+                      {lineTotal.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}
+                      g
                     </span>
                   )}
                 </span>
@@ -218,12 +205,20 @@ function CraftRecipe({ craftId }: { craftId: number }) {
 
 function ItemDetail({ itemId }: { itemId: number }) {
   const trpc = useTRPC();
-  const { data: item } = useSuspenseQuery(trpc.items.byId.queryOptions(itemId));
-  const { data: craftsForItem } = useSuspenseQuery(
-    trpc.crafts.byItemId.queryOptions(itemId),
+  const { data } = useSuspenseQuery(trpc.crafts.forItem.queryOptions(itemId));
+
+  const priceMap: PriceMap = useMemo(
+    () => new Map(data?.prices.map((p) => [p.itemId, p])),
+    [data],
+  );
+  const overrideMap: OverrideMap = useMemo(
+    () => new Map(data?.overrides.map((o) => [o.itemId, parseFloat(o.price)])),
+    [data],
   );
 
-  if (!item) return <p>Item not found.</p>;
+  if (!data) return <p>Item not found.</p>;
+
+  const { item, crafts } = data;
 
   return (
     <div className="flex flex-col gap-6">
@@ -248,22 +243,22 @@ function ItemDetail({ itemId }: { itemId: number }) {
         {item.levelRequirement > 0 && (
           <StatCard label="Level Req." value={item.levelRequirement} />
         )}
-        {item.labor != null && item.labor > 0 && (
-          <StatCard label="Labor" value={item.labor} />
-        )}
         <StatCard label="Sellable" value={item.sellable ? "Yes" : "No"} />
         {item.maxStackSize > 1 && (
           <StatCard label="Max Stack" value={item.maxStackSize} />
         )}
       </div>
 
-      {craftsForItem.length > 0 && (
+      {crafts.length > 0 && (
         <div className="flex flex-col gap-4">
           <h2 className="text-xl font-semibold">Crafts</h2>
-          {craftsForItem.map((craft) => (
-            <Suspense key={craft.id} fallback={<p>Loading recipe...</p>}>
-              <CraftRecipe craftId={craft.id} />
-            </Suspense>
+          {crafts.map((entry) => (
+            <CraftRecipe
+              key={entry.craft.id}
+              entry={entry}
+              priceMap={priceMap}
+              overrideMap={overrideMap}
+            />
           ))}
         </div>
       )}

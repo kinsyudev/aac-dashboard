@@ -1,7 +1,7 @@
 import type { TRPCRouterRecord } from "@trpc/server";
 import { z } from "zod/v4";
 
-import { asc, desc, eq, getTableColumns, ilike, like } from "@acme/db";
+import { asc, desc, eq, getTableColumns, ilike, inArray, like } from "@acme/db";
 import { crafts, items, prices } from "@acme/db/schema";
 
 import { protectedProcedure } from "../trpc";
@@ -16,6 +16,17 @@ export const itemsRouter = {
       .limit(1)
       .then((rows) => rows[0] ?? null);
   }),
+
+  pricesBatch: protectedProcedure
+    .input(z.array(z.number().int()))
+    .query(({ ctx, input }) => {
+      if (input.length === 0) return [];
+      return ctx.db
+        .selectDistinctOn([prices.itemId])
+        .from(prices)
+        .where(inArray(prices.itemId, input))
+        .orderBy(prices.itemId, desc(prices.fetchedAt));
+    }),
 
   priceHistory: protectedProcedure
     .input(z.number().int())
