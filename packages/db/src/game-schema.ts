@@ -221,3 +221,30 @@ export const userPriceOverridesRelations = relations(
     }),
   }),
 );
+
+export const userProficiencies = pgTable(
+  "user_proficiencies",
+  (t) => ({
+    userId: t
+      .text()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    proficiency: proficiencyEnum().notNull(),
+    value: t.integer().notNull().default(0),
+    updatedAt: t.timestamp().notNull().defaultNow(),
+  }),
+  (table) => [
+    primaryKey({ columns: [table.userId, table.proficiency] }),
+    index("idx_user_proficiencies_user").on(table.userId),
+  ],
+);
+
+export const userProficienciesRelations = relations(
+  userProficiencies,
+  ({ one }) => ({
+    user: one(user, {
+      fields: [userProficiencies.userId],
+      references: [user.id],
+    }),
+  }),
+);

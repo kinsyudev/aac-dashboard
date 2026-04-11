@@ -2,7 +2,13 @@ import type { TRPCRouterRecord } from "@trpc/server";
 import { z } from "zod/v4";
 
 import { and, desc, eq, inArray } from "@acme/db";
-import { items, prices, userPriceOverrides } from "@acme/db/schema";
+import {
+  items,
+  prices,
+  proficiencyEnum,
+  userPriceOverrides,
+  userProficiencies,
+} from "@acme/db/schema";
 
 import { protectedProcedure } from "../trpc";
 
@@ -75,5 +81,40 @@ export const profileRouter = {
             eq(userPriceOverrides.itemId, input),
           ),
         );
+    }),
+
+  getProficiencies: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.session.user.id;
+    return ctx.db
+      .select({
+        proficiency: userProficiencies.proficiency,
+        value: userProficiencies.value,
+        updatedAt: userProficiencies.updatedAt,
+      })
+      .from(userProficiencies)
+      .where(eq(userProficiencies.userId, userId));
+  }),
+
+  setProficiency: protectedProcedure
+    .input(
+      z.object({
+        proficiency: z.enum(proficiencyEnum.enumValues),
+        value: z.number().int().min(0).max(300000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      await ctx.db
+        .insert(userProficiencies)
+        .values({
+          userId,
+          proficiency: input.proficiency,
+          value: input.value,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [userProficiencies.userId, userProficiencies.proficiency],
+          set: { value: input.value, updatedAt: new Date() },
+        });
     }),
 } satisfies TRPCRouterRecord;

@@ -11,12 +11,16 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
+import { ProficiencyBadge } from "~/component/proficiency";
 import { useTRPC } from "~/lib/trpc";
+
+import type { Proficiency } from "@acme/db/schema";
 
 export const Route = createFileRoute("/profile")({
   loader: ({ context }) => {
     const { trpc, queryClient } = context;
     void queryClient.prefetchQuery(trpc.profile.getPriceOverrides.queryOptions());
+    void queryClient.prefetchQuery(trpc.profile.getProficiencies.queryOptions());
   },
   component: RouteComponent,
 });
@@ -25,6 +29,15 @@ function RouteComponent() {
   return (
     <main className="container py-16">
       <h1 className="mb-8 text-3xl font-bold">Profile</h1>
+      <section className="mb-12">
+        <h2 className="mb-4 text-xl font-semibold">Proficiencies</h2>
+        <p className="text-muted-foreground mb-6 text-sm">
+          Set your proficiency levels to calculate accurate labor costs for crafting.
+        </p>
+        <Suspense fallback={<p>Loading...</p>}>
+          <ProficiencyEditor />
+        </Suspense>
+      </section>
       <section>
         <h2 className="mb-4 text-xl font-semibold">Price Overrides</h2>
         <p className="text-muted-foreground mb-6 text-sm">
@@ -395,6 +408,175 @@ function PriceOverrides() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+const PROFICIENCY_CATEGORIES: {
+  label: string;
+  proficiencies: Proficiency[];
+}[] = [
+  {
+    label: "Harvesting",
+    proficiencies: [
+      "Husbandry",
+      "Farming",
+      "Fishing",
+      "Logging",
+      "Gathering",
+      "Mining",
+    ],
+  },
+  {
+    label: "Crafting",
+    proficiencies: [
+      "Alchemy",
+      "Cooking",
+      "Handicrafts",
+      "Machining",
+      "Metalwork",
+      "Printing",
+      "Masonry",
+      "Tailoring",
+      "Leatherwork",
+      "Weaponry",
+      "Carpentry",
+    ],
+  },
+  {
+    label: "Special",
+    proficiencies: ["Construction", "Larceny", "Commerce", "Artistry", "Exploration"],
+  },
+];
+
+const RANKS: { name: string; min: number; laborReduction: number }[] = [
+  { name: "Famed", min: 230000, laborReduction: 40 },
+  { name: "Celebrity", min: 180000, laborReduction: 30 },
+  { name: "Virtuoso", min: 150000, laborReduction: 25 },
+  { name: "Herald", min: 130000, laborReduction: 20 },
+  { name: "Adept", min: 110000, laborReduction: 20 },
+  { name: "Champion", min: 90000, laborReduction: 15 },
+  { name: "Authority", min: 70000, laborReduction: 15 },
+  { name: "Master", min: 50000, laborReduction: 15 },
+  { name: "Expert", min: 40000, laborReduction: 15 },
+  { name: "Journeyman", min: 30000, laborReduction: 15 },
+  { name: "Apprentice", min: 20000, laborReduction: 10 },
+  { name: "Novice", min: 10000, laborReduction: 5 },
+];
+
+function getRank(value: number) {
+  return RANKS.find((r) => value >= r.min) ?? null;
+}
+
+function ProficiencyEditor() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const { data: saved } = useSuspenseQuery(
+    trpc.profile.getProficiencies.queryOptions(),
+  );
+
+  const savedMap = new Map(saved.map((p) => [p.proficiency, p.value]));
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const queryOptions = trpc.profile.getProficiencies.queryOptions();
+
+  const setProficiency = useMutation(
+    trpc.profile.setProficiency.mutationOptions({
+      onMutate: async ({ proficiency, value }) => {
+        await queryClient.cancelQueries(queryOptions);
+        const previous = queryClient.getQueryData(queryOptions.queryKey);
+        queryClient.setQueryData(queryOptions.queryKey, (old: typeof saved) => {
+          const existing = old.find((p) => p.proficiency === proficiency);
+          if (existing) {
+            return old.map((p) =>
+              p.proficiency === proficiency ? { ...p, value } : p,
+            );
+          }
+          return [...old, { proficiency, value, updatedAt: new Date() }];
+        });
+        return { previous };
+      },
+      onError: (_err, _vars, ctx) => {
+        if (ctx?.previous) {
+          queryClient.setQueryData(queryOptions.queryKey, ctx.previous);
+        }
+        toast.error("Failed to save proficiency.");
+      },
+      onSuccess: () => toast.success("Proficiency saved."),
+      onSettled: () => queryClient.invalidateQueries(queryOptions),
+    }),
+  );
+
+  const handleBlur = (proficiency: Proficiency) => {
+    const raw = drafts[proficiency];
+    if (raw === undefined) return;
+    const parsed = parseInt(raw, 10);
+    if (isNaN(parsed) || parsed < 0) return;
+    const clamped = Math.min(parsed, 300000);
+    setProficiency.mutate({ proficiency, value: clamped });
+    setDrafts((d) => {
+      const next = { ...d };
+      delete next[proficiency];
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      {PROFICIENCY_CATEGORIES.map(({ label, proficiencies }) => (
+        <div key={label}>
+          <h3 className="text-muted-foreground mb-3 text-sm font-medium uppercase tracking-wide">
+            {label}
+          </h3>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {proficiencies.map((prof) => {
+              const savedVal = savedMap.get(prof) ?? 0;
+              const displayVal =
+                drafts[prof] !== undefined ? drafts[prof] : savedVal.toString();
+              const rank = getRank(
+                drafts[prof] !== undefined
+                  ? (parseInt(drafts[prof], 10) ?? savedVal)
+                  : savedVal,
+              );
+
+              return (
+                <div
+                  key={prof}
+                  className="flex items-center gap-3 rounded-md border px-3 py-2"
+                >
+                  <ProficiencyBadge proficiency={prof} showIcon />
+                  <div className="ml-auto flex items-center gap-2">
+                    {rank ? (
+                      <span className="text-muted-foreground text-xs">
+                        {rank.name} ({rank.laborReduction}% off)
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                    <Input
+                      type="number"
+                      min="0"
+                      max="300000"
+                      step="1000"
+                      className="w-28 text-right"
+                      value={displayVal}
+                      onChange={(e) =>
+                        setDrafts((d) => ({ ...d, [prof]: e.target.value }))
+                      }
+                      onBlur={() => handleBlur(prof)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
