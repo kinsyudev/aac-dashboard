@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ShoplistRouteImport } from './routes/shoplist'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as CraftRouteImport } from './routes/craft'
 import { Route as IndexRouteImport } from './routes/index'
@@ -17,6 +18,11 @@ import { Route as CraftItemIdRouteImport } from './routes/craft.$itemId'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
+const ShoplistRoute = ShoplistRouteImport.update({
+  id: '/shoplist',
+  path: '/shoplist',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/craft': typeof CraftRouteWithChildren
   '/profile': typeof ProfileRoute
+  '/shoplist': typeof ShoplistRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/craft/': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/profile': typeof ProfileRoute
+  '/shoplist': typeof ShoplistRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/craft': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/craft': typeof CraftRouteWithChildren
   '/profile': typeof ProfileRoute
+  '/shoplist': typeof ShoplistRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/craft/': typeof CraftIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/craft'
     | '/profile'
+    | '/shoplist'
     | '/craft/$itemId'
     | '/craft/'
     | '/api/auth/$'
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/profile'
+    | '/shoplist'
     | '/craft/$itemId'
     | '/craft'
     | '/api/auth/$'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
     | '/'
     | '/craft'
     | '/profile'
+    | '/shoplist'
     | '/craft/$itemId'
     | '/craft/'
     | '/api/auth/$'
@@ -113,12 +125,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CraftRoute: typeof CraftRouteWithChildren
   ProfileRoute: typeof ProfileRoute
+  ShoplistRoute: typeof ShoplistRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/shoplist': {
+      id: '/shoplist'
+      path: '/shoplist'
+      fullPath: '/shoplist'
+      preLoaderRoute: typeof ShoplistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profile': {
       id: '/profile'
       path: '/profile'
@@ -187,6 +207,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CraftRoute: CraftRouteWithChildren,
   ProfileRoute: ProfileRoute,
+  ShoplistRoute: ShoplistRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
 }

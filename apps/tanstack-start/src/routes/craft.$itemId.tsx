@@ -1,8 +1,8 @@
+import type { inferProcedureOutput } from "@trpc/server";
 import type React from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import type { inferProcedureOutput } from "@trpc/server";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -87,13 +87,7 @@ function ItemDescription({ text }: { text: string }) {
   );
 }
 
-function StatCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) {
+function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="bg-muted/50 rounded-md border p-3">
       <p className="text-muted-foreground text-xs">{label}</p>
@@ -102,14 +96,19 @@ function StatCard({
   );
 }
 
-type PageData = NonNullable<inferProcedureOutput<AppRouter["crafts"]["forItem"]>>;
+type PageData = NonNullable<
+  inferProcedureOutput<AppRouter["crafts"]["forItem"]>
+>;
 type CraftEntry = PageData["crafts"][number];
 type SubcraftEntry = PageData["subcraftsByItemId"][number][number];
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 
-function pickPreferredCraft(entries: SubcraftEntry[], itemId: number): SubcraftEntry {
+function pickPreferredCraft(
+  entries: SubcraftEntry[],
+  itemId: number,
+): SubcraftEntry {
   return [...entries].sort((a, b) => {
     const amt = (e: SubcraftEntry) =>
       e.products.find((p) => p.item.id === itemId)?.amount ?? 999;
@@ -164,10 +163,13 @@ function CraftRecipe({
       const custom = overrideMap.get(item.id);
       const price = priceMap.get(item.id);
       const u =
-        custom != null ? custom : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+        custom != null
+          ? custom
+          : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
       return sum + u * amount;
     }, 0);
-    const produced = sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
+    const produced =
+      sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
     return batchCost / produced;
   };
 
@@ -176,7 +178,9 @@ function CraftRecipe({
     const custom = overrideMap.get(item.id);
     const price = priceMap.get(item.id);
     const buyUnit =
-      custom != null ? custom : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+      custom != null
+        ? custom
+        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
     const unit =
       getMode(item.id) === "craft" && isCraftable
         ? getCraftCostPerUnit(item.id)
@@ -205,16 +209,27 @@ function CraftRecipe({
             </span>
           )}
         </div>
-        {hasPrices && (
-          <p className="shrink-0 text-sm font-medium tabular-nums">
-            <span className="text-muted-foreground mr-1 text-xs font-normal">
-              materials
-            </span>
-            <span className="text-primary">
-              {total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
-            </span>
-          </p>
-        )}
+        <div className="flex shrink-0 items-center gap-3">
+          {hasPrices && (
+            <p className="text-sm font-medium tabular-nums">
+              <span className="text-muted-foreground mr-1 text-xs font-normal">
+                materials
+              </span>
+              <span className="text-primary">
+                {total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
+              </span>
+            </p>
+          )}
+          {depth === 0 && (
+            <Link
+              to="/shoplist"
+              search={{ craft: craft.id, qty: 1 }}
+              className="text-muted-foreground text-xs hover:underline"
+            >
+              Shoplist →
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Materials */}
@@ -232,7 +247,8 @@ function CraftRecipe({
           const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
           const lineTotal = unit * amount;
           const hasPrice = isCustom || !!price;
-          const totalDiff = isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
+          const totalDiff =
+            isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
           const subEntry = isCraftable
             ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
             : null;
@@ -240,7 +256,7 @@ function CraftRecipe({
 
           return (
             <Fragment key={item.id}>
-              <li className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted/40">
+              <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
                 <ItemIcon icon={item.icon} name={item.name} />
                 <span className="min-w-0 flex-1 truncate">
                   {item.name}
@@ -283,15 +299,20 @@ function CraftRecipe({
                 {(hasPrice || mode === "craft") && (
                   <span className="text-muted-foreground shrink-0 tabular-nums">
                     {isCustom && mode === "buy" && (
-                      <span className="text-primary mr-1 text-xs">(custom)</span>
+                      <span className="text-primary mr-1 text-xs">
+                        (custom)
+                      </span>
                     )}
                     {mode === "craft" && isCraftable && subLabor > 0 && (
-                      <span className="text-amber-500 mr-1 text-xs">
+                      <span className="mr-1 text-xs text-amber-500">
                         {subLabor}L +
                       </span>
                     )}
                     <span className="text-foreground/70">
-                      {unit.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
+                      {unit.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}
+                      g
                     </span>
                     {amount > 1 && (
                       <span className="text-foreground ml-1.5 font-medium">
@@ -327,7 +348,7 @@ function CraftRecipe({
               {mode === "craft" && isCraftable && (
                 <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
                   <CraftRecipe
-                    entry={subEntry!}
+                    entry={subEntry}
                     priceMap={priceMap}
                     overrideMap={overrideMap}
                     subcraftMap={subcraftMap}
@@ -354,7 +375,8 @@ function CraftRecipe({
             more
           </span>
           <span>
-            <span className="font-medium text-amber-500">XL</span> labor to craft
+            <span className="font-medium text-amber-500">XL</span> labor to
+            craft
           </span>
           <span>toggle Buy / Craft per ingredient</span>
         </div>
@@ -391,17 +413,6 @@ function ItemDetail({ itemId }: { itemId: number }) {
       </div>
 
       {item.description && <ItemDescription text={item.description} />}
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {item.level > 0 && <StatCard label="Level" value={item.level} />}
-        {item.levelRequirement > 0 && (
-          <StatCard label="Level Req." value={item.levelRequirement} />
-        )}
-        <StatCard label="Sellable" value={item.sellable ? "Yes" : "No"} />
-        {item.maxStackSize > 1 && (
-          <StatCard label="Max Stack" value={item.maxStackSize} />
-        )}
-      </div>
 
       {crafts.length > 0 && (
         <div className="flex flex-col gap-4">

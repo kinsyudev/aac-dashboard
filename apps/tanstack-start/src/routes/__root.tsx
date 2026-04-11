@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { useRef } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import type * as React from "react";
@@ -38,7 +39,13 @@ function RootComponent() {
 
 function NavigationProgress() {
   const isLoading = useRouterState({ select: (s) => s.status === "pending" });
-  if (!isLoading) return null;
+  const hasBeenIdle = useRef(false);
+
+  if (!isLoading) {
+    hasBeenIdle.current = true;
+  }
+
+  if (!isLoading || !hasBeenIdle.current) return null;
   return (
     <div
       className="bg-primary fixed top-0 left-0 z-50 h-0.5"

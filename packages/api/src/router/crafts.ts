@@ -236,4 +236,174 @@ export const craftsRouter = {
         subcraftsByItemId,
       };
     }),
+  forCraft: protectedProcedure
+    .input(z.number().int())
+    .query(async ({ ctx, input: craftId }) => {
+      const userId = ctx.session.user.id;
+
+      // Round 1: craft + user overrides (parallel)
+      const [craft, overrides] = await Promise.all([
+        ctx.db
+          .select()
+          .from(crafts)
+          .where(eq(crafts.id, craftId))
+          .then((r) => r[0] ?? null),
+        ctx.db
+          .select({
+            itemId: userPriceOverrides.itemId,
+            price: userPriceOverrides.price,
+          })
+          .from(userPriceOverrides)
+          .where(eq(userPriceOverrides.userId, userId)),
+      ]);
+      if (!craft) return null;
+
+      // Round 2: materials, products, primary item (parallel)
+      const [materials, products, item] = await Promise.all([
+        ctx.db
+          .select({
+            craftId: craftMaterials.craftId,
+            amount: craftMaterials.amount,
+            item: getTableColumns(items),
+          })
+          .from(craftMaterials)
+          .innerJoin(items, eq(items.id, craftMaterials.itemId))
+          .where(eq(craftMaterials.craftId, craftId)),
+        ctx.db
+          .select({
+            craftId: craftProducts.craftId,
+            amount: craftProducts.amount,
+            rate: craftProducts.rate,
+            item: getTableColumns(items),
+          })
+          .from(craftProducts)
+          .innerJoin(items, eq(items.id, craftProducts.itemId))
+          .where(eq(craftProducts.craftId, craftId)),
+        craft.primaryProductId
+          ? ctx.db
+              .select()
+              .from(items)
+              .where(eq(items.id, craft.primaryProductId))
+              .then((r) => r[0] ?? null)
+          : Promise.resolve(null),
+      ]);
+
+      // Round 3: BFS subcrafts
+      const allMaterialItemIds = new Set<number>(materials.map((m) => m.item.id));
+
+      type SubcraftMaterial = {
+        craftId: number;
+        amount: number;
+        item: typeof items.$inferSelect;
+      };
+      type SubcraftProduct = {
+        craftId: number;
+        amount: number;
+        rate: number | null;
+        item: typeof items.$inferSelect;
+      };
+      type SubcraftEntry = {
+        craft: typeof crafts.$inferSelect;
+        materials: SubcraftMaterial[];
+        products: SubcraftProduct[];
+      };
+
+      const subcraftsByItemId: Record<number, SubcraftEntry[]> = {};
+
+      let pendingIds = [...allMaterialItemIds];
+      const visited = new Set<number>([
+        craft.primaryProductId ?? -1,
+        ...pendingIds,
+      ]);
+
+      while (pendingIds.length > 0) {
+        const subCraftsRows = await ctx.db
+          .select()
+          .from(crafts)
+          .where(inArray(crafts.primaryProductId, pendingIds));
+
+        if (!subCraftsRows.length) break;
+
+        const subCraftIds = subCraftsRows.map((c) => c.id);
+
+        const [subMaterials, subProducts] = await Promise.all([
+          ctx.db
+            .select({
+              craftId: craftMaterials.craftId,
+              amount: craftMaterials.amount,
+              item: getTableColumns(items),
+            })
+            .from(craftMaterials)
+            .innerJoin(items, eq(items.id, craftMaterials.itemId))
+            .where(inArray(craftMaterials.craftId, subCraftIds)),
+          ctx.db
+            .select({
+              craftId: craftProducts.craftId,
+              amount: craftProducts.amount,
+              rate: craftProducts.rate,
+              item: getTableColumns(items),
+            })
+            .from(craftProducts)
+            .innerJoin(items, eq(items.id, craftProducts.itemId))
+            .where(inArray(craftProducts.craftId, subCraftIds)),
+        ]);
+
+        const subMatByCraft = subMaterials.reduce(
+          (acc, m) => {
+            (acc[m.craftId] ??= []).push(m);
+            return acc;
+          },
+          {} as Record<number, SubcraftMaterial[]>,
+        );
+        const subProdByCraft = subProducts.reduce(
+          (acc, p) => {
+            (acc[p.craftId] ??= []).push(p);
+            return acc;
+          },
+          {} as Record<number, SubcraftProduct[]>,
+        );
+
+        for (const subCraft of subCraftsRows) {
+          const pid = subCraft.primaryProductId!;
+          (subcraftsByItemId[pid] ??= []).push({
+            craft: subCraft,
+            materials: subMatByCraft[subCraft.id] ?? [],
+            products: subProdByCraft[subCraft.id] ?? [],
+          });
+        }
+
+        const newIds = subMaterials
+          .map((m) => m.item.id)
+          .filter((id) => !visited.has(id));
+        for (const id of newIds) {
+          visited.add(id);
+          allMaterialItemIds.add(id);
+        }
+        pendingIds = [...new Set(newIds)];
+      }
+
+      // Round 4: latest prices for all BFS material ids
+      const latestPrices =
+        allMaterialItemIds.size > 0
+          ? await ctx.db
+              .selectDistinctOn([prices.itemId], {
+                itemId: prices.itemId,
+                avg24h: prices.avg24h,
+                avg7d: prices.avg7d,
+              })
+              .from(prices)
+              .where(inArray(prices.itemId, [...allMaterialItemIds]))
+              .orderBy(prices.itemId, desc(prices.fetchedAt))
+          : [];
+
+      return {
+        craft,
+        item,
+        materials,
+        products,
+        prices: latestPrices,
+        overrides,
+        subcraftsByItemId,
+      };
+    }),
 } satisfies TRPCRouterRecord;
