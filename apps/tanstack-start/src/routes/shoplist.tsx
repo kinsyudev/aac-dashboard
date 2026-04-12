@@ -9,7 +9,7 @@ import type { AppRouter } from "@acme/api";
 
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
-import { pickPreferredCraft } from "~/lib/craft-helpers";
+import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
@@ -98,6 +98,20 @@ type ShoppingListItem = {
   totalAmount: number;
 };
 
+function sortShoppingListByCost(
+  items: ShoppingListItem[],
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+): ShoppingListItem[] {
+  return [...items].sort((a, b) => {
+    const aCost = getItemPrice(a.item.id, priceMap, overrideMap) * a.totalAmount;
+    const bCost = getItemPrice(b.item.id, priceMap, overrideMap) * b.totalAmount;
+
+    if (aCost !== bCost) return bCost - aCost;
+    return a.item.name.localeCompare(b.item.name);
+  });
+}
+
 function getItemPrice(
   itemId: number,
   priceMap: PriceMap,
@@ -109,10 +123,100 @@ function getItemPrice(
   return parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
 }
 
+function getCraftEntryUnitCost(
+  entry: RecipeEntry | SubcraftEntry,
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  craftModeSet: Set<number>,
+  visited = new Set<number>(),
+): number {
+  const produced =
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
+
+  const batchCost = entry.materials.reduce((sum, { item, amount }) => {
+    const subEntries = subcraftMap[item.id];
+    const shouldCraft = craftModeSet.has(item.id);
+    const unitCost =
+      subEntries?.length && shouldCraft && !visited.has(item.id)
+        ? getCraftCostPerUnit(
+            item.id,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            craftModeSet,
+            new Set([...visited, itemId]),
+          )
+        : getItemPrice(item.id, priceMap, overrideMap);
+    return sum + unitCost * amount;
+  }, 0);
+
+  return batchCost / produced;
+}
+
+function getCraftCostPerUnit(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  craftModeSet: Set<number>,
+  visited = new Set<number>(),
+): number {
+  const subEntries = subcraftMap[itemId];
+  if (!subEntries?.length) return 0;
+
+  const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      craftModeSet,
+      new Set(visited),
+    ),
+  );
+
+  return getCraftEntryUnitCost(
+    entry,
+    itemId,
+    subcraftMap,
+    priceMap,
+    overrideMap,
+    craftModeSet,
+    new Set(visited),
+  );
+}
+
+function pickCheapestSubcraft(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  craftModeSet: Set<number>,
+): SubcraftEntry | null {
+  const subEntries = subcraftMap[itemId];
+  if (!subEntries?.length) return null;
+
+  return pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      craftModeSet,
+    ),
+  );
+}
+
 function buildShoppingList(
   materials: Material[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
   depth: number,
   acc: Map<number, ShoppingListItem>,
   scaleFactor: number,
@@ -121,13 +225,22 @@ function buildShoppingList(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const sub = pickPreferredCraft(subcraftMap[item.id]!, item.id);
+      const sub = pickCheapestSubcraft(
+        item.id,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        craftModeSet,
+      );
+      if (!sub) continue;
       const produced =
         sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildShoppingList(
         sub.materials,
         craftModeSet,
         subcraftMap,
+        priceMap,
+        overrideMap,
         depth + 1,
         acc,
         scaled / produced,
@@ -145,6 +258,8 @@ function buildLaborByProficiency(
   materials: { item: { id: number }; amount: number }[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
   depth: number,
   scaleFactor: number,
   acc: Map<string, number>,
@@ -165,7 +280,14 @@ function buildLaborByProficiency(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const sub = pickPreferredCraft(subcraftMap[item.id]!, item.id);
+      const sub = pickCheapestSubcraft(
+        item.id,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        craftModeSet,
+      );
+      if (!sub) continue;
       const produced =
         sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildLaborByProficiency(
@@ -173,6 +295,8 @@ function buildLaborByProficiency(
         sub.materials,
         craftModeSet,
         subcraftMap,
+        priceMap,
+        overrideMap,
         depth + 1,
         scaled / produced,
         acc,
@@ -250,24 +374,18 @@ function RecipeTree({
 }) {
   const { craft, materials } = entry;
 
-  const getCraftCostPerUnit = (itemId: number): number => {
-    const subEntries = subcraftMap[itemId];
-    if (!subEntries) return 0;
-    const sub = pickPreferredCraft(subEntries, itemId);
-    const batchCost = sub.materials.reduce((sum, { item, amount }) => {
-      return sum + getItemPrice(item.id, priceMap, overrideMap) * amount;
-    }, 0);
-    const produced =
-      sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
-    return batchCost / produced;
-  };
-
   const total = materials.reduce((sum, { item, amount }) => {
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
     const unit =
       craftModeSet.has(item.id) && isCraftable
-        ? getCraftCostPerUnit(item.id)
+        ? getCraftCostPerUnit(
+            item.id,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            craftModeSet,
+          )
         : buyUnit;
     return sum + unit * amount;
   }, 0);
@@ -318,14 +436,28 @@ function RecipeTree({
           const price = priceMap.get(item.id);
           const isCustom = customPrice != null;
           const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-          const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
+          const craftUnit = isCraftable
+            ? getCraftCostPerUnit(
+                item.id,
+                subcraftMap,
+                priceMap,
+                overrideMap,
+                craftModeSet,
+              )
+            : 0;
           const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
           const lineTotal = unit * amount;
           const hasPrice = isCustom || !!price;
           const totalDiff =
             isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
           const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
+            ? pickCheapestSubcraft(
+                item.id,
+                subcraftMap,
+                priceMap,
+                overrideMap,
+                craftModeSet,
+              )
             : null;
           const subLabor = subEntry
             ? getDiscountedLabor(
@@ -487,10 +619,11 @@ function ShoplistDetail({
   const simulatorData = simulatorQuery.data ?? null;
   const { proficiencyMap, overrideMap } = useUserData();
 
-  const [localQty, setLocalQty] = useState(qty);
+  const effectiveQty = isSimulator ? (attempts ?? 1) : qty;
+  const [localQty, setLocalQty] = useState(effectiveQty);
   useEffect(() => {
-    setLocalQty(qty);
-  }, [qty]);
+    setLocalQty(effectiveQty);
+  }, [effectiveQty]);
 
   const priceMap: PriceMap = useMemo(() => {
     const prices = isSimulator ? simulatorData?.prices : craftData?.prices;
@@ -534,34 +667,53 @@ function ShoplistDetail({
     if (!craftData) return [];
     const acc = new Map<number, ShoppingListItem>();
     buildShoppingList(
-      craftData.materials,
-      craftModeSet,
-      craftSubcraftMap,
-      0,
-      acc,
-      qty,
+        craftData.materials,
+        craftModeSet,
+        craftSubcraftMap,
+        priceMap,
+        overrideMap,
+        0,
+        acc,
+        qty,
     );
-    return [...acc.values()].sort((a, b) => a.item.name.localeCompare(b.item.name));
-  }, [craftData, craftModeSet, craftSubcraftMap, qty]);
+    return sortShoppingListByCost([...acc.values()], priceMap, overrideMap);
+  }, [craftData, craftModeSet, craftSubcraftMap, overrideMap, priceMap, qty]);
   const craftLaborByProficiency = useMemo(() => {
     const acc = new Map<string, number>();
     if (!craftData) return acc;
-    buildLaborByProficiency(
-      craftData.craft,
-      craftData.materials,
-      craftModeSet,
-      craftSubcraftMap,
-      0,
-      qty,
-      acc,
+      buildLaborByProficiency(
+        craftData.craft,
+        craftData.materials,
+        craftModeSet,
+        craftSubcraftMap,
+        priceMap,
+        overrideMap,
+        0,
+        qty,
+        acc,
       proficiencyMap,
     );
     return acc;
   }, [craftData, craftModeSet, craftSubcraftMap, proficiencyMap, qty]);
 
-  const simulatorMainCraft = simulatorData?.crafts[0] ?? null;
   const simulatorSubcraftMap = simulatorData?.subcraftsByItemId ?? {};
   const expectedAttempts = attempts ?? 1;
+  const simulatorMainCraft = useMemo(() => {
+    if (!simulatorData?.crafts.length) return null;
+    return pickCheapestCraft(
+      simulatorData.crafts,
+      simulatorData.item.id,
+      (entry, productItemId) =>
+        getCraftEntryUnitCost(
+          entry,
+          productItemId,
+          simulatorSubcraftMap,
+          priceMap,
+          overrideMap,
+          craftModeSet,
+        ),
+    );
+  }, [craftModeSet, overrideMap, priceMap, simulatorData, simulatorSubcraftMap]);
   const simulatorChain = useMemo(
     () =>
       simulatorMainCraft
@@ -569,29 +721,19 @@ function ShoplistDetail({
         : { keyMaterialId: null, keyMaterialName: null },
     [simulatorMainCraft, simulatorSubcraftMap],
   );
-  const attemptEntry = useMemo(
-    () =>
-      simulatorChain.keyMaterialId != null
-        ? pickPreferredCraft(
-            simulatorSubcraftMap[simulatorChain.keyMaterialId]!,
-            simulatorChain.keyMaterialId,
-          )
-        : null,
-    [simulatorChain.keyMaterialId, simulatorSubcraftMap],
-  );
   const scaledAttemptEntry = useMemo(
     () =>
-      attemptEntry
+      simulatorMainCraft
         ? {
-            craft: attemptEntry.craft,
-            materials: attemptEntry.materials.map((m) => ({
+            craft: simulatorMainCraft.craft,
+            materials: simulatorMainCraft.materials.map((m) => ({
               ...m,
               amount: m.amount * expectedAttempts,
             })),
-            products: attemptEntry.products,
+            products: simulatorMainCraft.products,
           }
         : null,
-    [attemptEntry, expectedAttempts],
+    [expectedAttempts, simulatorMainCraft],
   );
   const finalUpgradeEntry = useMemo(
     () =>
@@ -609,64 +751,63 @@ function ShoplistDetail({
   const simulatorShoppingList = useMemo(() => {
     if (!simulatorData || !finalUpgradeEntry) return [];
     const acc = new Map<number, ShoppingListItem>();
-    if (attemptEntry && simulatorChain.keyMaterialId != null) {
+    if (simulatorMainCraft) {
       buildShoppingList(
-        [
-          {
-            item: {
-              id: simulatorChain.keyMaterialId,
-              name: simulatorChain.keyMaterialName ?? "",
-              icon: null,
-            },
-            amount: expectedAttempts,
-          },
-        ],
+        simulatorMainCraft.materials,
         craftModeSet,
         simulatorSubcraftMap,
+        priceMap,
+        overrideMap,
         0,
         acc,
-        1,
+        expectedAttempts,
       );
     }
     buildShoppingList(
       finalUpgradeEntry.materials,
       craftModeSet,
       simulatorSubcraftMap,
+      priceMap,
+      overrideMap,
       0,
       acc,
       1,
     );
-    return [...acc.values()].sort((a, b) => a.item.name.localeCompare(b.item.name));
+    return sortShoppingListByCost([...acc.values()], priceMap, overrideMap);
   }, [
-    attemptEntry,
     craftModeSet,
     expectedAttempts,
     finalUpgradeEntry,
-    simulatorChain.keyMaterialId,
-    simulatorChain.keyMaterialName,
     simulatorData,
+    simulatorMainCraft,
+    overrideMap,
+    priceMap,
     simulatorSubcraftMap,
   ]);
   const simulatorLaborByProficiency = useMemo(() => {
     const acc = new Map<string, number>();
     if (!finalUpgradeEntry) return acc;
-    if (attemptEntry) {
+    if (simulatorMainCraft) {
       buildLaborByProficiency(
-        attemptEntry.craft,
-        attemptEntry.materials,
+        simulatorMainCraft.craft,
+        simulatorMainCraft.materials,
         craftModeSet,
         simulatorSubcraftMap,
+        priceMap,
+        overrideMap,
         0,
         expectedAttempts,
         acc,
         proficiencyMap,
       );
     }
-    buildLaborByProficiency(
+      buildLaborByProficiency(
       finalUpgradeEntry.craft,
       finalUpgradeEntry.materials,
       craftModeSet,
       simulatorSubcraftMap,
+      priceMap,
+      overrideMap,
       0,
       1,
       acc,
@@ -674,11 +815,13 @@ function ShoplistDetail({
     );
     return acc;
   }, [
-    attemptEntry,
     craftModeSet,
     expectedAttempts,
     finalUpgradeEntry,
+    overrideMap,
+    priceMap,
     proficiencyMap,
+    simulatorMainCraft,
     simulatorSubcraftMap,
   ]);
 

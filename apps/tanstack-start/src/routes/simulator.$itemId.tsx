@@ -8,7 +8,7 @@ import type { AppRouter } from "@acme/api";
 
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
-import { pickPreferredCraft } from "~/lib/craft-helpers";
+import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
@@ -105,6 +105,38 @@ function getMatchingAyanadName(name: string): string | null {
   return name.replace(/delphinad/i, "Ayanad");
 }
 
+function getCraftEntryUnitCost(
+  entry: CraftEntry | SubcraftEntry,
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  modes: Record<number, CraftMode> = {},
+  visited = new Set<number>(),
+): number {
+  const produced =
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
+
+  const batchCost = entry.materials.reduce((sum, { item, amount }) => {
+    const subEntries = subcraftMap[item.id];
+    const mode = modes[item.id] ?? "craft";
+    const unitCost =
+      subEntries?.length && mode === "craft" && !visited.has(item.id)
+        ? deepCraftCost(
+            item.id,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            modes,
+            new Set([...visited, itemId]),
+          )
+        : getItemPrice(item.id, priceMap, overrideMap);
+    return sum + unitCost * amount;
+  }, 0);
+
+  return batchCost / produced;
+}
+
 function deepCraftCost(
   itemId: number,
   subcraftMap: SubcraftMap,
@@ -119,33 +151,34 @@ function deepCraftCost(
   const entries = subcraftMap[itemId];
   if (!entries?.length) return getItemPrice(itemId, priceMap, overrideMap);
 
-  const entry = pickPreferredCraft(entries, itemId);
-  const produced =
-    entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
+  const entry = pickCheapestCraft(entries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
+      new Set(visited),
+    ),
+  );
 
-  const batchCost = entry.materials.reduce((sum, { item, amount }) => {
-    const subEntries = subcraftMap[item.id];
-    const mode = modes[item.id] ?? "craft";
-    const unitCost =
-      subEntries?.length && mode === "craft"
-        ? deepCraftCost(
-            item.id,
-            subcraftMap,
-            priceMap,
-            overrideMap,
-            modes,
-            new Set(visited),
-          )
-        : getItemPrice(item.id, priceMap, overrideMap);
-    return sum + unitCost * amount;
-  }, 0);
-
-  return batchCost / produced;
+  return getCraftEntryUnitCost(
+    entry,
+    itemId,
+    subcraftMap,
+    priceMap,
+    overrideMap,
+    modes,
+    new Set(visited),
+  );
 }
 
 function deepCraftLabor(
   itemId: number,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
   modes: Record<number, CraftMode> = {},
   visited = new Set<number>(),
@@ -156,7 +189,17 @@ function deepCraftLabor(
   const entries = subcraftMap[itemId];
   if (!entries?.length) return 0;
 
-  const entry = pickPreferredCraft(entries, itemId);
+  const entry = pickCheapestCraft(entries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
+      new Set(visited),
+    ),
+  );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
 
@@ -174,6 +217,8 @@ function deepCraftLabor(
         deepCraftLabor(
           item.id,
           subcraftMap,
+          priceMap,
+          overrideMap,
           proficiencyMap,
           modes,
           new Set(visited),
@@ -278,13 +323,22 @@ function getChosenMaterialUnitCost(
 function getChosenMaterialLabor(
   itemId: number,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
   modes: Record<number, CraftMode>,
 ): number {
   const isCraftable = !!subcraftMap[itemId]?.length;
   const mode = modes[itemId] ?? "buy";
   if (isCraftable && mode === "craft") {
-    return deepCraftLabor(itemId, subcraftMap, proficiencyMap, modes);
+    return deepCraftLabor(
+      itemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      proficiencyMap,
+      modes,
+    );
   }
   return 0;
 }
@@ -305,7 +359,15 @@ function buildRecommendedModes(
     const subEntries = subcraftMap[itemId];
     if (!subEntries?.length) return;
 
-    const entry = pickPreferredCraft(subEntries, itemId);
+    const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
+      getCraftEntryUnitCost(
+        candidate,
+        productItemId,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+      ),
+    );
     for (const mat of entry.materials) {
       visit(mat.item.id);
     }
@@ -325,6 +387,8 @@ function buildRecommendedModes(
 function countManaWispsForItem(
   itemId: number,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
   modes: Record<number, CraftMode>,
   visited = new Set<number>(),
 ): number {
@@ -334,7 +398,17 @@ function countManaWispsForItem(
   const subEntries = subcraftMap[itemId];
   if (!subEntries?.length) return 0;
 
-  const entry = pickPreferredCraft(subEntries, itemId);
+  const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
+      new Set(visited),
+    ),
+  );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
 
@@ -346,7 +420,14 @@ function countManaWispsForItem(
     }
     if ((modes[item.id] ?? "craft") === "craft") {
       total +=
-        countManaWispsForItem(item.id, subcraftMap, modes, new Set(visited)) *
+        countManaWispsForItem(
+          item.id,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          modes,
+          new Set(visited),
+        ) *
         amount;
     }
   }
@@ -366,6 +447,9 @@ function collectCraftExecutionsForItem(
   itemId: number,
   requiredUnits: number,
   subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  proficiencyMap: ProficiencyMap,
   modes: Record<number, CraftMode>,
   acc: Map<number, CraftExecution>,
   visited = new Set<number>(),
@@ -373,7 +457,17 @@ function collectCraftExecutionsForItem(
   const subEntries = subcraftMap[itemId];
   if (!subEntries?.length || visited.has(itemId)) return;
 
-  const entry = pickPreferredCraft(subEntries, itemId);
+  const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
+    getCraftEntryUnitCost(
+      candidate,
+      productItemId,
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
+      new Set(visited),
+    ),
+  );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
   const batches = Math.ceil(requiredUnits / produced);
@@ -386,7 +480,11 @@ function collectCraftExecutionsForItem(
       name: entry.craft.name,
       proficiency: entry.craft.proficiency,
       batches,
-      laborPerBatch: 0,
+      laborPerBatch: getDiscountedLabor(
+        entry.craft.labor,
+        entry.craft.proficiency,
+        proficiencyMap,
+      ),
     });
   }
 
@@ -397,6 +495,9 @@ function collectCraftExecutionsForItem(
         item.id,
         amount * batches,
         subcraftMap,
+        priceMap,
+        overrideMap,
+        proficiencyMap,
         modes,
         acc,
         new Set(visited),
@@ -467,15 +568,48 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultSalePrice;
   }, [defaultSalePrice, localSalePrice]);
 
+  const mainCraft = useMemo(() => {
+    if (!data?.crafts.length) return null;
+    const subcraftMap = data.subcraftsByItemId ?? {};
+    return pickCheapestCraft(data.crafts, data.item.id, (entry, productItemId) =>
+      getCraftEntryUnitCost(
+        entry,
+        productItemId,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        modes,
+      ),
+    );
+  }, [data, modes, overrideMap, priceMap]);
+
+  const ayanadCraft = useMemo(() => {
+    if (!ayanadCraftData?.crafts.length || !ayanadItem?.id) return null;
+    const subcraftMap = ayanadCraftData.subcraftsByItemId ?? {};
+    return pickCheapestCraft(
+      ayanadCraftData.crafts,
+      ayanadItem.id,
+      (entry, productItemId) =>
+        getCraftEntryUnitCost(
+          entry,
+          productItemId,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          modes,
+        ),
+    );
+  }, [ayanadCraftData, ayanadItem?.id, modes, overrideMap, priceMap]);
+
   const recommendedModes = useMemo(() => {
-    if (!data?.crafts.length) return {};
+    if (!data || !mainCraft) return {};
     return buildRecommendedModes(
-      data.crafts[0]!.materials,
+      mainCraft.materials,
       data.subcraftsByItemId ?? {},
       priceMap,
       overrideMap,
     );
-  }, [data, priceMap, overrideMap]);
+  }, [data, mainCraft, priceMap, overrideMap]);
 
   useEffect(() => {
     setModes((prev) => {
@@ -488,10 +622,9 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   }, [recommendedModes]);
 
   const simulationData = useMemo(() => {
-    if (!data || !equip || data.crafts.length === 0 || !wisp) return null;
+    if (!data || !equip || !mainCraft || !wisp) return null;
 
     const subcraftMap = data.subcraftsByItemId ?? {};
-    const mainCraft = data.crafts[0]!;
     const itemName = data.item.name.toLowerCase();
 
     if (equip.tier !== "delphinad" || !itemName.includes("sealed delphinad")) {
@@ -515,7 +648,6 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           amount,
       0,
     );
-    const ayanadCraft = ayanadCraftData?.crafts[0] ?? null;
     const upgradeMaterials = ayanadCraft
       ? ayanadCraft.materials.filter(({ item }) => {
           const lower = item.name.toLowerCase();
@@ -547,16 +679,24 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
         (sum, { item, amount }) =>
           sum +
           getChosenMaterialLabor(
-            item.id,
-            ayanadCraftData?.subcraftsByItemId ?? subcraftMap,
-            proficiencyMap,
-            modes,
-          ) *
+          item.id,
+          ayanadCraftData?.subcraftsByItemId ?? subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          modes,
+        ) *
             amount,
         0,
       );
     const seedWispsPerAttempt = chain.keyMaterialId
-      ? countManaWispsForItem(chain.keyMaterialId, subcraftMap, modes)
+        ? countManaWispsForItem(
+            chain.keyMaterialId,
+            subcraftMap,
+          priceMap,
+          overrideMap,
+          modes,
+        )
       : 0;
     const laborPerAttempt =
       getDiscountedLabor(
@@ -565,12 +705,26 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
         proficiencyMap,
       ) +
       (chain.keyMaterialId
-        ? deepCraftLabor(chain.keyMaterialId, subcraftMap, proficiencyMap, modes)
+        ? deepCraftLabor(
+            chain.keyMaterialId,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            proficiencyMap,
+            modes,
+          )
         : 0) +
       attemptMaterials.reduce(
         (sum, { item, amount }) =>
           sum +
-          getChosenMaterialLabor(item.id, subcraftMap, proficiencyMap, modes) *
+          getChosenMaterialLabor(
+            item.id,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            proficiencyMap,
+            modes,
+          ) *
             amount,
         0,
       );
@@ -591,20 +745,22 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
       result,
       chain,
       mainCraft,
+      ayanadCraft,
+      attemptMaterials,
       seedWispsPerAttempt,
       upgradeMaterials,
     };
   }, [
-    ayanadCraftData,
     data,
     equip,
-    itemId,
+    mainCraft,
     modes,
     overrideMap,
     priceMap,
     proficiencyMap,
     wisp,
     effectiveSalePrice,
+    ayanadCraft,
   ]);
 
   const craftExecutions = useMemo(() => {
@@ -612,16 +768,41 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
 
     const acc = new Map<number, CraftExecution>();
     const subcraftMap = data.subcraftsByItemId ?? {};
-    const { chain, result, mainCraft, upgradeMaterials } = simulationData;
+    const {
+      chain,
+      result,
+      mainCraft,
+      ayanadCraft,
+      attemptMaterials,
+      upgradeMaterials,
+    } = simulationData;
 
     if (chain.keyMaterialId) {
-      collectCraftExecutionsForItem(
-        chain.keyMaterialId,
-        result.variants,
-        subcraftMap,
-        modes,
-        acc,
+        collectCraftExecutionsForItem(
+          chain.keyMaterialId,
+          result.variants,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          modes,
+          acc,
       );
+    }
+
+    for (const { item, amount } of attemptMaterials) {
+      if ((modes[item.id] ?? "buy") === "craft") {
+        collectCraftExecutionsForItem(
+          item.id,
+          amount * result.variants,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          modes,
+          acc,
+        );
+      }
     }
 
     const existing = acc.get(mainCraft.craft.id);
@@ -640,15 +821,43 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
       });
     }
 
+    if (ayanadCraft) {
+      const existingUpgrade = acc.get(ayanadCraft.craft.id);
+      if (existingUpgrade) existingUpgrade.batches += 1;
+      else {
+        acc.set(ayanadCraft.craft.id, {
+          craftId: ayanadCraft.craft.id,
+          name: ayanadCraft.craft.name,
+          proficiency: ayanadCraft.craft.proficiency,
+          batches: 1,
+          laborPerBatch: getDiscountedLabor(
+            ayanadCraft.craft.labor,
+            ayanadCraft.craft.proficiency,
+            proficiencyMap,
+          ),
+        });
+      }
+    }
+
+    const upgradeSubcraftMap = ayanadCraftData?.subcraftsByItemId ?? subcraftMap;
     for (const { item, amount } of upgradeMaterials) {
       if ((modes[item.id] ?? "buy") === "craft") {
-        collectCraftExecutionsForItem(item.id, amount, subcraftMap, modes, acc);
+        collectCraftExecutionsForItem(
+          item.id,
+          amount,
+          upgradeSubcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          modes,
+          acc,
+        );
       }
     }
 
     for (const craft of acc.values()) {
       if (craft.laborPerBatch > 0) continue;
-      const subEntry = Object.values(subcraftMap)
+      const subEntry = Object.values(upgradeSubcraftMap)
         .flat()
         .find((entry) => entry.craft.id === craft.craftId);
       if (!subEntry) continue;
@@ -660,7 +869,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     }
 
     return [...acc.values()].sort((a, b) => b.batches - a.batches);
-  }, [data, modes, proficiencyMap, simulationData]);
+  }, [ayanadCraftData, data, modes, overrideMap, priceMap, proficiencyMap, simulationData]);
 
   const laborByProficiency = useMemo(() => {
     const acc = new Map<string, number>();
@@ -683,7 +892,6 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   }
 
   const { item } = data;
-  const mainCraft = data.crafts[0] ?? null;
   const exportModes = serializeCraftModes(modes);
 
   return (
@@ -970,10 +1178,29 @@ function SimulatorCraftBreakdown({
           const totalDiff =
             isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
           const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
+            ? pickCheapestCraft(
+                subcraftMap[item.id]!,
+                item.id,
+                (candidate, productItemId) =>
+                  getCraftEntryUnitCost(
+                    candidate,
+                    productItemId,
+                    subcraftMap,
+                    priceMap,
+                    overrideMap,
+                    modes,
+                  ),
+              )
             : null;
           const subLabor = subEntry
-            ? getChosenMaterialLabor(item.id, subcraftMap, proficiencyMap, modes)
+            ? getChosenMaterialLabor(
+                item.id,
+                subcraftMap,
+                priceMap,
+                overrideMap,
+                proficiencyMap,
+                modes,
+              )
             : 0;
 
           return (
