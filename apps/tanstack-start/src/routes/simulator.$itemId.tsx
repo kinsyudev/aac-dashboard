@@ -249,48 +249,46 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
       proficiencyMap,
     );
 
-    // Find the key material (e.g. "Delphinad Quake Cuirass")
+    // Find the key material — the equipment piece used as input.
+    // It's the craftable material that contains a tier name or piece name,
+    // i.e. the actual gear piece (not generic mats like sunlight crystals).
     let keyMaterialId: number | null = null;
     for (const mat of mainCraft.materials) {
-      if (mat.item.name.toLowerCase().includes(prevTier)) {
+      const n = mat.item.name.toLowerCase();
+      // Match any tier name in the material
+      const hasTier = tierList.some((t) => n.includes(t));
+      if (hasTier) {
         keyMaterialId = mat.item.id;
         break;
       }
     }
+    // Fallback: pick the material with subcrafts (craftable equipment piece)
+    if (!keyMaterialId) {
+      for (const mat of mainCraft.materials) {
+        if (subcraftMap[mat.item.id]?.length) {
+          keyMaterialId = mat.item.id;
+          break;
+        }
+      }
+    }
 
-    // Cost per attempt = cost to produce the key material through the full chain
+    // costPerAttempt = total recursive cost to produce ONE of the key material
+    // This represents the full chain: e.g. wisps → Epherium → Sealed Delphinad
     let costPerAttempt = 0;
     let laborPerAttempt = 0;
 
     if (keyMaterialId) {
-      const keyEntries = subcraftMap[keyMaterialId];
-      if (keyEntries?.length) {
-        const keyEntry = pickPreferredCraft(keyEntries, keyMaterialId);
-
-        for (const mat of keyEntry.materials) {
-          const subEntries = subcraftMap[mat.item.id];
-          const unitCost = subEntries?.length
-            ? deepCraftCost(mat.item.id, subcraftMap, priceMap, overrideMap)
-            : getItemPrice(mat.item.id, priceMap, overrideMap);
-          costPerAttempt += unitCost * mat.amount;
-        }
-
-        laborPerAttempt = getDiscountedLabor(
-          keyEntry.craft.labor,
-          keyEntry.craft.proficiency,
-          proficiencyMap,
-        );
-        for (const mat of keyEntry.materials) {
-          const subEntries = subcraftMap[mat.item.id];
-          if (subEntries?.length) {
-            laborPerAttempt +=
-              deepCraftLabor(mat.item.id, subcraftMap, proficiencyMap) *
-              mat.amount;
-          }
-        }
-      } else {
-        costPerAttempt = getItemPrice(keyMaterialId, priceMap, overrideMap);
-      }
+      costPerAttempt = deepCraftCost(
+        keyMaterialId,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+      );
+      laborPerAttempt = deepCraftLabor(
+        keyMaterialId,
+        subcraftMap,
+        proficiencyMap,
+      );
     }
 
     // Sell price of the final sealed item
