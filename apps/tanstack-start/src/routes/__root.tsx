@@ -73,6 +73,12 @@ function RootDocument({ children }: { children: React.ReactNode }) {
               <Link to="/craft" className="text-sm font-medium hover:underline">
                 Craft
               </Link>
+              <Link
+                to="/simulator"
+                className="text-sm font-medium hover:underline"
+              >
+                Simulator
+              </Link>
               <Link to="/profile" className="text-sm font-medium hover:underline">
                 Profile
               </Link>
