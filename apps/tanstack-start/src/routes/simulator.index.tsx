@@ -8,6 +8,8 @@ import { Input } from "@acme/ui/input";
 import { ItemIcon } from "~/component/item-icon";
 import { useTRPC } from "~/lib/trpc";
 
+const SEALED_DELPHINAD_PREFIX = "sealed delphinad";
+
 export const Route = createFileRoute("/simulator/")({
   head: () => ({
     meta: [
@@ -64,7 +66,13 @@ function SearchResults({ query }: { query: string }) {
 
   const results = useMemo(() => {
     const q = query.toLowerCase();
-    return allItems.filter((item) => item.name.toLowerCase().includes(q));
+    return allItems.filter((item) => {
+      const name = item.name.toLowerCase();
+      return (
+        name.includes(SEALED_DELPHINAD_PREFIX) &&
+        name.includes(q)
+      );
+    });
   }, [allItems, query]);
 
   if (results.length === 0) {
