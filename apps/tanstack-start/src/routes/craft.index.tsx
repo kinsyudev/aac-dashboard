@@ -10,6 +10,16 @@ import { useTRPC } from "~/lib/trpc";
 import { useRecentSearches, type RecentItem } from "~/lib/recent-searches";
 
 export const Route = createFileRoute("/craft/")({
+  head: () => ({
+    meta: [
+      { title: "Craft | AAC Dashboard" },
+      {
+        name: "description",
+        content:
+          "Search craftable items, inspect recipes, and jump into ArcheAge Classic crafting cost breakdowns.",
+      },
+    ],
+  }),
   loader: ({ context }) => {
     const { trpc, queryClient } = context;
     void queryClient.prefetchQuery(trpc.items.craftable.queryOptions());

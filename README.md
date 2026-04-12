@@ -74,11 +74,16 @@ Populate the database with items, crafts, and prices:
 # Sync items, crafts, products & materials from aa-classic.com
 pnpm --filter @acme/sync sync-items
 
-# Sync prices from the Google Spreadsheet
+# Sync latest prices from the Google Spreadsheet
 pnpm --filter @acme/sync sync-prices
+
+# Backfill older daily price history from the SerMeatball API
+pnpm --filter @acme/sync sync-prices:backfill
 ```
 
-Both scripts are incremental — they skip rows already in the database and can be safely re-run. To do a full re-sync from scratch:
+The spreadsheet sync remains the source of truth for ongoing prices. The backfill command only inserts older daily rows into the existing `prices` table, which lets `priceHistory` include data from before you started running the spreadsheet sync.
+
+These scripts are incremental — they skip rows already in the database and can be safely re-run. To do a full re-sync from scratch:
 
 ```bash
 pnpm --filter @acme/sync sync-items:full-refresh

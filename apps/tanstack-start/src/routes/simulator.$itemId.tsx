@@ -914,7 +914,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
             <Link
               to="/shoplist"
               search={{
-                craft: undefined,
+                craft: mainCraft.craft.id,
                 qty: 1,
                 simItem: item.id,
                 attempts: simulationData.result.variants,

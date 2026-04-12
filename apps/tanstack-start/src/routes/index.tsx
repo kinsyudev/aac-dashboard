@@ -1,245 +1,105 @@
-import { Suspense } from "react";
-import { useForm } from "@tanstack/react-form";
-import {
-  useMutation,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
-import type { RouterOutputs } from "@acme/api";
-import { CreatePostSchema } from "@acme/db/schema";
-import { cn } from "@acme/ui";
-import { Button } from "@acme/ui/button";
-import {
-  Field,
-  FieldContent,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@acme/ui/field";
-import { Input } from "@acme/ui/input";
-import { toast } from "@acme/ui/toast";
+import { authClient } from "~/auth/client";
 
-import { AuthShowcase } from "~/component/auth-showcase";
-import { useTRPC } from "~/lib/trpc";
+const APP_NAME = "AAC Dashboard";
+const HOME_DESCRIPTION =
+  "ArcheAge Classic crafting, simulator, profile, and shopping list tools in one place.";
 
 export const Route = createFileRoute("/")({
-  loader: ({ context }) => {
-    const { trpc, queryClient } = context;
-    void queryClient.prefetchQuery(trpc.post.all.queryOptions());
-  },
-  component: RouteComponent,
+  head: () => ({
+    meta: [
+      { title: APP_NAME },
+      { name: "description", content: HOME_DESCRIPTION },
+      { property: "og:title", content: APP_NAME },
+      { property: "og:description", content: HOME_DESCRIPTION },
+      { name: "twitter:title", content: APP_NAME },
+      { name: "twitter:description", content: HOME_DESCRIPTION },
+    ],
+  }),
+  component: HomePage,
 });
 
-function RouteComponent() {
-  return (
-    <main className="container h-screen py-16">
-      <div className="flex flex-col items-center justify-center gap-4">
-        <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
-          Create <span className="text-primary">T3</span> Turbo
-        </h1>
-        <AuthShowcase />
+function HomePage() {
+  const { data: session } = authClient.useSession();
 
-        <CreatePostForm />
-        <div className="w-full max-w-2xl overflow-y-scroll">
-          <Suspense
-            fallback={
-              <div className="flex w-full flex-col gap-4">
-                <PostCardSkeleton />
-                <PostCardSkeleton />
-                <PostCardSkeleton />
-              </div>
-            }
-          >
-            <PostList />
-          </Suspense>
-        </div>
+  return (
+    <main className="container py-16">
+      <div className="flex max-w-5xl flex-col gap-12">
+        <section className="flex flex-col gap-4">
+          <p className="text-primary text-sm font-semibold uppercase tracking-[0.2em]">
+            ArcheAge Classic Tools
+          </p>
+          <div className="flex max-w-3xl flex-col gap-3">
+            <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+              Plan crafts, compare margins, and keep your material runs organized.
+            </h1>
+            <p className="text-muted-foreground text-base sm:text-lg">
+              Use the craft explorer, profitability simulator, and shared shopping
+              lists without bouncing between pages that feel disconnected.
+            </p>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            {session
+              ? `Connected as ${session.user.name}.`
+              : "Sign in with Discord to save profile pricing and access shared lists."}
+          </p>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <DashboardCard
+            title="Craft"
+            description="Search recipes, inspect materials, and move straight into an item breakdown."
+            to="/craft"
+            cta="Open craft search"
+          />
+          <DashboardCard
+            title="Simulator"
+            description="Model sealed craft chains and compare margins before spending labor or gold."
+            to="/simulator"
+            cta="Run simulations"
+          />
+          <DashboardCard
+            title="Shopping Lists"
+            description="Track ingredient runs, duplicate shared lists, and keep collaboration in one place."
+            to="/shoplists"
+            cta="View lists"
+          />
+          <DashboardCard
+            title="Profile"
+            description="Set proficiencies and material overrides so every result reflects your account."
+            to="/profile"
+            cta="Edit profile"
+          />
+        </section>
       </div>
     </main>
   );
 }
 
-function CreatePostForm() {
-  const trpc = useTRPC();
-
-  const queryClient = useQueryClient();
-  const createPost = useMutation(
-    trpc.post.create.mutationOptions({
-      onSuccess: async () => {
-        form.reset();
-        await queryClient.invalidateQueries(trpc.post.pathFilter());
-      },
-      onError: (err) => {
-        toast.error(
-          err.data?.code === "UNAUTHORIZED"
-            ? "You must be logged in to post"
-            : "Failed to create post",
-        );
-      },
-    }),
-  );
-
-  const form = useForm({
-    defaultValues: {
-      content: "",
-      title: "",
-    },
-    validators: {
-      onSubmit: CreatePostSchema,
-    },
-    onSubmit: (data) => createPost.mutate(data.value),
-  });
-
+function DashboardCard({
+  cta,
+  description,
+  title,
+  to,
+}: {
+  cta: string;
+  description: string;
+  title: string;
+  to: "/craft" | "/simulator" | "/shoplists" | "/profile";
+}) {
   return (
-    <form
-      className="w-full max-w-2xl"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.handleSubmit();
-      }}
+    <Link
+      to={to}
+      className="group from-background to-muted/40 hover:border-primary/50 hover:bg-muted/40 flex min-h-52 flex-col rounded-2xl border bg-linear-to-br p-6 transition-colors"
     >
-      <FieldGroup>
-        <form.Field
-          name="title"
-          children={(field) => {
-            const isInvalid =
-              field.state.meta.isTouched && !field.state.meta.isValid;
-            return (
-              <Field data-invalid={isInvalid}>
-                <FieldContent>
-                  <FieldLabel htmlFor={field.name}>Bug Title</FieldLabel>
-                </FieldContent>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value)}
-                  aria-invalid={isInvalid}
-                  placeholder="Title"
-                />
-                {isInvalid && <FieldError errors={field.state.meta.errors} />}
-              </Field>
-            );
-          }}
-        />
-        <form.Field
-          name="content"
-          children={(field) => {
-            const isInvalid =
-              field.state.meta.isTouched && !field.state.meta.isValid;
-            return (
-              <Field data-invalid={isInvalid}>
-                <FieldContent>
-                  <FieldLabel htmlFor={field.name}>Content</FieldLabel>
-                </FieldContent>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value)}
-                  aria-invalid={isInvalid}
-                  placeholder="Content"
-                />
-                {isInvalid && <FieldError errors={field.state.meta.errors} />}
-              </Field>
-            );
-          }}
-        />
-      </FieldGroup>
-      <Button type="submit">Create</Button>
-    </form>
-  );
-}
-
-function PostList() {
-  const trpc = useTRPC();
-  const { data: posts } = useSuspenseQuery(trpc.post.all.queryOptions());
-
-  if (posts.length === 0) {
-    return (
-      <div className="relative flex w-full flex-col gap-4">
-        <PostCardSkeleton pulse={false} />
-        <PostCardSkeleton pulse={false} />
-        <PostCardSkeleton pulse={false} />
-
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/10">
-          <p className="text-2xl font-bold text-white">No posts yet</p>
-        </div>
+      <div className="flex flex-1 flex-col gap-3">
+        <h2 className="text-xl font-semibold">{title}</h2>
+        <p className="text-muted-foreground text-sm leading-6">{description}</p>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex w-full flex-col gap-4">
-      {posts.map((p) => {
-        return <PostCard key={p.id} post={p} />;
-      })}
-    </div>
-  );
-}
-
-function PostCard(props: { post: RouterOutputs["post"]["all"][number] }) {
-  const trpc = useTRPC();
-  const queryClient = useQueryClient();
-  const deletePost = useMutation(
-    trpc.post.delete.mutationOptions({
-      onSuccess: async () => {
-        await queryClient.invalidateQueries(trpc.post.pathFilter());
-      },
-      onError: (err) => {
-        toast.error(
-          err.data?.code === "UNAUTHORIZED"
-            ? "You must be logged in to delete a post"
-            : "Failed to delete post",
-        );
-      },
-    }),
-  );
-
-  return (
-    <div className="bg-muted flex flex-row rounded-lg p-4">
-      <div className="grow">
-        <h2 className="text-primary text-2xl font-bold">{props.post.title}</h2>
-        <p className="mt-2 text-sm">{props.post.content}</p>
-      </div>
-      <div>
-        <Button
-          variant="ghost"
-          className="text-primary cursor-pointer text-sm font-bold uppercase hover:bg-transparent hover:text-white"
-          onClick={() => deletePost.mutate(props.post.id)}
-        >
-          Delete
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function PostCardSkeleton(props: { pulse?: boolean }) {
-  const { pulse = true } = props;
-  return (
-    <div className="bg-muted flex flex-row rounded-lg p-4">
-      <div className="grow">
-        <h2
-          className={cn(
-            "bg-primary w-1/4 rounded-sm text-2xl font-bold",
-            pulse && "animate-pulse",
-          )}
-        >
-          &nbsp;
-        </h2>
-        <p
-          className={cn(
-            "mt-2 w-1/3 rounded-sm bg-current text-sm",
-            pulse && "animate-pulse",
-          )}
-        >
-          &nbsp;
-        </p>
-      </div>
-    </div>
+      <span className="text-sm font-medium underline-offset-4 group-hover:underline">
+        {cta}
+      </span>
+    </Link>
   );
 }

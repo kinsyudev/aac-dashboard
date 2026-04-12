@@ -24,3 +24,4 @@ export const CreatePostSchema = createInsertSchema(Post, {
 
 export * from "./auth-schema";
 export * from "./game-schema";
+export * from "./shopping-schema";

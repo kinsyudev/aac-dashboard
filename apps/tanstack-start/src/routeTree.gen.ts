@@ -9,15 +9,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SimulatorRouteImport } from './routes/simulator'
+import { Route as ShoplistsRouteImport } from './routes/shoplists'
 import { Route as ShoplistRouteImport } from './routes/shoplist'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as CraftRouteImport } from './routes/craft'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SimulatorIndexRouteImport } from './routes/simulator.index'
+import { Route as ShoplistsIndexRouteImport } from './routes/shoplists.index'
 import { Route as CraftIndexRouteImport } from './routes/craft.index'
+import { Route as SimulatorItemIdRouteImport } from './routes/simulator.$itemId'
+import { Route as ShoplistsListIdRouteImport } from './routes/shoplists.$listId'
 import { Route as CraftItemIdRouteImport } from './routes/craft.$itemId'
+import { Route as ShoplistsInviteTokenRouteImport } from './routes/shoplists.invite.$token'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
+const SimulatorRoute = SimulatorRouteImport.update({
+  id: '/simulator',
+  path: '/simulator',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShoplistsRoute = ShoplistsRouteImport.update({
+  id: '/shoplists',
+  path: '/shoplists',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ShoplistRoute = ShoplistRouteImport.update({
   id: '/shoplist',
   path: '/shoplist',
@@ -38,15 +55,40 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SimulatorIndexRoute = SimulatorIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SimulatorRoute,
+} as any)
+const ShoplistsIndexRoute = ShoplistsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShoplistsRoute,
+} as any)
 const CraftIndexRoute = CraftIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => CraftRoute,
 } as any)
+const SimulatorItemIdRoute = SimulatorItemIdRouteImport.update({
+  id: '/$itemId',
+  path: '/$itemId',
+  getParentRoute: () => SimulatorRoute,
+} as any)
+const ShoplistsListIdRoute = ShoplistsListIdRouteImport.update({
+  id: '/$listId',
+  path: '/$listId',
+  getParentRoute: () => ShoplistsRoute,
+} as any)
 const CraftItemIdRoute = CraftItemIdRouteImport.update({
   id: '/$itemId',
   path: '/$itemId',
   getParentRoute: () => CraftRoute,
+} as any)
+const ShoplistsInviteTokenRoute = ShoplistsInviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => ShoplistsRoute,
 } as any)
 const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
   id: '/api/trpc/$',
@@ -64,19 +106,31 @@ export interface FileRoutesByFullPath {
   '/craft': typeof CraftRouteWithChildren
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
+  '/shoplists': typeof ShoplistsRouteWithChildren
+  '/simulator': typeof SimulatorRouteWithChildren
   '/craft/$itemId': typeof CraftItemIdRoute
+  '/shoplists/$listId': typeof ShoplistsListIdRoute
+  '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft/': typeof CraftIndexRoute
+  '/shoplists/': typeof ShoplistsIndexRoute
+  '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
   '/craft/$itemId': typeof CraftItemIdRoute
+  '/shoplists/$listId': typeof ShoplistsListIdRoute
+  '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft': typeof CraftIndexRoute
+  '/shoplists': typeof ShoplistsIndexRoute
+  '/simulator': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -84,10 +138,17 @@ export interface FileRoutesById {
   '/craft': typeof CraftRouteWithChildren
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
+  '/shoplists': typeof ShoplistsRouteWithChildren
+  '/simulator': typeof SimulatorRouteWithChildren
   '/craft/$itemId': typeof CraftItemIdRoute
+  '/shoplists/$listId': typeof ShoplistsListIdRoute
+  '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft/': typeof CraftIndexRoute
+  '/shoplists/': typeof ShoplistsIndexRoute
+  '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -96,29 +157,48 @@ export interface FileRouteTypes {
     | '/craft'
     | '/profile'
     | '/shoplist'
+    | '/shoplists'
+    | '/simulator'
     | '/craft/$itemId'
+    | '/shoplists/$listId'
+    | '/simulator/$itemId'
     | '/craft/'
+    | '/shoplists/'
+    | '/simulator/'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/shoplists/invite/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/profile'
     | '/shoplist'
     | '/craft/$itemId'
+    | '/shoplists/$listId'
+    | '/simulator/$itemId'
     | '/craft'
+    | '/shoplists'
+    | '/simulator'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/shoplists/invite/$token'
   id:
     | '__root__'
     | '/'
     | '/craft'
     | '/profile'
     | '/shoplist'
+    | '/shoplists'
+    | '/simulator'
     | '/craft/$itemId'
+    | '/shoplists/$listId'
+    | '/simulator/$itemId'
     | '/craft/'
+    | '/shoplists/'
+    | '/simulator/'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/shoplists/invite/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -126,12 +206,28 @@ export interface RootRouteChildren {
   CraftRoute: typeof CraftRouteWithChildren
   ProfileRoute: typeof ProfileRoute
   ShoplistRoute: typeof ShoplistRoute
+  ShoplistsRoute: typeof ShoplistsRouteWithChildren
+  SimulatorRoute: typeof SimulatorRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/simulator': {
+      id: '/simulator'
+      path: '/simulator'
+      fullPath: '/simulator'
+      preLoaderRoute: typeof SimulatorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/shoplists': {
+      id: '/shoplists'
+      path: '/shoplists'
+      fullPath: '/shoplists'
+      preLoaderRoute: typeof ShoplistsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/shoplist': {
       id: '/shoplist'
       path: '/shoplist'
@@ -160,6 +256,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/simulator/': {
+      id: '/simulator/'
+      path: '/'
+      fullPath: '/simulator/'
+      preLoaderRoute: typeof SimulatorIndexRouteImport
+      parentRoute: typeof SimulatorRoute
+    }
+    '/shoplists/': {
+      id: '/shoplists/'
+      path: '/'
+      fullPath: '/shoplists/'
+      preLoaderRoute: typeof ShoplistsIndexRouteImport
+      parentRoute: typeof ShoplistsRoute
+    }
     '/craft/': {
       id: '/craft/'
       path: '/'
@@ -167,12 +277,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CraftIndexRouteImport
       parentRoute: typeof CraftRoute
     }
+    '/simulator/$itemId': {
+      id: '/simulator/$itemId'
+      path: '/$itemId'
+      fullPath: '/simulator/$itemId'
+      preLoaderRoute: typeof SimulatorItemIdRouteImport
+      parentRoute: typeof SimulatorRoute
+    }
+    '/shoplists/$listId': {
+      id: '/shoplists/$listId'
+      path: '/$listId'
+      fullPath: '/shoplists/$listId'
+      preLoaderRoute: typeof ShoplistsListIdRouteImport
+      parentRoute: typeof ShoplistsRoute
+    }
     '/craft/$itemId': {
       id: '/craft/$itemId'
       path: '/$itemId'
       fullPath: '/craft/$itemId'
       preLoaderRoute: typeof CraftItemIdRouteImport
       parentRoute: typeof CraftRoute
+    }
+    '/shoplists/invite/$token': {
+      id: '/shoplists/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/shoplists/invite/$token'
+      preLoaderRoute: typeof ShoplistsInviteTokenRouteImport
+      parentRoute: typeof ShoplistsRoute
     }
     '/api/trpc/$': {
       id: '/api/trpc/$'
@@ -203,11 +334,43 @@ const CraftRouteChildren: CraftRouteChildren = {
 
 const CraftRouteWithChildren = CraftRoute._addFileChildren(CraftRouteChildren)
 
+interface ShoplistsRouteChildren {
+  ShoplistsListIdRoute: typeof ShoplistsListIdRoute
+  ShoplistsIndexRoute: typeof ShoplistsIndexRoute
+  ShoplistsInviteTokenRoute: typeof ShoplistsInviteTokenRoute
+}
+
+const ShoplistsRouteChildren: ShoplistsRouteChildren = {
+  ShoplistsListIdRoute: ShoplistsListIdRoute,
+  ShoplistsIndexRoute: ShoplistsIndexRoute,
+  ShoplistsInviteTokenRoute: ShoplistsInviteTokenRoute,
+}
+
+const ShoplistsRouteWithChildren = ShoplistsRoute._addFileChildren(
+  ShoplistsRouteChildren,
+)
+
+interface SimulatorRouteChildren {
+  SimulatorItemIdRoute: typeof SimulatorItemIdRoute
+  SimulatorIndexRoute: typeof SimulatorIndexRoute
+}
+
+const SimulatorRouteChildren: SimulatorRouteChildren = {
+  SimulatorItemIdRoute: SimulatorItemIdRoute,
+  SimulatorIndexRoute: SimulatorIndexRoute,
+}
+
+const SimulatorRouteWithChildren = SimulatorRoute._addFileChildren(
+  SimulatorRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CraftRoute: CraftRouteWithChildren,
   ProfileRoute: ProfileRoute,
   ShoplistRoute: ShoplistRoute,
+  ShoplistsRoute: ShoplistsRouteWithChildren,
+  SimulatorRoute: SimulatorRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
 }

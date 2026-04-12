@@ -6,6 +6,7 @@
     "sync-items": "pnpm with-env tsx src/sync-items.ts",
     "sync-items:full-refresh": "pnpm with-env tsx src/sync-items.ts --full-refresh",
     "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
+    "sync-prices:backfill": "pnpm with-env tsx src/sync-prices-backfill.ts",
     "classify-proficiencies": "pnpm with-env tsx src/classify-proficiencies.ts",
     "with-env": "dotenv -e ../../.env --",
     "typecheck": "tsc --noEmit",

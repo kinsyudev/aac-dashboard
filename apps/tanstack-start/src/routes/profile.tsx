@@ -19,6 +19,16 @@ import { PROFICIENCY_CATEGORIES, getRank } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/profile")({
+  head: () => ({
+    meta: [
+      { title: "Profile | AAC Dashboard" },
+      {
+        name: "description",
+        content:
+          "Manage proficiencies and item price overrides used across your crafting and shopping tools.",
+      },
+    ],
+  }),
   loader: ({ context }) => {
     const { trpc, queryClient } = context;
     void queryClient.prefetchQuery(

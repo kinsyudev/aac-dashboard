@@ -3,6 +3,7 @@ import { craftsRouter } from "./router/crafts";
 import { itemsRouter } from "./router/items";
 import { postRouter } from "./router/post";
 import { profileRouter } from "./router/profile";
+import { shoppingListsRouter } from "./router/shopping-lists";
 import { createTRPCRouter } from "./trpc";
 
 export const appRouter = createTRPCRouter({
@@ -11,6 +12,7 @@ export const appRouter = createTRPCRouter({
   items: itemsRouter,
   crafts: craftsRouter,
   profile: profileRouter,
+  shoppingLists: shoppingListsRouter,
 });
 
 // export type definition of API

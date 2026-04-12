@@ -9,6 +9,16 @@ import { ItemIcon } from "~/component/item-icon";
 import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/simulator/")({
+  head: () => ({
+    meta: [
+      { title: "Simulator | AAC Dashboard" },
+      {
+        name: "description",
+        content:
+          "Simulate ArcheAge Classic sealed craft chains and compare profitability before you spend resources.",
+      },
+    ],
+  }),
   loader: ({ context }) => {
     void context.queryClient.prefetchQuery(
       context.trpc.items.craftable.queryOptions(),
