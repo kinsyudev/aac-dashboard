@@ -1,7 +1,7 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import type React from "react";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
@@ -15,15 +15,33 @@ import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
-export const Route = createFileRoute("/shoplist")({
-  validateSearch: z.object({
-    craft: z.coerce.number().int(),
+const searchSchema = z
+  .object({
+    craft: z.coerce.number().int().optional(),
+    simItem: z.coerce.number().int().optional(),
     qty: z.coerce.number().int().min(1).default(1),
+    attempts: z.coerce.number().int().min(1).optional(),
     sub: z.string().optional(),
+  })
+  .refine((value) => value.craft != null || value.simItem != null, {
+    message: "craft or simItem is required",
+  });
+
+export const Route = createFileRoute("/shoplist")({
+  validateSearch: searchSchema,
+  loaderDeps: ({ search }) => ({
+    craftId: search.craft,
+    simItemId: search.simItem,
   }),
-  loaderDeps: ({ search }) => ({ craftId: search.craft }),
   loader: async ({ context, deps }) => {
     const { trpc, queryClient } = context;
+    if (deps.simItemId != null) {
+      await queryClient.fetchQuery(
+        trpc.crafts.forItem.queryOptions(deps.simItemId),
+      );
+      return;
+    }
+    if (deps.craftId == null) return;
     await queryClient.fetchQuery(
       trpc.crafts.forCraft.queryOptions(deps.craftId),
     );
@@ -33,36 +51,66 @@ export const Route = createFileRoute("/shoplist")({
 });
 
 function ShoplistPage() {
-  const { craft: craftId } = Route.useSearch();
+  const { craft: craftId, simItem: simItemId } = Route.useSearch();
   return (
     <main className="container py-16">
       <Suspense fallback={<p>Loading...</p>}>
-        <ShoplistDetail craftId={craftId} />
+        <ShoplistDetail craftId={craftId} simItemId={simItemId} />
       </Suspense>
     </main>
   );
 }
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 type ForCraftOutput = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forCraft"]>
 >;
-type SubcraftEntry = ForCraftOutput["subcraftsByItemId"][number][number];
+type ForItemOutput = NonNullable<
+  inferProcedureOutput<AppRouter["crafts"]["forItem"]>
+>;
+type SubcraftEntry =
+  | ForCraftOutput["subcraftsByItemId"][number][number]
+  | ForItemOutput["subcraftsByItemId"][number][number];
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 
+type Material = {
+  item: { id: number; name: string; icon: string | null };
+  amount: number;
+};
 
-// ─── Flat shopping list ───────────────────────────────────────────────────────
+type RecipeEntry = {
+  craft: {
+    id: number;
+    name: string;
+    labor: number;
+    proficiency: string | null;
+  };
+  materials: Material[];
+  products: {
+    item: { id: number };
+    amount: number;
+  }[];
+};
 
 type ShoppingListItem = {
   item: { id: number; name: string; icon: string | null };
   totalAmount: number;
 };
 
+function getItemPrice(
+  itemId: number,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+): number {
+  const custom = overrideMap.get(itemId);
+  if (custom != null) return custom;
+  const price = priceMap.get(itemId);
+  return parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+}
+
 function buildShoppingList(
-  materials: { item: { id: number; name: string; icon: string | null }; amount: number }[],
+  materials: Material[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
   depth: number,
@@ -74,7 +122,8 @@ function buildShoppingList(
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
       const sub = pickPreferredCraft(subcraftMap[item.id]!, item.id);
-      const produced = sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
+      const produced =
+        sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildShoppingList(
         sub.materials,
         craftModeSet,
@@ -85,11 +134,8 @@ function buildShoppingList(
       );
     } else {
       const existing = acc.get(item.id);
-      if (existing) {
-        existing.totalAmount += scaled;
-      } else {
-        acc.set(item.id, { item, totalAmount: scaled });
-      }
+      if (existing) existing.totalAmount += scaled;
+      else acc.set(item.id, { item, totalAmount: scaled });
     }
   }
 }
@@ -114,6 +160,7 @@ function buildLaborByProficiency(
     );
     acc.set(key, (acc.get(key) ?? 0) + batches * perBatch);
   }
+
   for (const { item, amount } of materials) {
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
@@ -135,7 +182,35 @@ function buildLaborByProficiency(
   }
 }
 
-// ─── Share button ─────────────────────────────────────────────────────────────
+function getSimulationChain(
+  mainCraft: {
+    materials: Material[];
+  },
+  subcraftMap: SubcraftMap,
+): { keyMaterialId: number | null; keyMaterialName: string | null } {
+  const tierList = [
+    "illustrious",
+    "magnificent",
+    "epherium",
+    "delphinad",
+    "ayanad",
+  ] as const;
+
+  for (const mat of mainCraft.materials) {
+    const name = mat.item.name.toLowerCase();
+    if (tierList.some((tier) => name.includes(tier))) {
+      return { keyMaterialId: mat.item.id, keyMaterialName: mat.item.name };
+    }
+  }
+
+  for (const mat of mainCraft.materials) {
+    if (subcraftMap[mat.item.id]?.length) {
+      return { keyMaterialId: mat.item.id, keyMaterialName: mat.item.name };
+    }
+  }
+
+  return { keyMaterialId: null, keyMaterialName: null };
+}
 
 function ShareButton() {
   const [copied, setCopied] = useState(false);
@@ -154,8 +229,6 @@ function ShareButton() {
   );
 }
 
-// ─── Recipe display ───────────────────────────────────────────────────────────
-
 function RecipeTree({
   entry,
   priceMap,
@@ -166,11 +239,7 @@ function RecipeTree({
   toggleMode,
   depth = 0,
 }: {
-  entry: {
-    craft: ForCraftOutput["craft"];
-    materials: ForCraftOutput["materials"];
-    products: ForCraftOutput["products"];
-  } | SubcraftEntry;
+  entry: RecipeEntry | SubcraftEntry;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   proficiencyMap: ProficiencyMap;
@@ -186,13 +255,7 @@ function RecipeTree({
     if (!subEntries) return 0;
     const sub = pickPreferredCraft(subEntries, itemId);
     const batchCost = sub.materials.reduce((sum, { item, amount }) => {
-      const custom = overrideMap.get(item.id);
-      const price = priceMap.get(item.id);
-      const u =
-        custom != null
-          ? custom
-          : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-      return sum + u * amount;
+      return sum + getItemPrice(item.id, priceMap, overrideMap) * amount;
     }, 0);
     const produced =
       sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
@@ -201,12 +264,7 @@ function RecipeTree({
 
   const total = materials.reduce((sum, { item, amount }) => {
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
-    const custom = overrideMap.get(item.id);
-    const price = priceMap.get(item.id);
-    const buyUnit =
-      custom != null
-        ? custom
-        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+    const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
     const unit =
       craftModeSet.has(item.id) && isCraftable
         ? getCraftCostPerUnit(item.id)
@@ -225,7 +283,7 @@ function RecipeTree({
     >
       <div className="mb-2.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <p className={`font-semibold ${depth > 0 ? "text-sm" : ""} truncate`}>
+          <p className={`truncate font-semibold ${depth > 0 ? "text-sm" : ""}`}>
             {craft.name}
           </p>
           <ProficiencyBadge proficiency={craft.proficiency} />
@@ -259,9 +317,7 @@ function RecipeTree({
           const customPrice = overrideMap.get(item.id);
           const price = priceMap.get(item.id);
           const isCustom = customPrice != null;
-          const buyUnit = isCustom
-            ? customPrice
-            : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+          const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
           const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
           const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
           const lineTotal = unit * amount;
@@ -406,23 +462,40 @@ function RecipeTree({
   );
 }
 
-// ─── Main detail component ────────────────────────────────────────────────────
-
-function ShoplistDetail({ craftId }: { craftId: number }) {
+function ShoplistDetail({
+  craftId,
+  simItemId,
+}: {
+  craftId?: number;
+  simItemId?: number;
+}) {
   const trpc = useTRPC();
   const navigate = useNavigate({ from: "/shoplist" });
-  const { qty, sub } = Route.useSearch();
+  const { qty, sub, attempts } = Route.useSearch();
+  const isSimulator = simItemId != null;
 
-  const { data } = useSuspenseQuery(trpc.crafts.forCraft.queryOptions(craftId));
+  const craftQuery = useQuery({
+    ...trpc.crafts.forCraft.queryOptions(craftId ?? -1),
+    enabled: !isSimulator && craftId != null,
+  });
+  const simulatorQuery = useQuery({
+    ...trpc.crafts.forItem.queryOptions(simItemId ?? -1),
+    enabled: isSimulator && simItemId != null,
+  });
+
+  const craftData = craftQuery.data ?? null;
+  const simulatorData = simulatorQuery.data ?? null;
   const { proficiencyMap, overrideMap } = useUserData();
 
   const [localQty, setLocalQty] = useState(qty);
-  useEffect(() => { setLocalQty(qty); }, [qty]);
+  useEffect(() => {
+    setLocalQty(qty);
+  }, [qty]);
 
-  const priceMap: PriceMap = useMemo(
-    () => new Map(data?.prices.map((p) => [p.itemId, p])),
-    [data],
-  );
+  const priceMap: PriceMap = useMemo(() => {
+    const prices = isSimulator ? simulatorData?.prices : craftData?.prices;
+    return new Map(prices?.map((p) => [p.itemId, p]) ?? []);
+  }, [craftData, isSimulator, simulatorData]);
 
   const craftModeSet = useMemo(
     () => new Set((sub ?? "").split(",").filter(Boolean).map(Number)),
@@ -433,7 +506,7 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
     const next = new Set(craftModeSet);
     if (next.has(itemId)) next.delete(itemId);
     else next.add(itemId);
-    const newSub = [...next].join(",") || undefined;
+    const newSub = [...next].sort((a, b) => a - b).join(",") || undefined;
     void navigate({ search: (prev) => ({ ...prev, sub: newSub }) });
   };
 
@@ -442,92 +515,332 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
     void navigate({ search: (prev) => ({ ...prev, qty: clamped }) });
   };
 
-  if (!data) return <p>Craft not found.</p>;
-
-  const subcraftMap = data.subcraftsByItemId ?? {};
-
-  // Scale materials by qty for the recipe tree display
-  const scaledEntry = useMemo(
-    () => ({
-      craft: data.craft,
-      materials: data.materials.map((m) => ({ ...m, amount: m.amount * qty })),
-      products: data.products,
-    }),
-    [data, qty],
+  const craftSubcraftMap = craftData?.subcraftsByItemId ?? {};
+  const craftScaledEntry = useMemo(
+    () =>
+      craftData
+        ? {
+            craft: craftData.craft,
+            materials: craftData.materials.map((m) => ({
+              ...m,
+              amount: m.amount * qty,
+            })),
+            products: craftData.products,
+          }
+        : null,
+    [craftData, qty],
   );
-
-  // Build flat shopping list
-  const shoppingList = useMemo(() => {
+  const craftShoppingList = useMemo(() => {
+    if (!craftData) return [];
     const acc = new Map<number, ShoppingListItem>();
-    buildShoppingList(data.materials, craftModeSet, subcraftMap, 0, acc, qty);
-    return [...acc.values()].sort((a, b) =>
-      a.item.name.localeCompare(b.item.name),
-    );
-  }, [data.materials, craftModeSet, subcraftMap, qty]);
-
-  const laborByProficiency = useMemo(() => {
-    const acc = new Map<string, number>();
-    buildLaborByProficiency(
-      data.craft,
-      data.materials,
+    buildShoppingList(
+      craftData.materials,
       craftModeSet,
-      subcraftMap,
+      craftSubcraftMap,
+      0,
+      acc,
+      qty,
+    );
+    return [...acc.values()].sort((a, b) => a.item.name.localeCompare(b.item.name));
+  }, [craftData, craftModeSet, craftSubcraftMap, qty]);
+  const craftLaborByProficiency = useMemo(() => {
+    const acc = new Map<string, number>();
+    if (!craftData) return acc;
+    buildLaborByProficiency(
+      craftData.craft,
+      craftData.materials,
+      craftModeSet,
+      craftSubcraftMap,
       0,
       qty,
       acc,
       proficiencyMap,
     );
     return acc;
-  }, [data.craft, data.materials, craftModeSet, subcraftMap, qty, proficiencyMap]);
+  }, [craftData, craftModeSet, craftSubcraftMap, proficiencyMap, qty]);
 
-  const totalLabor = useMemo(
-    () => [...laborByProficiency.values()].reduce((s, v) => s + v, 0),
-    [laborByProficiency],
+  const simulatorMainCraft = simulatorData?.crafts[0] ?? null;
+  const simulatorSubcraftMap = simulatorData?.subcraftsByItemId ?? {};
+  const expectedAttempts = attempts ?? 1;
+  const simulatorChain = useMemo(
+    () =>
+      simulatorMainCraft
+        ? getSimulationChain(simulatorMainCraft, simulatorSubcraftMap)
+        : { keyMaterialId: null, keyMaterialName: null },
+    [simulatorMainCraft, simulatorSubcraftMap],
   );
+  const attemptEntry = useMemo(
+    () =>
+      simulatorChain.keyMaterialId != null
+        ? pickPreferredCraft(
+            simulatorSubcraftMap[simulatorChain.keyMaterialId]!,
+            simulatorChain.keyMaterialId,
+          )
+        : null,
+    [simulatorChain.keyMaterialId, simulatorSubcraftMap],
+  );
+  const scaledAttemptEntry = useMemo(
+    () =>
+      attemptEntry
+        ? {
+            craft: attemptEntry.craft,
+            materials: attemptEntry.materials.map((m) => ({
+              ...m,
+              amount: m.amount * expectedAttempts,
+            })),
+            products: attemptEntry.products,
+          }
+        : null,
+    [attemptEntry, expectedAttempts],
+  );
+  const finalUpgradeEntry = useMemo(
+    () =>
+      simulatorMainCraft
+        ? {
+            craft: simulatorMainCraft.craft,
+            materials: simulatorMainCraft.materials.filter(
+              ({ item }) => item.id !== simulatorChain.keyMaterialId,
+            ),
+            products: simulatorMainCraft.products,
+          }
+        : null,
+    [simulatorChain.keyMaterialId, simulatorMainCraft],
+  );
+  const simulatorShoppingList = useMemo(() => {
+    if (!simulatorData || !finalUpgradeEntry) return [];
+    const acc = new Map<number, ShoppingListItem>();
+    if (attemptEntry && simulatorChain.keyMaterialId != null) {
+      buildShoppingList(
+        [
+          {
+            item: {
+              id: simulatorChain.keyMaterialId,
+              name: simulatorChain.keyMaterialName ?? "",
+              icon: null,
+            },
+            amount: expectedAttempts,
+          },
+        ],
+        craftModeSet,
+        simulatorSubcraftMap,
+        0,
+        acc,
+        1,
+      );
+    }
+    buildShoppingList(
+      finalUpgradeEntry.materials,
+      craftModeSet,
+      simulatorSubcraftMap,
+      0,
+      acc,
+      1,
+    );
+    return [...acc.values()].sort((a, b) => a.item.name.localeCompare(b.item.name));
+  }, [
+    attemptEntry,
+    craftModeSet,
+    expectedAttempts,
+    finalUpgradeEntry,
+    simulatorChain.keyMaterialId,
+    simulatorChain.keyMaterialName,
+    simulatorData,
+    simulatorSubcraftMap,
+  ]);
+  const simulatorLaborByProficiency = useMemo(() => {
+    const acc = new Map<string, number>();
+    if (!finalUpgradeEntry) return acc;
+    if (attemptEntry) {
+      buildLaborByProficiency(
+        attemptEntry.craft,
+        attemptEntry.materials,
+        craftModeSet,
+        simulatorSubcraftMap,
+        0,
+        expectedAttempts,
+        acc,
+        proficiencyMap,
+      );
+    }
+    buildLaborByProficiency(
+      finalUpgradeEntry.craft,
+      finalUpgradeEntry.materials,
+      craftModeSet,
+      simulatorSubcraftMap,
+      0,
+      1,
+      acc,
+      proficiencyMap,
+    );
+    return acc;
+  }, [
+    attemptEntry,
+    craftModeSet,
+    expectedAttempts,
+    finalUpgradeEntry,
+    proficiencyMap,
+    simulatorSubcraftMap,
+  ]);
 
-  const totalCost = shoppingList.reduce((sum, { item, totalAmount }) => {
-    const custom = overrideMap.get(item.id);
-    const price = priceMap.get(item.id);
-    const unit =
-      custom != null
-        ? custom
-        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-    return sum + unit * Math.ceil(totalAmount);
-  }, 0);
+  if (!isSimulator && !craftData) return <p>Craft not found.</p>;
+  if (isSimulator && !simulatorData) return <p>Craft not found.</p>;
+
+  if (!isSimulator) {
+    const data = craftData!;
+    return (
+      <ShoplistLayout
+        backLink={
+          data.item ? (
+            <Link
+              to="/craft/$itemId"
+              params={{ itemId: data.item.id }}
+              className="text-muted-foreground flex items-center gap-1 text-sm hover:underline"
+            >
+              ← {data.item.name}
+            </Link>
+          ) : null
+        }
+        title={data.item?.name ?? data.craft.name}
+        subtitle={data.craft.name}
+        icon={data.item?.icon ?? null}
+        quantityLabel="Number of crafts"
+        localQty={localQty}
+        setLocalQty={setLocalQty}
+        commitQty={commitQty}
+        recipeSections={
+          craftScaledEntry
+            ? [{ title: "Recipe", entry: craftScaledEntry, note: null }]
+            : []
+        }
+        shoppingList={craftShoppingList}
+        laborByProficiency={craftLaborByProficiency}
+        priceMap={priceMap}
+        overrideMap={overrideMap}
+        subcraftMap={craftSubcraftMap}
+        craftModeSet={craftModeSet}
+        proficiencyMap={proficiencyMap}
+        toggleMode={toggleMode}
+      />
+    );
+  }
+
+  const data = simulatorData!;
+  if (!finalUpgradeEntry) return <p>Craft not found.</p>;
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Back link */}
-      {data.item && (
+    <ShoplistLayout
+      backLink={
         <Link
-          to="/craft/$itemId"
+          to="/simulator/$itemId"
           params={{ itemId: data.item.id }}
           className="text-muted-foreground flex items-center gap-1 text-sm hover:underline"
         >
           ← {data.item.name}
         </Link>
-      )}
+      }
+      title={data.item.name}
+      subtitle="Simulator export"
+      icon={data.item.icon}
+      quantityLabel="Expected attempts"
+      localQty={localQty}
+      setLocalQty={setLocalQty}
+      commitQty={(val) => {
+        const clamped = Math.max(1, Math.floor(val));
+        void navigate({ search: (prev) => ({ ...prev, attempts: clamped }) });
+      }}
+      recipeSections={[
+        ...(scaledAttemptEntry
+          ? [{ title: "Attempt chain", entry: scaledAttemptEntry, note: null }]
+          : []),
+        {
+          title: "Final upgrade",
+          entry: finalUpgradeEntry,
+          note: simulatorChain.keyMaterialName
+            ? `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
+            : null,
+        },
+      ]}
+      shoppingList={simulatorShoppingList}
+      laborByProficiency={simulatorLaborByProficiency}
+      priceMap={priceMap}
+      overrideMap={overrideMap}
+      subcraftMap={simulatorSubcraftMap}
+      craftModeSet={craftModeSet}
+      proficiencyMap={proficiencyMap}
+      toggleMode={toggleMode}
+    />
+  );
+}
 
-      {/* Header */}
+function ShoplistLayout({
+  backLink,
+  title,
+  subtitle,
+  icon,
+  quantityLabel,
+  localQty,
+  setLocalQty,
+  commitQty,
+  recipeSections,
+  shoppingList,
+  laborByProficiency,
+  priceMap,
+  overrideMap,
+  subcraftMap,
+  craftModeSet,
+  proficiencyMap,
+  toggleMode,
+}: {
+  backLink: React.ReactNode;
+  title: string;
+  subtitle: string;
+  icon: string | null;
+  quantityLabel: string;
+  localQty: number;
+  setLocalQty: (value: number) => void;
+  commitQty: (value: number) => void;
+  recipeSections: { title: string; entry: RecipeEntry; note: string | null }[];
+  shoppingList: ShoppingListItem[];
+  laborByProficiency: Map<string, number>;
+  priceMap: PriceMap;
+  overrideMap: OverrideMap;
+  subcraftMap: SubcraftMap;
+  craftModeSet: Set<number>;
+  proficiencyMap: ProficiencyMap;
+  toggleMode: (itemId: number) => void;
+}) {
+  const totalLabor = useMemo(
+    () => [...laborByProficiency.values()].reduce((sum, value) => sum + value, 0),
+    [laborByProficiency],
+  );
+
+  const totalCost = useMemo(
+    () =>
+      shoppingList.reduce((sum, { item, totalAmount }) => {
+        const unit = getItemPrice(item.id, priceMap, overrideMap);
+        return sum + unit * Math.ceil(totalAmount);
+      }, 0),
+    [overrideMap, priceMap, shoppingList],
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {backLink}
+
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          {data.item?.icon && (
-            <ItemIcon icon={data.item.icon} name={data.item.name} size="lg" />
-          )}
+          {icon && <ItemIcon icon={icon} name={title} size="lg" />}
           <div>
-            <h1 className="text-3xl font-bold">
-              {data.item?.name ?? data.craft.name}
-            </h1>
-            <p className="text-muted-foreground text-sm">{data.craft.name}</p>
+            <h1 className="text-3xl font-bold">{title}</h1>
+            <p className="text-muted-foreground text-sm">{subtitle}</p>
           </div>
         </div>
         <ShareButton />
       </div>
 
-      {/* Quantity input */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium" htmlFor="shoplist-qty">
-          Number of crafts
+          {quantityLabel}
         </label>
         <input
           id="shoplist-qty"
@@ -541,21 +854,28 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
         />
       </div>
 
-      {/* Recipe tree */}
-      <div className="flex flex-col gap-2">
-        <h2 className="text-xl font-semibold">Recipe</h2>
-        <RecipeTree
-          entry={scaledEntry}
-          priceMap={priceMap}
-          overrideMap={overrideMap}
-          proficiencyMap={proficiencyMap}
-          subcraftMap={subcraftMap}
-          craftModeSet={craftModeSet}
-          toggleMode={toggleMode}
-        />
+      <div className="flex flex-col gap-4">
+        {recipeSections.map((section) => (
+          <div key={section.title} className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold">{section.title}</h2>
+              {section.note && (
+                <p className="text-muted-foreground text-sm">{section.note}</p>
+              )}
+            </div>
+            <RecipeTree
+              entry={section.entry}
+              priceMap={priceMap}
+              overrideMap={overrideMap}
+              proficiencyMap={proficiencyMap}
+              subcraftMap={subcraftMap}
+              craftModeSet={craftModeSet}
+              toggleMode={toggleMode}
+            />
+          </div>
+        ))}
       </div>
 
-      {/* Flat shopping list */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold">Shopping List</h2>
@@ -587,13 +907,9 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
         <ul className="flex flex-col gap-1 rounded-md border p-3">
           {shoppingList.map(({ item, totalAmount }) => {
             const custom = overrideMap.get(item.id);
-            const price = priceMap.get(item.id);
-            const unit =
-              custom != null
-                ? custom
-                : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-            const qty_ceil = Math.ceil(totalAmount);
-            const lineTotal = unit * qty_ceil;
+            const unit = getItemPrice(item.id, priceMap, overrideMap);
+            const qtyCeil = Math.ceil(totalAmount);
+            const lineTotal = unit * qtyCeil;
             return (
               <li
                 key={item.id}
@@ -603,7 +919,7 @@ function ShoplistDetail({ craftId }: { craftId: number }) {
                 <span className="min-w-0 flex-1 truncate">{item.name}</span>
                 <span className="text-muted-foreground tabular-nums">
                   <span className="text-foreground font-medium">
-                    ×{qty_ceil.toLocaleString()}
+                    ×{qtyCeil.toLocaleString()}
                   </span>
                   {unit > 0 && (
                     <span className="ml-2">

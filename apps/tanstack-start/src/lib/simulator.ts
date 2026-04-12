@@ -89,11 +89,11 @@ export function getSalvageWisps(
 }
 
 export interface SimulationInput {
-  /** Total material cost for ONE attempt through the chain (Epherium → Sealed Delphinad). */
+  /** Extra gold/material cost for one sealed Delphinad attempt. */
   costPerAttempt: number;
-  /** Material cost to go from the successful variant to Sealed Ayanad. */
+  /** Material cost to go from the successful revealed Delphinad to Ayanad. */
   sealedUpgradeCost: number;
-  /** Tier where the RNG happens (e.g. "delphinad"). */
+  /** Tier of the failed revealed item that gets salvaged. */
   rngTier: Tier;
   /** Detected equip info for salvage lookups. */
   equip: DetectedEquip;
@@ -101,10 +101,12 @@ export interface SimulationInput {
   wispPrice: number;
   /** Market price of the final sealed ayanad item (for sell comparison). */
   sellPrice: number;
-  /** Total labor for one attempt (Epherium + Sealed Delphinad crafts). */
+  /** Total labor for one attempt. */
   laborPerAttempt: number;
-  /** Labor for the Sealed Ayanad craft step. */
+  /** Labor for the upgrade craft step after rolling the correct variant. */
   sealedUpgradeLabor: number;
+  /** Mana wisps needed to recreate the base Epherium item for another attempt. */
+  seedWispsPerAttempt: number;
 }
 
 export interface SimulationResult {
@@ -118,10 +120,18 @@ export interface SimulationResult {
   expectedAttemptsCost: number;
   /** Wisps recovered per failed attempt (salvage at rngTier). */
   failSalvageWisps: number;
-  /** Gold recovered per failed attempt. */
+  /** Gross gold value of a failed salvage. */
   failRecoveryPerAttempt: number;
-  /** Total gold recovered from all expected failures. */
+  /** Total gross gold value recovered from all expected failures. */
   totalFailRecovery: number;
+  /** Surplus wisps after recreating the next attempt's base item. */
+  failSurplusWisps: number;
+  /** Net gold value kept per failed attempt after reseeding. */
+  failNetRecoveryPerAttempt: number;
+  /** Total net gold value kept from all expected failures. */
+  totalFailNetRecovery: number;
+  /** Upfront gold value of the wisps needed for the first base item. */
+  initialSeedCost: number;
   /** Cost of the final upgrade (variant → sealed ayanad). */
   sealedUpgradeCost: number;
   /** Grand total cost including all attempts + upgrade - failure recovery. */
@@ -152,7 +162,6 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
 
   const expectedAttemptsCost = input.costPerAttempt * expectedAttempts;
 
-  // Failed attempts produce wrong-variant pieces at the RNG tier — salvage them
   const failSalvageWisps = getSalvageWisps(
     input.rngTier,
     input.equip.piece,
@@ -160,9 +169,16 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
   );
   const failRecoveryPerAttempt = failSalvageWisps * input.wispPrice;
   const totalFailRecovery = failRecoveryPerAttempt * failedAttempts;
+  const failSurplusWisps = Math.max(0, failSalvageWisps - input.seedWispsPerAttempt);
+  const failNetRecoveryPerAttempt = failSurplusWisps * input.wispPrice;
+  const totalFailNetRecovery = failNetRecoveryPerAttempt * failedAttempts;
+  const initialSeedCost = input.seedWispsPerAttempt * input.wispPrice;
 
   const totalCost =
-    expectedAttemptsCost + input.sealedUpgradeCost - totalFailRecovery;
+    initialSeedCost +
+    expectedAttemptsCost +
+    input.sealedUpgradeCost -
+    totalFailNetRecovery;
 
   // Revenue from the final piece
   const nextTierIndex = tiers.indexOf(input.rngTier) + 1;
@@ -193,6 +209,10 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
     failSalvageWisps,
     failRecoveryPerAttempt,
     totalFailRecovery,
+    failSurplusWisps,
+    failNetRecoveryPerAttempt,
+    totalFailNetRecovery,
+    initialSeedCost,
     sealedUpgradeCost: input.sealedUpgradeCost,
     totalCost,
     salvageWisps,

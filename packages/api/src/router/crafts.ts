@@ -12,6 +12,20 @@ import {
 
 import { protectedProcedure } from "../trpc";
 
+const UNSUPPORTED_RECIPE_INGREDIENTS = new Set(["elite trader ticket"]);
+
+function normalizeItemName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function hasUnsupportedRecipeIngredient(
+  materials: { item: { name: string } }[],
+): boolean {
+  return materials.some(({ item }) =>
+    UNSUPPORTED_RECIPE_INGREDIENTS.has(normalizeItemName(item.name)),
+  );
+}
+
 export const craftsRouter = {
   all: protectedProcedure.query(({ ctx }) => {
     return ctx.db.select().from(crafts);
@@ -43,6 +57,8 @@ export const craftsRouter = {
           .innerJoin(items, eq(items.id, craftProducts.itemId))
           .where(eq(craftProducts.craftId, input)),
       ]);
+
+      if (hasUnsupportedRecipeIngredient(materials)) return null;
 
       const materialItemIds = materials.map((m) => m.item.id);
 
@@ -133,9 +149,55 @@ export const craftsRouter = {
         },
         {} as Record<number, typeof products>,
       );
+      const supportedCraftsForItem = craftsForItem.filter((craft) => {
+        const craftMaterials = materialsByCraft[craft.id] ?? [];
+        return !hasUnsupportedRecipeIngredient(craftMaterials);
+      });
+
+      if (!supportedCraftsForItem.length) {
+        return {
+          item,
+          crafts: [] as {
+            craft: typeof crafts.$inferSelect;
+            materials: {
+              craftId: number;
+              amount: number;
+              item: typeof items.$inferSelect;
+            }[];
+            products: {
+              craftId: number;
+              amount: number;
+              rate: number | null;
+              item: typeof items.$inferSelect;
+            }[];
+          }[],
+          prices: [] as { itemId: number; avg24h: string | null; avg7d: string | null }[],
+          subcraftsByItemId: {} as Record<
+            number,
+            {
+              craft: typeof crafts.$inferSelect;
+              materials: {
+                craftId: number;
+                amount: number;
+                item: typeof items.$inferSelect;
+              }[];
+              products: {
+                craftId: number;
+                amount: number;
+                rate: number | null;
+                item: typeof items.$inferSelect;
+              }[];
+            }[]
+          >,
+        };
+      }
 
       // Round 3: BFS sub-crafts
-      const allMaterialItemIds = new Set<number>(materials.map((m) => m.item.id));
+      const allMaterialItemIds = new Set<number>(
+        supportedCraftsForItem.flatMap((craft) =>
+          (materialsByCraft[craft.id] ?? []).map((m) => m.item.id),
+        ),
+      );
 
       type SubcraftMaterial = { craftId: number; amount: number; item: typeof items.$inferSelect };
       type SubcraftProduct = { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect };
@@ -191,7 +253,12 @@ export const craftsRouter = {
           {} as Record<number, SubcraftProduct[]>,
         );
 
-        for (const craft of subCraftsRows) {
+        const supportedSubCrafts = subCraftsRows.filter((craft) => {
+          const craftMaterials = subMatByCraft[craft.id] ?? [];
+          return !hasUnsupportedRecipeIngredient(craftMaterials);
+        });
+
+        for (const craft of supportedSubCrafts) {
           const pid = craft.primaryProductId!;
           (subcraftsByItemId[pid] ??= []).push({
             craft,
@@ -200,7 +267,8 @@ export const craftsRouter = {
           });
         }
 
-        const newIds = subMaterials
+        const newIds = supportedSubCrafts
+          .flatMap((craft) => subMatByCraft[craft.id] ?? [])
           .map((m) => m.item.id)
           .filter((id) => !visited.has(id));
         for (const id of newIds) { visited.add(id); allMaterialItemIds.add(id); }
@@ -222,7 +290,7 @@ export const craftsRouter = {
 
       return {
         item,
-        crafts: craftsForItem.map((craft) => ({
+        crafts: supportedCraftsForItem.map((craft) => ({
           craft,
           materials: materialsByCraft[craft.id] ?? [],
           products: productsByCraft[craft.id] ?? [],
@@ -270,6 +338,8 @@ export const craftsRouter = {
               .then((r) => r[0] ?? null)
           : Promise.resolve(null),
       ]);
+
+      if (hasUnsupportedRecipeIngredient(materials)) return null;
 
       // Round 3: BFS subcrafts
       const allMaterialItemIds = new Set<number>(materials.map((m) => m.item.id));
@@ -346,7 +416,12 @@ export const craftsRouter = {
           {} as Record<number, SubcraftProduct[]>,
         );
 
-        for (const subCraft of subCraftsRows) {
+        const supportedSubCrafts = subCraftsRows.filter((subCraft) => {
+          const craftMaterials = subMatByCraft[subCraft.id] ?? [];
+          return !hasUnsupportedRecipeIngredient(craftMaterials);
+        });
+
+        for (const subCraft of supportedSubCrafts) {
           const pid = subCraft.primaryProductId!;
           (subcraftsByItemId[pid] ??= []).push({
             craft: subCraft,
@@ -355,7 +430,8 @@ export const craftsRouter = {
           });
         }
 
-        const newIds = subMaterials
+        const newIds = supportedSubCrafts
+          .flatMap((subCraft) => subMatByCraft[subCraft.id] ?? [])
           .map((m) => m.item.id)
           .filter((id) => !visited.has(id));
         for (const id of newIds) {
