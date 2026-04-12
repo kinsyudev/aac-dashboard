@@ -28,7 +28,7 @@ export const Route = createFileRoute("/simulator/")({
 });
 
 function SimulatorIndex() {
-  const [query, setQuery] = useState("Sealed Ayanad");
+  const [query, setQuery] = useState("Sealed Delphinad");
   const deferred = useDeferredValue(query);
 
   return (
@@ -39,7 +39,7 @@ function SimulatorIndex() {
       </p>
 
       <Input
-        placeholder="Search items... (e.g. Sealed Ayanad Cuirass)"
+        placeholder="Search items... (e.g. Sealed Delphinad Cuirass)"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         className="mb-6 max-w-md"
@@ -47,9 +47,7 @@ function SimulatorIndex() {
 
       {deferred.trim().length >= 2 && (
         <Suspense
-          fallback={
-            <p className="text-muted-foreground text-sm">Loading...</p>
-          }
+          fallback={<p className="text-muted-foreground text-sm">Loading...</p>}
         >
           <SearchResults query={deferred} />
         </Suspense>
