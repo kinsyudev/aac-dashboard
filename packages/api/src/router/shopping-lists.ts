@@ -1,6 +1,8 @@
-import { TRPCError, type TRPCRouterRecord } from "@trpc/server";
+import type { TRPCRouterRecord } from "@trpc/server";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod/v4";
 
+import type { db } from "@acme/db/client";
 import { and, asc, desc, eq, getTableColumns, inArray } from "@acme/db";
 import {
   craftMaterials,
@@ -12,46 +14,57 @@ import {
   shoppingListItems,
   shoppingListMembers,
   shoppingListRoleEnum,
-  shoppingListSourceTypeEnum,
   shoppingLists,
+  shoppingListSourceTypeEnum,
   user,
 } from "@acme/db/schema";
 
 import { protectedProcedure, publicProcedure } from "../trpc";
 
 const MAX_DEPTH = 4;
+type DbClient = typeof db;
+type DbTx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 type ItemRow = typeof items.$inferSelect;
 type CraftRow = typeof crafts.$inferSelect;
-type MaterialRow = {
+interface MaterialRow {
   craftId: number;
   amount: number;
   item: ItemRow;
-};
-type ProductRow = {
+}
+interface ProductRow {
   craftId: number;
   amount: number;
   rate: number | null;
   item: ItemRow;
-};
-type CraftEntry = {
+}
+interface CraftEntry {
   craft: CraftRow;
   materials: MaterialRow[];
   products: ProductRow[];
-};
+}
 type SubcraftMap = Record<number, CraftEntry[]>;
 
 function pickPreferredCraft(entries: CraftEntry[], itemId: number): CraftEntry {
-  return [...entries].sort((a, b) => {
+  const preferred = [...entries].sort((a, b) => {
     const amountFor = (entry: CraftEntry) =>
       entry.products.find((product) => product.item.id === itemId)?.amount ??
       Number.MAX_SAFE_INTEGER;
     return amountFor(a) - amountFor(b);
-  })[0]!;
+  })[0];
+
+  if (!preferred) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "No craft entries available for preferred craft selection.",
+    });
+  }
+
+  return preferred;
 }
 
-async function fetchCraftBlueprint(db: any, craftId: number) {
-  const craft = await db
+async function fetchCraftBlueprint(dbClient: DbClient | DbTx, craftId: number) {
+  const craft = await dbClient
     .select()
     .from(crafts)
     .where(eq(crafts.id, craftId))
@@ -62,7 +75,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
   }
 
   const [materials, products, item] = await Promise.all([
-    db
+    dbClient
       .select({
         craftId: craftMaterials.craftId,
         amount: craftMaterials.amount,
@@ -71,7 +84,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
       .from(craftMaterials)
       .innerJoin(items, eq(items.id, craftMaterials.itemId))
       .where(eq(craftMaterials.craftId, craftId)),
-    db
+    dbClient
       .select({
         craftId: craftProducts.craftId,
         amount: craftProducts.amount,
@@ -82,7 +95,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
       .innerJoin(items, eq(items.id, craftProducts.itemId))
       .where(eq(craftProducts.craftId, craftId)),
     craft.primaryProductId
-      ? db
+      ? dbClient
           .select()
           .from(items)
           .where(eq(items.id, craft.primaryProductId))
@@ -90,7 +103,9 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
       : Promise.resolve(null),
   ]);
 
-  const allMaterialItemIds = new Set<number>(materials.map((m: MaterialRow) => m.item.id));
+  const allMaterialItemIds = new Set<number>(
+    materials.map((m: MaterialRow) => m.item.id),
+  );
   const subcraftsByItemId: SubcraftMap = {};
   const visited = new Set<number>([
     craft.primaryProductId ?? -1,
@@ -99,7 +114,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
   let pendingIds = [...allMaterialItemIds];
 
   while (pendingIds.length > 0) {
-    const subCraftRows = await db
+    const subCraftRows = await dbClient
       .select()
       .from(crafts)
       .where(inArray(crafts.primaryProductId, pendingIds));
@@ -108,7 +123,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
 
     const subCraftIds = subCraftRows.map((candidate: CraftRow) => candidate.id);
     const [subMaterials, subProducts] = await Promise.all([
-      db
+      dbClient
         .select({
           craftId: craftMaterials.craftId,
           amount: craftMaterials.amount,
@@ -117,7 +132,7 @@ async function fetchCraftBlueprint(db: any, craftId: number) {
         .from(craftMaterials)
         .innerJoin(items, eq(items.id, craftMaterials.itemId))
         .where(inArray(craftMaterials.craftId, subCraftIds)),
-      db
+      dbClient
         .select({
           craftId: craftProducts.craftId,
           amount: craftProducts.amount,
@@ -215,8 +230,14 @@ function buildSnapshot(
   subcraftMap: SubcraftMap,
   quantity: number,
 ) {
-  const itemCounts = new Map<number, { item: ItemRow; requiredQuantity: number }>();
-  const craftCounts = new Map<number, { craft: CraftRow; requiredCount: number }>();
+  const itemCounts = new Map<
+    number,
+    { item: ItemRow; requiredQuantity: number }
+  >();
+  const craftCounts = new Map<
+    number,
+    { craft: CraftRow; requiredCount: number }
+  >();
 
   const accumulate = (
     currentEntry: CraftEntry,
@@ -236,15 +257,14 @@ function buildSnapshot(
 
     for (const material of currentEntry.materials) {
       const scaledAmount = material.amount * scaleFactor;
-      const isCraftable = depth < MAX_DEPTH && !!subcraftMap[material.item.id];
+      const subcraftEntries = subcraftMap[material.item.id];
+      const isCraftable = depth < MAX_DEPTH && !!subcraftEntries?.length;
       if (craftModeSet.has(material.item.id) && isCraftable) {
-        const subcraft = pickPreferredCraft(
-          subcraftMap[material.item.id]!,
-          material.item.id,
-        );
+        const subcraft = pickPreferredCraft(subcraftEntries, material.item.id);
         const producedAmount =
-          subcraft.products.find((product) => product.item.id === material.item.id)
-            ?.amount ?? 1;
+          subcraft.products.find(
+            (product) => product.item.id === material.item.id,
+          )?.amount ?? 1;
         accumulate(subcraft, scaledAmount / producedAmount, depth + 1);
         continue;
       }
@@ -275,7 +295,7 @@ function buildSnapshot(
 }
 
 async function replaceListSnapshot(
-  tx: any,
+  tx: DbTx,
   shoppingListId: string,
   snapshot: ReturnType<typeof buildSnapshot>,
   progress?: {
@@ -322,7 +342,7 @@ async function replaceListSnapshot(
 }
 
 async function getExistingProgress(
-  tx: any,
+  tx: DbTx,
   shoppingListId: string,
 ): Promise<{
   itemProgress: Map<number, number>;
@@ -364,7 +384,7 @@ async function getExistingProgress(
 }
 
 async function regenerateListState(
-  tx: any,
+  tx: DbTx,
   list: typeof shoppingLists.$inferSelect,
   progress?: {
     itemProgress?: Map<number, number>;
@@ -376,7 +396,10 @@ async function regenerateListState(
 
   if (list.sourceType === "simulator") {
     const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const simulationChain = getSimulationChain(blueprint, blueprint.subcraftsByItemId);
+    const simulationChain = getSimulationChain(
+      blueprint,
+      blueprint.subcraftsByItemId,
+    );
     const finalUpgradeEntry: CraftEntry = {
       craft: blueprint.craft,
       materials: blueprint.materials.filter(
@@ -403,8 +426,14 @@ async function regenerateListState(
       1,
     );
 
-    const mergedItems = new Map<number, { item: ItemRow; requiredQuantity: number }>();
-    const mergedCrafts = new Map<number, { craft: CraftRow; requiredCount: number }>();
+    const mergedItems = new Map<
+      number,
+      { item: ItemRow; requiredQuantity: number }
+    >();
+    const mergedCrafts = new Map<
+      number,
+      { craft: CraftRow; requiredCount: number }
+    >();
 
     for (const row of [...attemptSnapshot.items, ...upgradeSnapshot.items]) {
       const existing = mergedItems.get(row.item.id);
@@ -444,8 +473,12 @@ async function regenerateListState(
   await replaceListSnapshot(tx, list.id, snapshot, progress);
 }
 
-async function getListAccess(db: any, shoppingListId: string, userId: string) {
-  const [list] = await db
+async function getListAccess(
+  dbClient: DbClient | DbTx,
+  shoppingListId: string,
+  userId: string,
+) {
+  const [list] = await dbClient
     .select({
       list: shoppingLists,
       owner: {
@@ -468,7 +501,10 @@ async function getListAccess(db: any, shoppingListId: string, userId: string) {
     .limit(1);
 
   if (!list) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Shopping list not found." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Shopping list not found.",
+    });
   }
 
   const isOwner = list.list.ownerUserId === userId;
@@ -555,88 +591,90 @@ export const shoppingListsRouter = {
     return { owned, shared };
   }),
 
-  getById: protectedProcedure.input(z.string().uuid()).query(async ({ ctx, input }) => {
-    const access = await getListAccess(ctx.db, input, ctx.session.user.id);
-    const shoppingListId = access.list.id;
+  getById: protectedProcedure
+    .input(z.string().uuid())
+    .query(async ({ ctx, input }) => {
+      const access = await getListAccess(ctx.db, input, ctx.session.user.id);
+      const shoppingListId = access.list.id;
 
-    const [itemRows, craftRows, memberRows, inviteRows] = await Promise.all([
-      ctx.db
-        .select({
-          itemId: shoppingListItems.itemId,
-          requiredQuantity: shoppingListItems.requiredQuantity,
-          obtainedQuantity: shoppingListItems.obtainedQuantity,
-          item: {
-            id: items.id,
-            name: items.name,
-            icon: items.icon,
-          },
-        })
-        .from(shoppingListItems)
-        .innerJoin(items, eq(items.id, shoppingListItems.itemId))
-        .where(eq(shoppingListItems.shoppingListId, shoppingListId))
-        .orderBy(asc(items.name)),
-      ctx.db
-        .select({
-          craftId: shoppingListCrafts.craftId,
-          requiredCount: shoppingListCrafts.requiredCount,
-          completedCount: shoppingListCrafts.completedCount,
-          craft: {
-            id: crafts.id,
-            name: crafts.name,
-            proficiency: crafts.proficiency,
-            labor: crafts.labor,
-          },
-        })
-        .from(shoppingListCrafts)
-        .innerJoin(crafts, eq(crafts.id, shoppingListCrafts.craftId))
-        .where(eq(shoppingListCrafts.shoppingListId, shoppingListId))
-        .orderBy(asc(crafts.name)),
-      ctx.db
-        .select({
-          userId: shoppingListMembers.userId,
-          role: shoppingListMembers.role,
-          acceptedAt: shoppingListMembers.acceptedAt,
-          user: {
-            name: user.name,
-            image: user.image,
-          },
-        })
-        .from(shoppingListMembers)
-        .innerJoin(user, eq(user.id, shoppingListMembers.userId))
-        .where(eq(shoppingListMembers.shoppingListId, shoppingListId))
-        .orderBy(asc(user.name)),
-      access.isOwner
-        ? ctx.db
-            .select({
-              id: shoppingListInvites.id,
-              role: shoppingListInvites.role,
-              createdAt: shoppingListInvites.createdAt,
-              expiresAt: shoppingListInvites.expiresAt,
-              revokedAt: shoppingListInvites.revokedAt,
-              consumedAt: shoppingListInvites.consumedAt,
-              inviteUrl: shoppingListInvites.token,
-            })
-            .from(shoppingListInvites)
-            .where(eq(shoppingListInvites.shoppingListId, shoppingListId))
-            .orderBy(desc(shoppingListInvites.createdAt))
-        : Promise.resolve([]),
-    ]);
+      const [itemRows, craftRows, memberRows, inviteRows] = await Promise.all([
+        ctx.db
+          .select({
+            itemId: shoppingListItems.itemId,
+            requiredQuantity: shoppingListItems.requiredQuantity,
+            obtainedQuantity: shoppingListItems.obtainedQuantity,
+            item: {
+              id: items.id,
+              name: items.name,
+              icon: items.icon,
+            },
+          })
+          .from(shoppingListItems)
+          .innerJoin(items, eq(items.id, shoppingListItems.itemId))
+          .where(eq(shoppingListItems.shoppingListId, shoppingListId))
+          .orderBy(asc(items.name)),
+        ctx.db
+          .select({
+            craftId: shoppingListCrafts.craftId,
+            requiredCount: shoppingListCrafts.requiredCount,
+            completedCount: shoppingListCrafts.completedCount,
+            craft: {
+              id: crafts.id,
+              name: crafts.name,
+              proficiency: crafts.proficiency,
+              labor: crafts.labor,
+            },
+          })
+          .from(shoppingListCrafts)
+          .innerJoin(crafts, eq(crafts.id, shoppingListCrafts.craftId))
+          .where(eq(shoppingListCrafts.shoppingListId, shoppingListId))
+          .orderBy(asc(crafts.name)),
+        ctx.db
+          .select({
+            userId: shoppingListMembers.userId,
+            role: shoppingListMembers.role,
+            acceptedAt: shoppingListMembers.acceptedAt,
+            user: {
+              name: user.name,
+              image: user.image,
+            },
+          })
+          .from(shoppingListMembers)
+          .innerJoin(user, eq(user.id, shoppingListMembers.userId))
+          .where(eq(shoppingListMembers.shoppingListId, shoppingListId))
+          .orderBy(asc(user.name)),
+        access.isOwner
+          ? ctx.db
+              .select({
+                id: shoppingListInvites.id,
+                role: shoppingListInvites.role,
+                createdAt: shoppingListInvites.createdAt,
+                expiresAt: shoppingListInvites.expiresAt,
+                revokedAt: shoppingListInvites.revokedAt,
+                consumedAt: shoppingListInvites.consumedAt,
+                inviteUrl: shoppingListInvites.token,
+              })
+              .from(shoppingListInvites)
+              .where(eq(shoppingListInvites.shoppingListId, shoppingListId))
+              .orderBy(desc(shoppingListInvites.createdAt))
+          : Promise.resolve([]),
+      ]);
 
-    return {
-      ...access,
-      list: {
-        ...access.list,
-        craftModeItemIds: access.list.craftModeItemIds ?? [],
-      },
-      items: itemRows,
-      crafts: craftRows,
-      members: memberRows,
-      invites: inviteRows.map((invite) => ({
-        ...invite,
-        inviteUrl: buildInviteUrl(invite.inviteUrl),
-      })),
-    };
-  }),
+      return {
+        ...access,
+        list: {
+          ...access.list,
+          craftModeItemIds: access.list.craftModeItemIds,
+        },
+        items: itemRows,
+        crafts: craftRows,
+        members: memberRows,
+        invites: inviteRows.map((invite) => ({
+          ...invite,
+          inviteUrl: buildInviteUrl(invite.inviteUrl),
+        })),
+      };
+    }),
 
   createFromCraft: protectedProcedure
     .input(
@@ -650,10 +688,10 @@ export const shoppingListsRouter = {
     .mutation(async ({ ctx, input }) => {
       const blueprint = await fetchCraftBlueprint(ctx.db, input.craftId);
       const name =
-        input.name?.trim() ||
+        input.name?.trim() ??
         `${blueprint.item?.name ?? blueprint.craft.name} x${input.quantity}`;
 
-      return ctx.db.transaction(async (tx: any) => {
+      return ctx.db.transaction(async (tx: DbTx) => {
         const [created] = await tx
           .insert(shoppingLists)
           .values({
@@ -667,6 +705,13 @@ export const shoppingListsRouter = {
             updatedAt: new Date(),
           })
           .returning();
+
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Shopping list creation failed.",
+          });
+        }
 
         await regenerateListState(tx, created);
 
@@ -685,7 +730,6 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const blueprint = await fetchCraftBlueprint(ctx.db, input.craftId);
       const [targetItem] = await ctx.db
         .select()
         .from(items)
@@ -697,9 +741,10 @@ export const shoppingListsRouter = {
       }
 
       const name =
-        input.name?.trim() || `${targetItem.name} attempt plan x${input.attempts}`;
+        input.name?.trim() ??
+        `${targetItem.name} attempt plan x${input.attempts}`;
 
-      return ctx.db.transaction(async (tx: any) => {
+      return ctx.db.transaction(async (tx: DbTx) => {
         const [created] = await tx
           .insert(shoppingLists)
           .values({
@@ -714,9 +759,16 @@ export const shoppingListsRouter = {
           })
           .returning();
 
-        await regenerateListState(tx, created!);
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Shopping list creation failed.",
+          });
+        }
 
-        return { id: created!.id };
+        await regenerateListState(tx, created);
+
+        return { id: created.id };
       });
     }),
 
@@ -733,12 +785,16 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.canWrite) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      return ctx.db.transaction(async (tx: any) => {
+      return ctx.db.transaction(async (tx: DbTx) => {
         const progress = await getExistingProgress(tx, input.listId);
         const [updated] = await tx
           .update(shoppingLists)
@@ -755,7 +811,14 @@ export const shoppingListsRouter = {
           .where(eq(shoppingLists.id, input.listId))
           .returning();
 
-        await regenerateListState(tx, updated!, progress);
+        if (!updated) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list not found.",
+          });
+        }
+
+        await regenerateListState(tx, updated, progress);
 
         return { id: updated.id };
       });
@@ -770,7 +833,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.canWrite) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
@@ -789,13 +856,19 @@ export const shoppingListsRouter = {
         .limit(1);
 
       if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "List item not found." });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "List item not found.",
+        });
       }
 
       await ctx.db
         .update(shoppingListItems)
         .set({
-          obtainedQuantity: Math.min(row.requiredQuantity, input.obtainedQuantity),
+          obtainedQuantity: Math.min(
+            row.requiredQuantity,
+            input.obtainedQuantity,
+          ),
           updatedAt: new Date(),
         })
         .where(
@@ -815,7 +888,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.canWrite) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
@@ -834,7 +911,10 @@ export const shoppingListsRouter = {
         .limit(1);
 
       if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "List craft not found." });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "List craft not found.",
+        });
       }
 
       await ctx.db
@@ -859,7 +939,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       const [sourceItems, sourceCraftRows]: [
         { itemId: number; obtainedQuantity: number }[],
         { craftId: number; completedCount: number }[],
@@ -883,7 +967,7 @@ export const shoppingListsRouter = {
             ])
           : [[], []];
 
-      return ctx.db.transaction(async (tx: any) => {
+      return ctx.db.transaction(async (tx: DbTx) => {
         const [created] = await tx
           .insert(shoppingLists)
           .values({
@@ -901,12 +985,21 @@ export const shoppingListsRouter = {
           })
           .returning();
 
-        await regenerateListState(tx, created!, {
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Shopping list duplication failed.",
+          });
+        }
+
+        await regenerateListState(tx, created, {
           itemProgress: new Map<number, number>(
-            sourceItems.map((row: { itemId: number; obtainedQuantity: number }) => [
-              row.itemId,
-              row.obtainedQuantity,
-            ]),
+            sourceItems.map(
+              (row: { itemId: number; obtainedQuantity: number }) => [
+                row.itemId,
+                row.obtainedQuantity,
+              ],
+            ),
           ),
           craftProgress: new Map<number, number>(
             sourceCraftRows.map(
@@ -930,7 +1023,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.isOwner) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
@@ -972,7 +1069,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.isOwner) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
@@ -996,7 +1097,11 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const access = await getListAccess(ctx.db, input.listId, ctx.session.user.id);
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
       if (!access.isOwner) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
@@ -1063,7 +1168,7 @@ export const shoppingListsRouter = {
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
 
-      return ctx.db.transaction(async (tx: any) => {
+      return ctx.db.transaction(async (tx: DbTx) => {
         const [invite] = await tx
           .select()
           .from(shoppingListInvites)
@@ -1071,7 +1176,10 @@ export const shoppingListsRouter = {
           .limit(1);
 
         if (!invite) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found." });
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Invite not found.",
+          });
         }
 
         const isAvailable =
@@ -1093,7 +1201,10 @@ export const shoppingListsRouter = {
           .limit(1);
 
         if (!list) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Shopping list missing." });
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list missing.",
+          });
         }
 
         if (list.ownerUserId !== userId) {

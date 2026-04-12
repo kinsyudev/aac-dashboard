@@ -46,6 +46,7 @@
     }
   },
   "globalEnv": [
+    "AAC_AUTH",
     "AUTH_ALLOWED_DISCORD_IDS",
     "AUTH_DISCORD_ID",
     "AUTH_DISCORD_SECRET",

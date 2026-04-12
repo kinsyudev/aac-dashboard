@@ -1,18 +1,18 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useMemo, useState } from "react";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
+import type { ProficiencyMap } from "~/lib/proficiency";
+import type { SimulationResult } from "~/lib/simulator";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
-import type { ProficiencyMap } from "~/lib/proficiency";
 import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
-import type { SimulationResult } from "~/lib/simulator";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/simulator/$itemId")({
     const data = await queryClient.fetchQuery(
       trpc.crafts.forItem.queryOptions(params.itemId),
     );
-    if (!data) throw notFound();
+    if (!data) return;
   },
   component: SimulatorItemPage,
   notFoundComponent: () => <p>Item not found.</p>,
@@ -59,19 +59,19 @@ type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = ForItemOutput["subcraftsByItemId"];
 
-type SimulationChain = {
+interface SimulationChain {
   keyMaterialId: number | null;
   keyMaterialName: string | null;
   upgradeMaterials: CraftEntry["materials"];
-};
+}
 
-type CraftExecution = {
+interface CraftExecution {
   craftId: number;
   name: string;
   proficiency: string | null;
   batches: number;
   laborPerBatch: number;
-};
+}
 
 function getItemPrice(
   itemId: number,
@@ -82,18 +82,6 @@ function getItemPrice(
   if (custom != null) return custom;
   const price = priceMap.get(itemId);
   return parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-}
-
-function craftMaterialCost(
-  materials: { item: { id: number }; amount: number }[],
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-): number {
-  return materials.reduce(
-    (sum, { item, amount }) =>
-      sum + getItemPrice(item.id, priceMap, overrideMap) * amount,
-    0,
-  );
 }
 
 function isManaWisp(name: string): boolean {
@@ -234,7 +222,7 @@ function findWispInChain(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
 ): { id: number; name: string; price: number } | null {
-  const subcraftMap = data.subcraftsByItemId ?? {};
+  const subcraftMap = data.subcraftsByItemId;
   const allMaterials: { id: number; name: string }[] = [];
 
   for (const craft of data.crafts) {
@@ -359,14 +347,17 @@ function buildRecommendedModes(
     const subEntries = subcraftMap[itemId];
     if (!subEntries?.length) return;
 
-    const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
-      getCraftEntryUnitCost(
-        candidate,
-        productItemId,
-        subcraftMap,
-        priceMap,
-        overrideMap,
-      ),
+    const entry = pickCheapestCraft(
+      subEntries,
+      itemId,
+      (candidate, productItemId) =>
+        getCraftEntryUnitCost(
+          candidate,
+          productItemId,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+        ),
     );
     for (const mat of entry.materials) {
       visit(mat.item.id);
@@ -398,16 +389,19 @@ function countManaWispsForItem(
   const subEntries = subcraftMap[itemId];
   if (!subEntries?.length) return 0;
 
-  const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
-    getCraftEntryUnitCost(
-      candidate,
-      productItemId,
-      subcraftMap,
-      priceMap,
-      overrideMap,
-      modes,
-      new Set(visited),
-    ),
+  const entry = pickCheapestCraft(
+    subEntries,
+    itemId,
+    (candidate, productItemId) =>
+      getCraftEntryUnitCost(
+        candidate,
+        productItemId,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        modes,
+        new Set(visited),
+      ),
   );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
@@ -427,15 +421,16 @@ function countManaWispsForItem(
           overrideMap,
           modes,
           new Set(visited),
-        ) *
-        amount;
+        ) * amount;
     }
   }
 
   return total / produced;
 }
 
-function serializeCraftModes(modes: Record<number, CraftMode>): string | undefined {
+function serializeCraftModes(
+  modes: Record<number, CraftMode>,
+): string | undefined {
   const craftIds = Object.entries(modes)
     .filter(([, mode]) => mode === "craft")
     .map(([id]) => Number(id))
@@ -457,16 +452,19 @@ function collectCraftExecutionsForItem(
   const subEntries = subcraftMap[itemId];
   if (!subEntries?.length || visited.has(itemId)) return;
 
-  const entry = pickCheapestCraft(subEntries, itemId, (candidate, productItemId) =>
-    getCraftEntryUnitCost(
-      candidate,
-      productItemId,
-      subcraftMap,
-      priceMap,
-      overrideMap,
-      modes,
-      new Set(visited),
-    ),
+  const entry = pickCheapestCraft(
+    subEntries,
+    itemId,
+    (candidate, productItemId) =>
+      getCraftEntryUnitCost(
+        candidate,
+        productItemId,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        modes,
+        new Set(visited),
+      ),
   );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
@@ -540,7 +538,8 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   });
   const ayanadItem = useMemo(
     () =>
-      ayanadItemQuery.data?.find((item) => item.name === ayanadItemName) ?? null,
+      ayanadItemQuery.data?.find((item) => item.name === ayanadItemName) ??
+      null,
     [ayanadItemName, ayanadItemQuery.data],
   );
   const ayanadCraftQuery = useQuery({
@@ -553,16 +552,16 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     enabled: ayanadItem?.id != null,
   });
   const ayanadMarketPrice = useMemo(
-    () => parseFloat(ayanadPriceQuery.data?.avg24h ?? ayanadPriceQuery.data?.avg7d ?? "0"),
+    () =>
+      parseFloat(
+        ayanadPriceQuery.data?.avg24h ?? ayanadPriceQuery.data?.avg7d ?? "0",
+      ),
     [ayanadPriceQuery.data],
   );
-  const defaultSalePrice = useMemo(
-    () =>
-      ayanadItem?.id != null
-        ? (overrideMap.get(ayanadItem.id) ?? ayanadMarketPrice)
-        : 0,
-    [ayanadItem?.id, ayanadMarketPrice, overrideMap],
-  );
+  const defaultSalePrice = useMemo(() => {
+    if (ayanadItem == null) return 0;
+    return overrideMap.get(ayanadItem.id) ?? ayanadMarketPrice;
+  }, [ayanadItem, ayanadMarketPrice, overrideMap]);
   const effectiveSalePrice = useMemo(() => {
     const parsed = parseFloat(localSalePrice);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultSalePrice;
@@ -570,22 +569,25 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
 
   const mainCraft = useMemo(() => {
     if (!data?.crafts.length) return null;
-    const subcraftMap = data.subcraftsByItemId ?? {};
-    return pickCheapestCraft(data.crafts, data.item.id, (entry, productItemId) =>
-      getCraftEntryUnitCost(
-        entry,
-        productItemId,
-        subcraftMap,
-        priceMap,
-        overrideMap,
-        modes,
-      ),
+    const subcraftMap = data.subcraftsByItemId;
+    return pickCheapestCraft(
+      data.crafts,
+      data.item.id,
+      (entry, productItemId) =>
+        getCraftEntryUnitCost(
+          entry,
+          productItemId,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          modes,
+        ),
     );
   }, [data, modes, overrideMap, priceMap]);
 
   const ayanadCraft = useMemo(() => {
-    if (!ayanadCraftData?.crafts.length || !ayanadItem?.id) return null;
-    const subcraftMap = ayanadCraftData.subcraftsByItemId ?? {};
+    if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
+    const subcraftMap = ayanadCraftData.subcraftsByItemId;
     return pickCheapestCraft(
       ayanadCraftData.crafts,
       ayanadItem.id,
@@ -599,32 +601,27 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           modes,
         ),
     );
-  }, [ayanadCraftData, ayanadItem?.id, modes, overrideMap, priceMap]);
+  }, [ayanadCraftData, ayanadItem, modes, overrideMap, priceMap]);
+  const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;
 
   const recommendedModes = useMemo(() => {
     if (!data || !mainCraft) return {};
     return buildRecommendedModes(
       mainCraft.materials,
-      data.subcraftsByItemId ?? {},
+      data.subcraftsByItemId,
       priceMap,
       overrideMap,
     );
   }, [data, mainCraft, priceMap, overrideMap]);
-
-  useEffect(() => {
-    setModes((prev) => {
-      const next = { ...recommendedModes, ...prev };
-      const same =
-        Object.keys(next).length === Object.keys(prev).length &&
-        Object.entries(next).every(([id, mode]) => prev[Number(id)] === mode);
-      return same ? prev : next;
-    });
-  }, [recommendedModes]);
+  const effectiveModes = useMemo(
+    () => ({ ...recommendedModes, ...modes }),
+    [recommendedModes, modes],
+  );
 
   const simulationData = useMemo(() => {
     if (!data || !equip || !mainCraft || !wisp) return null;
 
-    const subcraftMap = data.subcraftsByItemId ?? {};
+    const subcraftMap = data.subcraftsByItemId;
     const itemName = data.item.name.toLowerCase();
 
     if (equip.tier !== "delphinad" || !itemName.includes("sealed delphinad")) {
@@ -643,7 +640,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           subcraftMap,
           priceMap,
           overrideMap,
-          modes,
+          effectiveModes,
         ) *
           amount,
       0,
@@ -659,10 +656,10 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
         sum +
         getChosenMaterialUnitCost(
           item.id,
-          ayanadCraftData?.subcraftsByItemId ?? subcraftMap,
+          ayanadSubcraftMap ?? subcraftMap,
           priceMap,
           overrideMap,
-          modes,
+          effectiveModes,
         ) *
           amount,
       0,
@@ -679,23 +676,23 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
         (sum, { item, amount }) =>
           sum +
           getChosenMaterialLabor(
-          item.id,
-          ayanadCraftData?.subcraftsByItemId ?? subcraftMap,
-          priceMap,
-          overrideMap,
-          proficiencyMap,
-          modes,
-        ) *
+            item.id,
+            ayanadSubcraftMap ?? subcraftMap,
+            priceMap,
+            overrideMap,
+            proficiencyMap,
+            effectiveModes,
+          ) *
             amount,
         0,
       );
     const seedWispsPerAttempt = chain.keyMaterialId
-        ? countManaWispsForItem(
-            chain.keyMaterialId,
-            subcraftMap,
+      ? countManaWispsForItem(
+          chain.keyMaterialId,
+          subcraftMap,
           priceMap,
           overrideMap,
-          modes,
+          effectiveModes,
         )
       : 0;
     const laborPerAttempt =
@@ -711,7 +708,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
             priceMap,
             overrideMap,
             proficiencyMap,
-            modes,
+            effectiveModes,
           )
         : 0) +
       attemptMaterials.reduce(
@@ -723,7 +720,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
             priceMap,
             overrideMap,
             proficiencyMap,
-            modes,
+            effectiveModes,
           ) *
             amount,
         0,
@@ -754,20 +751,21 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     data,
     equip,
     mainCraft,
-    modes,
+    effectiveModes,
     overrideMap,
     priceMap,
     proficiencyMap,
     wisp,
     effectiveSalePrice,
     ayanadCraft,
+    ayanadSubcraftMap,
   ]);
 
   const craftExecutions = useMemo(() => {
     if (!data || !simulationData) return [];
 
     const acc = new Map<number, CraftExecution>();
-    const subcraftMap = data.subcraftsByItemId ?? {};
+    const subcraftMap = data.subcraftsByItemId;
     const {
       chain,
       result,
@@ -778,20 +776,20 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     } = simulationData;
 
     if (chain.keyMaterialId) {
-        collectCraftExecutionsForItem(
-          chain.keyMaterialId,
-          result.variants,
-          subcraftMap,
-          priceMap,
-          overrideMap,
-          proficiencyMap,
-          modes,
-          acc,
+      collectCraftExecutionsForItem(
+        chain.keyMaterialId,
+        result.variants,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        proficiencyMap,
+        effectiveModes,
+        acc,
       );
     }
 
     for (const { item, amount } of attemptMaterials) {
-      if ((modes[item.id] ?? "buy") === "craft") {
+      if ((effectiveModes[item.id] ?? "buy") === "craft") {
         collectCraftExecutionsForItem(
           item.id,
           amount * result.variants,
@@ -799,7 +797,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           priceMap,
           overrideMap,
           proficiencyMap,
-          modes,
+          effectiveModes,
           acc,
         );
       }
@@ -839,9 +837,10 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
       }
     }
 
-    const upgradeSubcraftMap = ayanadCraftData?.subcraftsByItemId ?? subcraftMap;
+    const upgradeSubcraftMap =
+      ayanadCraftData?.subcraftsByItemId ?? subcraftMap;
     for (const { item, amount } of upgradeMaterials) {
-      if ((modes[item.id] ?? "buy") === "craft") {
+      if ((effectiveModes[item.id] ?? "buy") === "craft") {
         collectCraftExecutionsForItem(
           item.id,
           amount,
@@ -849,7 +848,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           priceMap,
           overrideMap,
           proficiencyMap,
-          modes,
+          effectiveModes,
           acc,
         );
       }
@@ -869,7 +868,15 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     }
 
     return [...acc.values()].sort((a, b) => b.batches - a.batches);
-  }, [ayanadCraftData, data, modes, overrideMap, priceMap, proficiencyMap, simulationData]);
+  }, [
+    ayanadCraftData,
+    data,
+    effectiveModes,
+    overrideMap,
+    priceMap,
+    proficiencyMap,
+    simulationData,
+  ]);
 
   const laborByProficiency = useMemo(() => {
     const acc = new Map<string, number>();
@@ -892,7 +899,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   }
 
   const { item } = data;
-  const exportModes = serializeCraftModes(modes);
+  const exportModes = serializeCraftModes(effectiveModes);
 
   return (
     <div className="flex flex-col gap-6">
@@ -953,7 +960,8 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">{ayanadItem.name} sale price</p>
             <p className="text-muted-foreground text-xs">
-              Uses market or profile override by default. Enter a local value to override this simulation.
+              Uses market or profile override by default. Enter a local value to
+              override this simulation.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -963,7 +971,9 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
               step="0.01"
               value={localSalePrice}
               onChange={(e) => setLocalSalePrice(e.target.value)}
-              placeholder={defaultSalePrice > 0 ? String(defaultSalePrice) : "0"}
+              placeholder={
+                defaultSalePrice > 0 ? String(defaultSalePrice) : "0"
+              }
               className="bg-background w-32 rounded-md border px-3 py-1.5 text-sm tabular-nums"
             />
             <span className="text-muted-foreground text-sm">g</span>
@@ -978,7 +988,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
             {simulationData && (
               <p className="text-muted-foreground text-sm">
                 Expected attempts:{" "}
-                <span className="font-medium text-foreground">
+                <span className="text-foreground font-medium">
                   ×{simulationData.result.variants}
                 </span>
               </p>
@@ -1007,7 +1017,9 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
                 </div>
                 <div className="text-muted-foreground flex items-center gap-3 tabular-nums">
                   {craft.laborPerBatch > 0 && (
-                    <span>{(craft.laborPerBatch * craft.batches).toLocaleString()}L</span>
+                    <span>
+                      {(craft.laborPerBatch * craft.batches).toLocaleString()}L
+                    </span>
                   )}
                   <span>×{craft.batches.toLocaleString()}</span>
                 </div>
@@ -1028,8 +1040,8 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
               priceMap={priceMap}
               overrideMap={overrideMap}
               proficiencyMap={proficiencyMap}
-              subcraftMap={data.subcraftsByItemId ?? {}}
-              modes={modes}
+              subcraftMap={data.subcraftsByItemId}
+              modes={effectiveModes}
               setModes={setModes}
               collapsedCraftIds={collapsedCraftIds}
               toggleCollapsed={(craftId) =>
@@ -1054,11 +1066,11 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
             : equip.tier !== "delphinad" ||
                 !data.item.name.toLowerCase().includes("sealed delphinad")
               ? "Simulator currently only supports Sealed Delphinad items."
-            : wisp.price === 0
-              ? "No market price found for " +
-                wisp.name +
-                ". Set a price override in your profile."
-              : "Could not compute simulation — craft chain may not match expected pattern."}
+              : wisp.price === 0
+                ? "No market price found for " +
+                  wisp.name +
+                  ". Set a price override in your profile."
+                : "Could not compute simulation — craft chain may not match expected pattern."}
         </p>
       )}
     </div>
@@ -1105,7 +1117,9 @@ function SimulatorCraftBreakdown({
   }, 0);
 
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
-  const hasCraftable = materials.some(({ item }) => !!subcraftMap[item.id]?.length);
+  const hasCraftable = materials.some(
+    ({ item }) => !!subcraftMap[item.id]?.length,
+  );
 
   return (
     <div
@@ -1162,159 +1176,173 @@ function SimulatorCraftBreakdown({
       {!isCollapsed && (
         <>
           <ul className="flex flex-col gap-1">
-        {materials.map(({ item, amount }) => {
-          const isCraftable = !!subcraftMap[item.id]?.length;
-          const mode = modes[item.id] ?? "buy";
-          const customPrice = overrideMap.get(item.id);
-          const price = priceMap.get(item.id);
-          const isCustom = customPrice != null;
-          const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-          const craftUnit = isCraftable
-            ? deepCraftCost(item.id, subcraftMap, priceMap, overrideMap, modes)
-            : 0;
-          const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
-          const lineTotal = unit * amount;
-          const hasPrice = isCustom || !!price;
-          const totalDiff =
-            isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-          const subEntry = isCraftable
-            ? pickCheapestCraft(
-                subcraftMap[item.id]!,
-                item.id,
-                (candidate, productItemId) =>
-                  getCraftEntryUnitCost(
-                    candidate,
-                    productItemId,
+            {materials.map(({ item, amount }) => {
+              const isCraftable = !!subcraftMap[item.id]?.length;
+              const mode = modes[item.id] ?? "buy";
+              const customPrice = overrideMap.get(item.id);
+              const price = priceMap.get(item.id);
+              const isCustom = customPrice != null;
+              const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
+              const craftUnit = isCraftable
+                ? deepCraftCost(
+                    item.id,
                     subcraftMap,
                     priceMap,
                     overrideMap,
                     modes,
-                  ),
-              )
-            : null;
-          const subLabor = subEntry
-            ? getChosenMaterialLabor(
-                item.id,
-                subcraftMap,
-                priceMap,
-                overrideMap,
-                proficiencyMap,
-                modes,
-              )
-            : 0;
+                  )
+                : 0;
+              const unit =
+                mode === "craft" && isCraftable ? craftUnit : buyUnit;
+              const lineTotal = unit * amount;
+              const hasPrice = isCustom || !!price;
+              const totalDiff =
+                isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
+              const subEntries = subcraftMap[item.id];
+              const subEntry =
+                isCraftable && subEntries?.length
+                  ? pickCheapestCraft(
+                      subEntries,
+                      item.id,
+                      (candidate, productItemId) =>
+                        getCraftEntryUnitCost(
+                          candidate,
+                          productItemId,
+                          subcraftMap,
+                          priceMap,
+                          overrideMap,
+                          modes,
+                        ),
+                    )
+                  : null;
+              const subLabor = subEntry
+                ? getChosenMaterialLabor(
+                    item.id,
+                    subcraftMap,
+                    priceMap,
+                    overrideMap,
+                    proficiencyMap,
+                    modes,
+                  )
+                : 0;
 
-          return (
-            <Fragment key={item.id}>
-              <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
-                <ItemIcon icon={item.icon} name={item.name} />
-                <span className="min-w-0 flex-1 truncate">
-                  {item.name}
-                  {amount > 1 && (
-                    <span className="text-muted-foreground ml-1 text-xs">
-                      ×{amount}
+              return (
+                <Fragment key={item.id}>
+                  <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
+                    <ItemIcon icon={item.icon} name={item.name} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.name}
+                      {amount > 1 && (
+                        <span className="text-muted-foreground ml-1 text-xs">
+                          ×{amount}
+                        </span>
+                      )}
                     </span>
+
+                    {isCraftable && (
+                      <span className="inline-flex overflow-hidden rounded-full border text-xs">
+                        <button
+                          onClick={() =>
+                            setModes((prev) => ({ ...prev, [item.id]: "buy" }))
+                          }
+                          className={`px-2.5 py-0.5 transition-colors ${
+                            mode === "buy"
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          Buy
+                        </button>
+                        <button
+                          onClick={() =>
+                            setModes((prev) => ({
+                              ...prev,
+                              [item.id]: "craft",
+                            }))
+                          }
+                          className={`px-2.5 py-0.5 transition-colors ${
+                            mode === "craft"
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          Craft
+                        </button>
+                      </span>
+                    )}
+
+                    {(hasPrice || mode === "craft") && (
+                      <span className="text-muted-foreground shrink-0 tabular-nums">
+                        {isCustom && mode === "buy" && (
+                          <span className="text-primary mr-1 text-xs">
+                            (custom)
+                          </span>
+                        )}
+                        {mode === "craft" && isCraftable && subLabor > 0 && (
+                          <span className="mr-1 text-xs text-amber-500">
+                            {subLabor.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })}
+                            L +
+                          </span>
+                        )}
+                        <span className="text-foreground/70">
+                          {unit.toLocaleString(undefined, {
+                            maximumFractionDigits: 0,
+                          })}
+                          g
+                        </span>
+                        {amount > 1 && (
+                          <span className="text-foreground ml-1.5 font-medium">
+                            ={" "}
+                            {lineTotal.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })}
+                            g
+                          </span>
+                        )}
+                      </span>
+                    )}
+
+                    {totalDiff !== null && (
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
+                          totalDiff > 0
+                            ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                            : totalDiff < 0
+                              ? "bg-red-500/10 text-red-500"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {totalDiff > 0
+                          ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                          : totalDiff < 0
+                            ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                            : "="}
+                      </span>
+                    )}
+                  </li>
+
+                  {mode === "craft" && isCraftable && subEntry && (
+                    <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
+                      <SimulatorCraftBreakdown
+                        entry={subEntry}
+                        itemId={itemId}
+                        priceMap={priceMap}
+                        overrideMap={overrideMap}
+                        proficiencyMap={proficiencyMap}
+                        subcraftMap={subcraftMap}
+                        modes={modes}
+                        setModes={setModes}
+                        collapsedCraftIds={collapsedCraftIds}
+                        toggleCollapsed={toggleCollapsed}
+                        depth={depth + 1}
+                      />
+                    </li>
                   )}
-                </span>
-
-                {isCraftable && (
-                  <span className="inline-flex overflow-hidden rounded-full border text-xs">
-                    <button
-                      onClick={() =>
-                        setModes((prev) => ({ ...prev, [item.id]: "buy" }))
-                      }
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "buy"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      onClick={() =>
-                        setModes((prev) => ({ ...prev, [item.id]: "craft" }))
-                      }
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "craft"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Craft
-                    </button>
-                  </span>
-                )}
-
-                {(hasPrice || mode === "craft") && (
-                  <span className="text-muted-foreground shrink-0 tabular-nums">
-                    {isCustom && mode === "buy" && (
-                      <span className="text-primary mr-1 text-xs">(custom)</span>
-                    )}
-                    {mode === "craft" && isCraftable && subLabor > 0 && (
-                      <span className="mr-1 text-xs text-amber-500">
-                        {subLabor.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
-                        L +
-                      </span>
-                    )}
-                    <span className="text-foreground/70">
-                      {unit.toLocaleString(undefined, {
-                        maximumFractionDigits: 0,
-                      })}
-                      g
-                    </span>
-                    {amount > 1 && (
-                      <span className="text-foreground ml-1.5 font-medium">
-                        ={" "}
-                        {lineTotal.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
-                        g
-                      </span>
-                    )}
-                  </span>
-                )}
-
-                {totalDiff !== null && (
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
-                      totalDiff > 0
-                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                        : totalDiff < 0
-                          ? "bg-red-500/10 text-red-500"
-                          : "text-muted-foreground"
-                    }`}
-                  >
-                    {totalDiff > 0
-                      ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
-                      : totalDiff < 0
-                        ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
-                        : "="}
-                  </span>
-                )}
-              </li>
-
-              {mode === "craft" && isCraftable && subEntry && (
-                <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
-                  <SimulatorCraftBreakdown
-                    entry={subEntry}
-                    itemId={itemId}
-                    priceMap={priceMap}
-                    overrideMap={overrideMap}
-                    proficiencyMap={proficiencyMap}
-                    subcraftMap={subcraftMap}
-                    modes={modes}
-                    setModes={setModes}
-                    collapsedCraftIds={collapsedCraftIds}
-                    toggleCollapsed={toggleCollapsed}
-                    depth={depth + 1}
-                  />
-                </li>
-              )}
-            </Fragment>
-          );
-        })}
+                </Fragment>
+              );
+            })}
           </ul>
 
           {depth === 0 && hasCraftable && (
@@ -1326,8 +1354,8 @@ function SimulatorCraftBreakdown({
                 craft saves gold
               </span>
               <span>
-                <span className="font-medium text-red-500">↑ Xg</span> craft costs
-                more
+                <span className="font-medium text-red-500">↑ Xg</span> craft
+                costs more
               </span>
               <span>
                 <span className="font-medium text-amber-500">XL</span> labor to

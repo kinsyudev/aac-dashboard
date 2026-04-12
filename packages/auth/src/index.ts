@@ -26,13 +26,17 @@ export function initAuth<
     databaseHooks: {
       account: {
         create: {
-          before: async (accountData) => {
+          before: (accountData) => {
             if (
               accountData.providerId === "discord" &&
               !options.allowedDiscordIds.has(accountData.accountId)
             ) {
-              throw new Error("Access denied: Discord account not in allowlist");
+              throw new Error(
+                "Access denied: Discord account not in allowlist",
+              );
             }
+
+            return Promise.resolve();
           },
         },
       },

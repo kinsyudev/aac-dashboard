@@ -65,8 +65,14 @@ export const crafts = pgTable("crafts", (t) => ({
 export const craftMaterials = pgTable(
   "craft_materials",
   (t) => ({
-    craftId: t.integer().notNull().references(() => crafts.id),
-    itemId: t.integer().notNull().references(() => items.id),
+    craftId: t
+      .integer()
+      .notNull()
+      .references(() => crafts.id),
+    itemId: t
+      .integer()
+      .notNull()
+      .references(() => items.id),
     amount: t.integer().notNull().default(1),
   }),
   (table) => [
@@ -78,8 +84,14 @@ export const craftMaterials = pgTable(
 export const craftProducts = pgTable(
   "craft_products",
   (t) => ({
-    craftId: t.integer().notNull().references(() => crafts.id),
-    itemId: t.integer().notNull().references(() => items.id),
+    craftId: t
+      .integer()
+      .notNull()
+      .references(() => crafts.id),
+    itemId: t
+      .integer()
+      .notNull()
+      .references(() => items.id),
     amount: t.integer().notNull().default(1),
     rate: t.integer().notNull().default(100),
   }),
@@ -90,19 +102,28 @@ export const craftProducts = pgTable(
 );
 
 export const itemLaborOverrides = pgTable("item_labor_overrides", (t) => ({
-  itemId: t.integer().primaryKey().references(() => items.id),
+  itemId: t
+    .integer()
+    .primaryKey()
+    .references(() => items.id),
   labor: t.integer().notNull(),
 }));
 
 export const laborOverrides = pgTable("labor_overrides", (t) => ({
-  craftId: t.integer().primaryKey().references(() => crafts.id),
+  craftId: t
+    .integer()
+    .primaryKey()
+    .references(() => crafts.id),
   labor: t.integer().notNull(),
 }));
 
 export const prices = pgTable(
   "prices",
   (t) => ({
-    itemId: t.integer().notNull().references(() => items.id),
+    itemId: t
+      .integer()
+      .notNull()
+      .references(() => items.id),
     itemName: t.text().notNull(),
     avg24h: t.text("avg_24h"),
     vol24h: t.text("vol_24h"),

@@ -90,7 +90,7 @@ async function fetchApiRows(itemId: number): Promise<ApiPriceRow[]> {
     throw new Error(`Failed to fetch item ${itemId}: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as unknown;
+  const data: unknown = await response.json();
   return Array.isArray(data) ? (data as ApiPriceRow[]) : [];
 }
 

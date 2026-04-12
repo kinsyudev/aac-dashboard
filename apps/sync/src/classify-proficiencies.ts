@@ -50,16 +50,21 @@ ${lines.join("\n")}`,
     ],
   });
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
+  const firstContentBlock = response.content[0];
+  const text =
+    firstContentBlock?.type === "text" ? firstContentBlock.text : "";
 
   const classified = new Map<number, Proficiency>();
   const skippedIds = new Set<number>();
 
   for (const line of text.split("\n")) {
-    const match = line.trim().match(/^(?:id=)?(\d+)=(.+)$/);
+    const match = /^(?:id=)?(\d+)=(.+)$/.exec(line.trim());
     if (!match) continue;
-    const id = parseInt(match[1], 10);
-    const value = match[2].trim();
+    const [, rawId, rawValue] = match;
+    if (!rawId || !rawValue) continue;
+
+    const id = parseInt(rawId, 10);
+    const value = rawValue.trim();
     if (value === "SKIP") {
       skippedIds.add(id);
     } else if (PROFICIENCIES.includes(value as Proficiency)) {

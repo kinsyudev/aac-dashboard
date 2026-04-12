@@ -68,7 +68,12 @@ export function detectPieceAndTier(name: string): DetectedEquip | null {
   }
 
   // Default to weapon if we found a tier but no armor/jewelry match
-  return { tier: detectedTier, piece: null, category: "weapon", pieceToken: null };
+  return {
+    tier: detectedTier,
+    piece: null,
+    category: "weapon",
+    pieceToken: null,
+  };
 }
 
 /**
@@ -169,7 +174,10 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
   );
   const failRecoveryPerAttempt = failSalvageWisps * input.wispPrice;
   const totalFailRecovery = failRecoveryPerAttempt * failedAttempts;
-  const failSurplusWisps = Math.max(0, failSalvageWisps - input.seedWispsPerAttempt);
+  const failSurplusWisps = Math.max(
+    0,
+    failSalvageWisps - input.seedWispsPerAttempt,
+  );
   const failNetRecoveryPerAttempt = failSurplusWisps * input.wispPrice;
   const totalFailNetRecovery = failNetRecoveryPerAttempt * failedAttempts;
   const initialSeedCost = input.seedWispsPerAttempt * input.wispPrice;
@@ -182,8 +190,7 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
 
   // Revenue from the final piece
   const nextTierIndex = tiers.indexOf(input.rngTier) + 1;
-  const salvageTier =
-    nextTierIndex < tiers.length ? tiers[nextTierIndex]! : input.rngTier;
+  const salvageTier = tiers[nextTierIndex] ?? input.rngTier;
   const salvageWisps = getSalvageWisps(
     salvageTier,
     input.equip.piece,

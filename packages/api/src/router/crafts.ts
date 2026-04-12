@@ -26,6 +26,30 @@ function hasUnsupportedRecipeIngredient(
   );
 }
 
+type CraftRow = typeof crafts.$inferSelect;
+type ItemRow = typeof items.$inferSelect;
+
+interface CraftMaterialEntry {
+  craftId: number;
+  amount: number;
+  item: ItemRow;
+}
+
+interface CraftProductEntry {
+  craftId: number;
+  amount: number;
+  rate: number | null;
+  item: ItemRow;
+}
+
+export interface CraftWithMaterialsAndProducts {
+  craft: CraftRow;
+  materials: CraftMaterialEntry[];
+  products: CraftProductEntry[];
+}
+
+export type SubcraftEntry = CraftWithMaterialsAndProducts;
+
 export const craftsRouter = {
   all: protectedProcedure.query(({ ctx }) => {
     return ctx.db.select().from(crafts);
@@ -105,9 +129,29 @@ export const craftsRouter = {
       if (!craftsForItem.length)
         return {
           item,
-          crafts: [] as { craft: typeof crafts.$inferSelect; materials: { craftId: number; amount: number; item: typeof items.$inferSelect }[]; products: { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect }[] }[],
-          prices: [] as { itemId: number; avg24h: string | null; avg7d: string | null }[],
-          subcraftsByItemId: {} as Record<number, { craft: typeof crafts.$inferSelect; materials: { craftId: number; amount: number; item: typeof items.$inferSelect }[]; products: { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect }[] }[]>,
+          crafts: [] as CraftWithMaterialsAndProducts[],
+          prices: [] as {
+            itemId: number;
+            avg24h: string | null;
+            avg7d: string | null;
+          }[],
+          subcraftsByItemId: {} as Record<
+            number,
+            {
+              craft: typeof crafts.$inferSelect;
+              materials: {
+                craftId: number;
+                amount: number;
+                item: typeof items.$inferSelect;
+              }[];
+              products: {
+                craftId: number;
+                amount: number;
+                rate: number | null;
+                item: typeof items.$inferSelect;
+              }[];
+            }[]
+          >,
         };
 
       const craftIds = craftsForItem.map((c) => c.id);
@@ -155,40 +199,17 @@ export const craftsRouter = {
       });
 
       if (!supportedCraftsForItem.length) {
+        interface LatestPriceEntry {
+          itemId: number;
+          avg24h: string | null;
+          avg7d: string | null;
+        }
+
         return {
           item,
-          crafts: [] as {
-            craft: typeof crafts.$inferSelect;
-            materials: {
-              craftId: number;
-              amount: number;
-              item: typeof items.$inferSelect;
-            }[];
-            products: {
-              craftId: number;
-              amount: number;
-              rate: number | null;
-              item: typeof items.$inferSelect;
-            }[];
-          }[],
-          prices: [] as { itemId: number; avg24h: string | null; avg7d: string | null }[],
-          subcraftsByItemId: {} as Record<
-            number,
-            {
-              craft: typeof crafts.$inferSelect;
-              materials: {
-                craftId: number;
-                amount: number;
-                item: typeof items.$inferSelect;
-              }[];
-              products: {
-                craftId: number;
-                amount: number;
-                rate: number | null;
-                item: typeof items.$inferSelect;
-              }[];
-            }[]
-          >,
+          crafts: [] as CraftWithMaterialsAndProducts[],
+          prices: [] as LatestPriceEntry[],
+          subcraftsByItemId: {} as Record<number, SubcraftEntry[]>,
         };
       }
 
@@ -198,14 +219,6 @@ export const craftsRouter = {
           (materialsByCraft[craft.id] ?? []).map((m) => m.item.id),
         ),
       );
-
-      type SubcraftMaterial = { craftId: number; amount: number; item: typeof items.$inferSelect };
-      type SubcraftProduct = { craftId: number; amount: number; rate: number | null; item: typeof items.$inferSelect };
-      type SubcraftEntry = {
-        craft: typeof crafts.$inferSelect;
-        materials: SubcraftMaterial[];
-        products: SubcraftProduct[];
-      };
 
       const subcraftsByItemId: Record<number, SubcraftEntry[]> = {};
 
@@ -245,12 +258,18 @@ export const craftsRouter = {
         ]);
 
         const subMatByCraft = subMaterials.reduce(
-          (acc, m) => { (acc[m.craftId] ??= []).push(m); return acc; },
-          {} as Record<number, SubcraftMaterial[]>,
+          (acc, m) => {
+            (acc[m.craftId] ??= []).push(m);
+            return acc;
+          },
+          {} as Record<number, CraftMaterialEntry[]>,
         );
         const subProdByCraft = subProducts.reduce(
-          (acc, p) => { (acc[p.craftId] ??= []).push(p); return acc; },
-          {} as Record<number, SubcraftProduct[]>,
+          (acc, p) => {
+            (acc[p.craftId] ??= []).push(p);
+            return acc;
+          },
+          {} as Record<number, CraftProductEntry[]>,
         );
 
         const supportedSubCrafts = subCraftsRows.filter((craft) => {
@@ -259,7 +278,8 @@ export const craftsRouter = {
         });
 
         for (const craft of supportedSubCrafts) {
-          const pid = craft.primaryProductId!;
+          const pid = craft.primaryProductId;
+          if (pid == null) continue;
           (subcraftsByItemId[pid] ??= []).push({
             craft,
             materials: subMatByCraft[craft.id] ?? [],
@@ -271,22 +291,26 @@ export const craftsRouter = {
           .flatMap((craft) => subMatByCraft[craft.id] ?? [])
           .map((m) => m.item.id)
           .filter((id) => !visited.has(id));
-        for (const id of newIds) { visited.add(id); allMaterialItemIds.add(id); }
+        for (const id of newIds) {
+          visited.add(id);
+          allMaterialItemIds.add(id);
+        }
         pendingIds = [...new Set(newIds)];
       }
 
       // Round 4: latest prices for all BFS material ids
-      const latestPrices = allMaterialItemIds.size > 0
-        ? await ctx.db
-            .selectDistinctOn([prices.itemId], {
-              itemId: prices.itemId,
-              avg24h: prices.avg24h,
-              avg7d: prices.avg7d,
-            })
-            .from(prices)
-            .where(inArray(prices.itemId, [...allMaterialItemIds]))
-            .orderBy(prices.itemId, desc(prices.fetchedAt))
-        : [];
+      const latestPrices =
+        allMaterialItemIds.size > 0
+          ? await ctx.db
+              .selectDistinctOn([prices.itemId], {
+                itemId: prices.itemId,
+                avg24h: prices.avg24h,
+                avg7d: prices.avg7d,
+              })
+              .from(prices)
+              .where(inArray(prices.itemId, [...allMaterialItemIds]))
+              .orderBy(prices.itemId, desc(prices.fetchedAt))
+          : [];
 
       return {
         item,
@@ -342,24 +366,9 @@ export const craftsRouter = {
       if (hasUnsupportedRecipeIngredient(materials)) return null;
 
       // Round 3: BFS subcrafts
-      const allMaterialItemIds = new Set<number>(materials.map((m) => m.item.id));
-
-      type SubcraftMaterial = {
-        craftId: number;
-        amount: number;
-        item: typeof items.$inferSelect;
-      };
-      type SubcraftProduct = {
-        craftId: number;
-        amount: number;
-        rate: number | null;
-        item: typeof items.$inferSelect;
-      };
-      type SubcraftEntry = {
-        craft: typeof crafts.$inferSelect;
-        materials: SubcraftMaterial[];
-        products: SubcraftProduct[];
-      };
+      const allMaterialItemIds = new Set<number>(
+        materials.map((m) => m.item.id),
+      );
 
       const subcraftsByItemId: Record<number, SubcraftEntry[]> = {};
 
@@ -406,14 +415,14 @@ export const craftsRouter = {
             (acc[m.craftId] ??= []).push(m);
             return acc;
           },
-          {} as Record<number, SubcraftMaterial[]>,
+          {} as Record<number, CraftMaterialEntry[]>,
         );
         const subProdByCraft = subProducts.reduce(
           (acc, p) => {
             (acc[p.craftId] ??= []).push(p);
             return acc;
           },
-          {} as Record<number, SubcraftProduct[]>,
+          {} as Record<number, CraftProductEntry[]>,
         );
 
         const supportedSubCrafts = subCraftsRows.filter((subCraft) => {
@@ -422,7 +431,8 @@ export const craftsRouter = {
         });
 
         for (const subCraft of supportedSubCrafts) {
-          const pid = subCraft.primaryProductId!;
+          const pid = subCraft.primaryProductId;
+          if (pid == null) continue;
           (subcraftsByItemId[pid] ??= []).push({
             craft: subCraft,
             materials: subMatByCraft[subCraft.id] ?? [],

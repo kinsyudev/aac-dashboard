@@ -7,15 +7,14 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
+import type { Proficiency } from "@acme/db/schema";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
-import type { Proficiency } from "@acme/db/schema";
-
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
-import { PROFICIENCY_CATEGORIES, getRank } from "~/lib/proficiency";
+import { getRank, PROFICIENCY_CATEGORIES } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/profile")({
@@ -299,7 +298,11 @@ function PriceOverrides() {
                   <tr key={o.itemId} className="border-b last:border-0">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <ItemIcon icon={o.itemIcon ?? null} name={o.itemName} size="md" />
+                        <ItemIcon
+                          icon={o.itemIcon ?? null}
+                          name={o.itemName}
+                          size="md"
+                        />
                         <span className="font-medium">{o.itemName}</span>
                       </div>
                     </td>
@@ -430,7 +433,6 @@ function PriceOverrides() {
   );
 }
 
-
 function ProficiencyEditor() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
@@ -450,7 +452,7 @@ function ProficiencyEditor() {
         const previous = queryClient.getQueryData(queryOptions.queryKey);
         queryClient.setQueryData(queryOptions.queryKey, (old) => {
           if (!old) return [];
-          const existing = old?.find((p) => p.proficiency === proficiency);
+          const existing = old.find((p) => p.proficiency === proficiency);
           if (existing) {
             return old.map((p) =>
               p.proficiency === proficiency ? { ...p, value } : p,
@@ -498,7 +500,7 @@ function ProficiencyEditor() {
               const displayVal = drafts[prof] ?? savedVal.toString();
               const rank = getRank(
                 drafts[prof] !== undefined
-                  ? (parseInt(drafts[prof], 10) ?? savedVal)
+                  ? parseInt(drafts[prof], 10)
                   : savedVal,
               );
 

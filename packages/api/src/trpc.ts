@@ -12,15 +12,15 @@ import { z, ZodError } from "zod/v4";
 
 import type { Auth } from "@acme/auth";
 import { authEnv } from "@acme/auth/env";
-import { db } from "@acme/db/client";
 import { eq } from "@acme/db";
+import { db } from "@acme/db/client";
 import { account } from "@acme/db/schema";
 
 const allowedDiscordIds = authEnv().AUTH_ALLOWED_DISCORD_IDS;
 
 // In-memory cache of internal user IDs whose Discord account is in the allowlist.
 // Populated on startup and refreshed every 60 seconds.
-let allowedUserIds: Set<string> = new Set();
+let allowedUserIds = new Set<string>();
 
 async function refreshAllowedUserIds() {
   const accounts = await db.query.account.findMany({

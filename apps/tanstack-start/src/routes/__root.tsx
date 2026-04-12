@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-import { useRef } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import type * as React from "react";
@@ -71,13 +70,7 @@ function RootComponent() {
 
 function NavigationProgress() {
   const isLoading = useRouterState({ select: (s) => s.status === "pending" });
-  const hasBeenIdle = useRef(false);
-
-  if (!isLoading) {
-    hasBeenIdle.current = true;
-  }
-
-  if (!isLoading || !hasBeenIdle.current) return null;
+  if (!isLoading) return null;
   return (
     <div
       className="bg-primary fixed top-0 left-0 z-50 h-0.5"
@@ -126,7 +119,7 @@ function SiteHeader() {
       <nav className="container flex flex-col gap-4 py-4 lg:flex-row lg:items-center">
         <div className="flex items-center gap-6">
           <Link to="/" className="flex flex-col leading-none">
-            <span className="text-sm font-semibold uppercase tracking-[0.2em]">
+            <span className="text-sm font-semibold tracking-[0.2em] uppercase">
               AAC
             </span>
             <span className="text-muted-foreground text-xs">Dashboard</span>
@@ -154,7 +147,7 @@ function SiteHeader() {
 
         <div className="lg:ml-auto">
           {session ? (
-            <div className="flex items-center gap-3 rounded-full border px-2 py-2 lg:pl-2 lg:pr-3">
+            <div className="flex items-center gap-3 rounded-full border px-2 py-2 lg:pr-3 lg:pl-2">
               {session.user.image ? (
                 <img
                   src={session.user.image}
@@ -167,8 +160,12 @@ function SiteHeader() {
                 </div>
               )}
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{session.user.name}</p>
-                <p className="text-muted-foreground text-xs">Connected with Discord</p>
+                <p className="truncate text-sm font-medium">
+                  {session.user.name}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Connected with Discord
+                </p>
               </div>
               <Button
                 variant="ghost"

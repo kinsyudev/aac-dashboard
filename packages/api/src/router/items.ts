@@ -67,12 +67,14 @@ export const itemsRouter = {
       .orderBy(items.name);
   }),
 
-  search: protectedProcedure.input(z.string().min(2)).query(({ ctx, input }) => {
-    return ctx.db
-      .select({ id: items.id, name: items.name, icon: items.icon })
-      .from(items)
-      .where(ilike(items.name, `%${input}%`))
-      .orderBy(items.name)
-      .limit(10);
-  }),
+  search: protectedProcedure
+    .input(z.string().min(2))
+    .query(({ ctx, input }) => {
+      return ctx.db
+        .select({ id: items.id, name: items.name, icon: items.icon })
+        .from(items)
+        .where(ilike(items.name, `%${input}%`))
+        .orderBy(items.name)
+        .limit(10);
+    }),
 } satisfies TRPCRouterRecord;

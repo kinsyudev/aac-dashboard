@@ -1,26 +1,20 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import type React from "react";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
-
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
+import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
-import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -92,27 +86,32 @@ type SubcraftEntry =
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
-type RecipeEntry = {
+interface RecipeEntry {
   craft: {
     id: number;
     name: string;
     labor: number;
     proficiency: string | null;
   };
-  materials: { item: { id: number; name: string; icon: string | null }; amount: number }[];
+  materials: {
+    item: { id: number; name: string; icon: string | null };
+    amount: number;
+  }[];
   products: { item: { id: number }; amount: number }[];
-};
-
+}
 
 // ─── Flat shopping list ───────────────────────────────────────────────────────
 
-type ShoppingListItem = {
+interface ShoppingListItem {
   item: { id: number; name: string; icon: string | null };
   totalAmount: number;
-};
+}
 
 function buildShoppingList(
-  materials: { item: { id: number; name: string; icon: string | null }; amount: number }[],
+  materials: {
+    item: { id: number; name: string; icon: string | null };
+    amount: number;
+  }[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
   depth: number,
@@ -123,8 +122,11 @@ function buildShoppingList(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const sub = pickPreferredCraft(subcraftMap[item.id]!, item.id);
-      const produced = sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
+      const subEntries = subcraftMap[item.id];
+      if (!subEntries?.length) continue;
+      const sub = pickPreferredCraft(subEntries, item.id);
+      const produced =
+        sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildShoppingList(
         sub.materials,
         craftModeSet,
@@ -168,7 +170,9 @@ function buildLaborByProficiency(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const sub = pickPreferredCraft(subcraftMap[item.id]!, item.id);
+      const subEntries = subcraftMap[item.id];
+      if (!subEntries?.length) continue;
+      const sub = pickPreferredCraft(subEntries, item.id);
       const produced =
         sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildLaborByProficiency(
@@ -270,10 +274,7 @@ function RecipeTree({
     const batchCost = sub.materials.reduce((sum, { item, amount }) => {
       const custom = overrideMap.get(item.id);
       const price = priceMap.get(item.id);
-      const u =
-        custom != null
-          ? custom
-          : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+      const u = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
       return sum + u * amount;
     }, 0);
     const produced =
@@ -285,10 +286,7 @@ function RecipeTree({
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     const custom = overrideMap.get(item.id);
     const price = priceMap.get(item.id);
-    const buyUnit =
-      custom != null
-        ? custom
-        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+    const buyUnit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
     const unit =
       craftModeSet.has(item.id) && isCraftable
         ? getCraftCostPerUnit(item.id)
@@ -351,7 +349,7 @@ function RecipeTree({
           const totalDiff =
             isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
           const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
+            ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
             : null;
           const subLabor = subEntry
             ? getDiscountedLabor(
@@ -402,7 +400,9 @@ function RecipeTree({
                 {(hasPrice || mode === "craft") && (
                   <span className="text-muted-foreground shrink-0 tabular-nums">
                     {isCustom && mode === "buy" && (
-                      <span className="text-primary mr-1 text-xs">(custom)</span>
+                      <span className="text-primary mr-1 text-xs">
+                        (custom)
+                      </span>
                     )}
                     {mode === "craft" && isCraftable && subLabor > 0 && (
                       <span className="mr-1 text-xs text-amber-500">
@@ -509,7 +509,7 @@ function ShoplistDetail({
   });
   const simulatorQuery = useQuery({
     ...trpc.crafts.forItem.queryOptions(simItemId ?? -1),
-    enabled: isSimulator && simItemId != null,
+    enabled: isSimulator,
   });
   const existingList = useQuery({
     ...trpc.shoppingLists.getById.queryOptions(listId ?? ""),
@@ -542,7 +542,12 @@ function ShoplistDetail({
       return;
     }
     setListName("");
-  }, [craftData?.item?.name, existingList.data?.list.name, isSimulator, simulatorData?.item.name]);
+  }, [
+    craftData?.item?.name,
+    existingList.data?.list.name,
+    isSimulator,
+    simulatorData?.item.name,
+  ]);
 
   const priceMap: PriceMap = useMemo(() => {
     const prices = isSimulator ? simulatorData?.prices : craftData?.prices;
@@ -558,7 +563,10 @@ function ShoplistDetail({
     const next = new Set(craftModeSet);
     if (next.has(itemId)) next.delete(itemId);
     else next.add(itemId);
-    const newSub = Array.from(next).sort((a, b) => a - b).join(",") || undefined;
+    const serializedSub = Array.from(next)
+      .sort((a, b) => a - b)
+      .join(",");
+    const newSub = serializedSub === "" ? undefined : serializedSub;
     void navigate({ search: (prev) => ({ ...prev, sub: newSub }) });
   };
 
@@ -647,17 +655,25 @@ function ShoplistDetail({
     },
     onSuccess: async (result) => {
       await Promise.all([
-        queryClient.invalidateQueries(trpc.shoppingLists.listMineAndShared.pathFilter()),
+        queryClient.invalidateQueries(
+          trpc.shoppingLists.listMineAndShared.pathFilter(),
+        ),
         queryClient.invalidateQueries(trpc.shoppingLists.getById.pathFilter()),
       ]);
-      toast.success(listId ? "Shopping list updated." : "Shopping list created.");
+      toast.success(
+        listId ? "Shopping list updated." : "Shopping list created.",
+      );
       await navigate({
         to: "/shoplists/$listId",
         params: { listId: result.id },
       });
     },
     onError: () => {
-      toast.error(listId ? "Failed to update shopping list." : "Failed to create shopping list.");
+      toast.error(
+        listId
+          ? "Failed to update shopping list."
+          : "Failed to create shopping list.",
+      );
     },
   });
 
@@ -667,7 +683,10 @@ function ShoplistDetail({
   }
 
   if (!isSimulator) {
-    const data = craftData!;
+    if (!craftData) {
+      return <p>Craft not found.</p>;
+    }
+    const data = craftData;
     const scaledEntry: RecipeEntry = {
       craft: data.craft,
       materials: data.materials.map((material) => ({
@@ -678,7 +697,14 @@ function ShoplistDetail({
     };
     const shoppingList = (() => {
       const acc = new Map<number, ShoppingListItem>();
-      buildShoppingList(data.materials, craftModeSet, craftSubcraftMap, 0, acc, qty);
+      buildShoppingList(
+        data.materials,
+        craftModeSet,
+        craftSubcraftMap,
+        0,
+        acc,
+        qty,
+      );
       return Array.from(acc.values()).sort((a, b) =>
         a.item.name.localeCompare(b.item.name),
       );
@@ -735,26 +761,35 @@ function ShoplistDetail({
     );
   }
 
-  const simulatorChain = getSimulationChain(simulatorMainCraft!, simulatorSubcraftMap);
+  const simulatorSource = simulatorData;
+  const simulatorCraft = simulatorMainCraft;
+  if (!simulatorSource || !simulatorCraft) {
+    return <p>Craft not found.</p>;
+  }
+
+  const simulatorChain = getSimulationChain(
+    simulatorCraft,
+    simulatorSubcraftMap,
+  );
   const scaledAttemptEntry: RecipeEntry = {
-    craft: simulatorMainCraft!.craft,
-    materials: simulatorMainCraft!.materials.map((material) => ({
+    craft: simulatorCraft.craft,
+    materials: simulatorCraft.materials.map((material) => ({
       ...material,
       amount: material.amount * effectiveQty,
     })),
-    products: simulatorMainCraft!.products,
+    products: simulatorCraft.products,
   };
   const finalUpgradeEntry: RecipeEntry = {
-    craft: simulatorMainCraft!.craft,
-    materials: simulatorMainCraft!.materials.filter(
+    craft: simulatorCraft.craft,
+    materials: simulatorCraft.materials.filter(
       ({ item }) => item.id !== simulatorChain.keyMaterialId,
     ),
-    products: simulatorMainCraft!.products,
+    products: simulatorCraft.products,
   };
   const simulatorShoppingList = (() => {
     const acc = new Map<number, ShoppingListItem>();
     buildShoppingList(
-      simulatorMainCraft!.materials,
+      simulatorCraft.materials,
       craftModeSet,
       simulatorSubcraftMap,
       0,
@@ -776,8 +811,8 @@ function ShoplistDetail({
   const simulatorLaborByProficiency = (() => {
     const acc = new Map<string, number>();
     buildLaborByProficiency(
-      simulatorMainCraft!.craft,
-      simulatorMainCraft!.materials,
+      simulatorCraft.craft,
+      simulatorCraft.materials,
       craftModeSet,
       simulatorSubcraftMap,
       0,
@@ -803,15 +838,15 @@ function ShoplistDetail({
       backLink={
         <Link
           to="/simulator/$itemId"
-          params={{ itemId: simItemId! }}
+          params={{ itemId: simItemId }}
           className="text-muted-foreground flex items-center gap-1 text-sm hover:underline"
         >
-          ← {simulatorData!.item.name}
+          ← {simulatorSource.item.name}
         </Link>
       }
-      title={simulatorData!.item.name}
+      title={simulatorSource.item.name}
       subtitle="Simulator export"
-      icon={simulatorData!.item.icon}
+      icon={simulatorSource.item.icon}
       quantityLabel="Expected attempts"
       localQty={localQty}
       setLocalQty={setLocalQty}
@@ -888,7 +923,11 @@ function ShoplistLayout({
   persistList: () => void;
 }) {
   const totalLabor = useMemo(
-    () => Array.from(laborByProficiency.values()).reduce((sum, value) => sum + value, 0),
+    () =>
+      Array.from(laborByProficiency.values()).reduce(
+        (sum, value) => sum + value,
+        0,
+      ),
     [laborByProficiency],
   );
   const totalCost = useMemo(
@@ -896,8 +935,7 @@ function ShoplistLayout({
       shoppingList.reduce((sum, { item, totalAmount }) => {
         const custom = overrideMap.get(item.id);
         const price = priceMap.get(item.id);
-        const unit =
-          custom != null ? custom : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+        const unit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
         return sum + unit * Math.ceil(totalAmount);
       }, 0),
     [overrideMap, priceMap, shoppingList],
@@ -921,7 +959,9 @@ function ShoplistLayout({
       <section className="rounded-lg border p-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <label className="flex-1">
-            <span className="mb-1 block text-sm font-medium">Saved list name</span>
+            <span className="mb-1 block text-sm font-medium">
+              Saved list name
+            </span>
             <Input
               value={listName}
               onChange={(event) => setListName(event.target.value)}
@@ -983,18 +1023,22 @@ function ShoplistLayout({
           <div className="flex items-center gap-4">
             {totalLabor > 0 ? (
               <div className="flex flex-wrap items-center gap-1.5">
-                {Array.from(laborByProficiency.entries()).map(([prof, labor]) => (
-                  <ProficiencyBadge
-                    key={prof}
-                    proficiency={prof}
-                    suffix={` ${labor.toLocaleString()}`}
-                  />
-                ))}
+                {Array.from(laborByProficiency.entries()).map(
+                  ([prof, labor]) => (
+                    <ProficiencyBadge
+                      key={prof}
+                      proficiency={prof}
+                      suffix={` ${labor.toLocaleString()}`}
+                    />
+                  ),
+                )}
               </div>
             ) : null}
             {totalCost > 0 ? (
               <p className="text-sm tabular-nums">
-                <span className="text-muted-foreground mr-1 text-xs">total</span>
+                <span className="text-muted-foreground mr-1 text-xs">
+                  total
+                </span>
                 <span className="text-primary font-medium">
                   {totalCost.toLocaleString(undefined, {
                     maximumFractionDigits: 0,
@@ -1010,7 +1054,7 @@ function ShoplistLayout({
             const custom = overrideMap.get(item.id);
             const price = priceMap.get(item.id);
             const unit =
-              custom != null ? custom : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+              custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
             const roundedQuantity = Math.ceil(totalAmount);
             const lineTotal = unit * roundedQuantity;
             return (
@@ -1027,7 +1071,9 @@ function ShoplistLayout({
                   {unit > 0 ? (
                     <span className="ml-2">
                       {custom != null ? (
-                        <span className="text-primary mr-1 text-xs">(custom)</span>
+                        <span className="text-primary mr-1 text-xs">
+                          (custom)
+                        </span>
                       ) : null}
                       {lineTotal.toLocaleString(undefined, {
                         maximumFractionDigits: 0,

@@ -2,15 +2,15 @@ import type { inferProcedureOutput } from "@trpc/server";
 import type React from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
+import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
-import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/craft/$itemId")({
     const data = await queryClient.fetchQuery(
       trpc.crafts.forItem.queryOptions(params.itemId),
     );
-    if (!data) throw notFound();
+    if (!data) return;
   },
   component: RouteComponent,
   notFoundComponent: () => <p>Item not found.</p>,
@@ -92,15 +92,6 @@ function ItemDescription({ text }: { text: string }) {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="bg-muted/50 rounded-md border p-3">
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="mt-1 font-medium">{value}</p>
-    </div>
-  );
-}
-
 type PageData = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forItem"]>
 >;
@@ -109,7 +100,6 @@ type SubcraftEntry = PageData["subcraftsByItemId"][number][number];
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = Record<number, SubcraftEntry[]>;
-
 
 function CraftRecipe({
   entry,
@@ -138,10 +128,7 @@ function CraftRecipe({
     const batchCost = sub.materials.reduce((sum, { item, amount }) => {
       const custom = overrideMap.get(item.id);
       const price = priceMap.get(item.id);
-      const u =
-        custom != null
-          ? custom
-          : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+      const u = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
       return sum + u * amount;
     }, 0);
     const produced =
@@ -153,10 +140,7 @@ function CraftRecipe({
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     const custom = overrideMap.get(item.id);
     const price = priceMap.get(item.id);
-    const buyUnit =
-      custom != null
-        ? custom
-        : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+    const buyUnit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
     const unit =
       getMode(item.id) === "craft" && isCraftable
         ? getCraftCostPerUnit(item.id)
@@ -231,7 +215,7 @@ function CraftRecipe({
           const totalDiff =
             isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
           const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id]!, item.id)
+            ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
             : null;
           const subLabor = subEntry
             ? getDiscountedLabor(
@@ -409,7 +393,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
               priceMap={priceMap}
               overrideMap={overrideMap}
               proficiencyMap={proficiencyMap}
-              subcraftMap={data.subcraftsByItemId ?? {}}
+              subcraftMap={data.subcraftsByItemId}
             />
           ))}
         </div>

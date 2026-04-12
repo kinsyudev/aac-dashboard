@@ -1,11 +1,17 @@
+import type { inferProcedureOutput } from "@trpc/server";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
+import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import { toast } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
 import { useTRPC } from "~/lib/trpc";
+
+type AcceptInviteResult = inferProcedureOutput<
+  AppRouter["shoppingLists"]["acceptInviteToken"]
+>;
 
 export const Route = createFileRoute("/shoplists/invite/$token")({
   component: InviteAcceptancePage,
@@ -17,14 +23,20 @@ function InviteAcceptancePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session } = authClient.useSession();
-  const { data, isLoading } = useQuery(trpc.shoppingLists.getInvitePreview.queryOptions(token));
+  const { data, isLoading } = useQuery(
+    trpc.shoppingLists.getInvitePreview.queryOptions(token),
+  );
 
   const acceptInvite = useMutation(
     trpc.shoppingLists.acceptInviteToken.mutationOptions({
-      onSuccess: async (result) => {
+      onSuccess: async (result: AcceptInviteResult) => {
         await Promise.all([
-          queryClient.invalidateQueries(trpc.shoppingLists.listMineAndShared.pathFilter()),
-          queryClient.invalidateQueries(trpc.shoppingLists.getInvitePreview.pathFilter()),
+          queryClient.invalidateQueries(
+            trpc.shoppingLists.listMineAndShared.pathFilter(),
+          ),
+          queryClient.invalidateQueries(
+            trpc.shoppingLists.getInvitePreview.pathFilter(),
+          ),
         ]);
         toast.success("Invite accepted.");
         await navigate({

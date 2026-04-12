@@ -9,8 +9,14 @@ export function authEnv() {
       AUTH_ALLOWED_DISCORD_IDS: z
         .string()
         .min(1)
-        .transform((val) =>
-          new Set(val.split(",").map((id) => id.trim()).filter(Boolean)),
+        .transform(
+          (val) =>
+            new Set(
+              val
+                .split(",")
+                .map((id) => id.trim())
+                .filter(Boolean),
+            ),
         ),
       AUTH_SECRET:
         process.env.NODE_ENV === "production"

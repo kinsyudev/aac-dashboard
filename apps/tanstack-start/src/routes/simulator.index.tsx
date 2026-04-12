@@ -68,10 +68,7 @@ function SearchResults({ query }: { query: string }) {
     const q = query.toLowerCase();
     return allItems.filter((item) => {
       const name = item.name.toLowerCase();
-      return (
-        name.includes(SEALED_DELPHINAD_PREFIX) &&
-        name.includes(q)
-      );
+      return name.includes(SEALED_DELPHINAD_PREFIX) && name.includes(q);
     });
   }, [allItems, query]);
 
@@ -93,7 +90,7 @@ function SearchResults({ query }: { query: string }) {
             <span className="text-muted-foreground text-xs">
               {item.category}
             </span>
-            {item.labor != null && item.labor > 0 && (
+            {item.labor > 0 && (
               <Badge variant="secondary">{item.labor} labor</Badge>
             )}
           </Link>

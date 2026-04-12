@@ -1,12 +1,22 @@
+import type { inferProcedureOutput } from "@trpc/server";
 import { Suspense } from "react";
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
+import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import { toast } from "@acme/ui/toast";
 
 import { ItemIcon } from "~/component/item-icon";
 import { useTRPC } from "~/lib/trpc";
+
+type DuplicateResult = inferProcedureOutput<
+  AppRouter["shoppingLists"]["duplicate"]
+>;
 
 export const Route = createFileRoute("/shoplists/")({
   head: () => ({
@@ -41,11 +51,13 @@ function ShoplistsContent() {
   const trpc = useTRPC();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data } = useSuspenseQuery(trpc.shoppingLists.listMineAndShared.queryOptions());
+  const { data } = useSuspenseQuery(
+    trpc.shoppingLists.listMineAndShared.queryOptions(),
+  );
 
   const duplicate = useMutation(
     trpc.shoppingLists.duplicate.mutationOptions({
-      onSuccess: async (result) => {
+      onSuccess: async (result: DuplicateResult) => {
         await queryClient.invalidateQueries(
           trpc.shoppingLists.listMineAndShared.pathFilter(),
         );
@@ -151,7 +163,11 @@ function ListCard({
     sourceType: "craft" | "simulator";
     sourceQuantity: number;
     updatedAt: Date;
-    sourceItem: { id: number | null; name: string | null; icon: string | null } | null;
+    sourceItem: {
+      id: number | null;
+      name: string | null;
+      icon: string | null;
+    } | null;
     owner: { id: string; name: string; image: string | null };
   };
   role?: "read" | "write";
@@ -165,7 +181,10 @@ function ListCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             {list.sourceItem?.icon ? (
-              <ItemIcon icon={list.sourceItem.icon} name={list.sourceItem.name ?? list.name} />
+              <ItemIcon
+                icon={list.sourceItem.icon}
+                name={list.sourceItem.name ?? list.name}
+              />
             ) : null}
             <h3 className="truncate text-lg font-semibold">{list.name}</h3>
           </div>

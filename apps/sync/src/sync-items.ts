@@ -80,16 +80,23 @@ async function api<T>(path: string): Promise<T> {
 }
 
 async function fetchBatch<T>(paths: string[]): Promise<(T | null)[]> {
-  const results: (T | null)[] = new Array(paths.length).fill(null);
+  const results = Array<T | null>(paths.length).fill(null);
   let idx = 0;
 
   async function worker() {
     while (idx < paths.length) {
       const i = idx++;
+      const path = paths[i];
+      if (path == null) {
+        continue;
+      }
+
       try {
-        results[i] = await api<T>(paths[i]!);
+        results[i] = await api<T>(path);
       } catch (e) {
-        console.warn(`  Failed ${paths[i]}: ${e instanceof Error ? e.message : e}`);
+        console.warn(
+          `  Failed ${path}: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
   }

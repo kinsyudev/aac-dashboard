@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -29,22 +29,23 @@ function ShoppingListDetailPage() {
   const trpc = useTRPC();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data } = useSuspenseQuery(trpc.shoppingLists.getById.queryOptions(listId));
+  const { data } = useSuspenseQuery(
+    trpc.shoppingLists.getById.queryOptions(listId),
+  );
   const { overrideMap } = useUserData();
 
   const [name, setName] = useState(data.list.name);
   const [quantity, setQuantity] = useState(String(data.list.sourceQuantity));
-  const inviteBase = typeof window === "undefined" ? "" : window.location.origin;
-  const itemIds = useMemo(() => data.items.map((item) => item.itemId), [data.items]);
+  const inviteBase =
+    typeof window === "undefined" ? "" : window.location.origin;
+  const itemIds = useMemo(
+    () => data.items.map((item) => item.itemId),
+    [data.items],
+  );
   const { data: prices = [] } = useQuery({
     ...trpc.items.pricesBatch.queryOptions(itemIds),
     enabled: itemIds.length > 0,
   });
-
-  useEffect(() => {
-    setName(data.list.name);
-    setQuantity(String(data.list.sourceQuantity));
-  }, [data.list.name, data.list.sourceQuantity]);
 
   const priceMap = useMemo(
     () => new Map(prices.map((price) => [price.itemId, price])),
@@ -54,7 +55,9 @@ function ShoppingListDetailPage() {
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.shoppingLists.getById.pathFilter()),
-      queryClient.invalidateQueries(trpc.shoppingLists.listMineAndShared.pathFilter()),
+      queryClient.invalidateQueries(
+        trpc.shoppingLists.listMineAndShared.pathFilter(),
+      ),
     ]);
   };
 
@@ -128,12 +131,27 @@ function ShoppingListDetailPage() {
   );
 
   const completion = useMemo(() => {
-    const requiredItems = data.items.reduce((sum, item) => sum + item.requiredQuantity, 0);
-    const obtainedItems = data.items.reduce((sum, item) => sum + item.obtainedQuantity, 0);
-    const requiredCrafts = data.crafts.reduce((sum, craft) => sum + craft.requiredCount, 0);
-    const completedCrafts = data.crafts.reduce((sum, craft) => sum + craft.completedCount, 0);
+    const requiredItems = data.items.reduce(
+      (sum, item) => sum + item.requiredQuantity,
+      0,
+    );
+    const obtainedItems = data.items.reduce(
+      (sum, item) => sum + item.obtainedQuantity,
+      0,
+    );
+    const requiredCrafts = data.crafts.reduce(
+      (sum, craft) => sum + craft.requiredCount,
+      0,
+    );
+    const completedCrafts = data.crafts.reduce(
+      (sum, craft) => sum + craft.completedCount,
+      0,
+    );
     return {
-      itemPct: requiredItems === 0 ? 0 : Math.round((obtainedItems / requiredItems) * 100),
+      itemPct:
+        requiredItems === 0
+          ? 0
+          : Math.round((obtainedItems / requiredItems) * 100),
       craftPct:
         requiredCrafts === 0
           ? 0
@@ -171,12 +189,16 @@ function ShoppingListDetailPage() {
         const leftUnitPrice =
           overrideMap.get(left.itemId) ??
           Number.parseFloat(
-            priceMap.get(left.itemId)?.avg24h ?? priceMap.get(left.itemId)?.avg7d ?? "0",
+            priceMap.get(left.itemId)?.avg24h ??
+              priceMap.get(left.itemId)?.avg7d ??
+              "0",
           );
         const rightUnitPrice =
           overrideMap.get(right.itemId) ??
           Number.parseFloat(
-            priceMap.get(right.itemId)?.avg24h ?? priceMap.get(right.itemId)?.avg7d ?? "0",
+            priceMap.get(right.itemId)?.avg24h ??
+              priceMap.get(right.itemId)?.avg7d ??
+              "0",
           );
         const costDelta =
           rightRemaining * rightUnitPrice - leftRemaining * leftUnitPrice;
@@ -192,12 +214,16 @@ function ShoppingListDetailPage() {
       <div className="flex flex-col gap-8">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <Link to="/shoplists" className="text-muted-foreground text-sm hover:underline">
+            <Link
+              to="/shoplists"
+              className="text-muted-foreground text-sm hover:underline"
+            >
               ← Back to lists
             </Link>
             <h1 className="mt-3 text-3xl font-bold">{data.list.name}</h1>
             <p className="text-muted-foreground mt-2 text-sm">
-              Owned by {data.owner.name} • {data.role === "owner" ? "owner" : data.role}
+              Owned by {data.owner.name} •{" "}
+              {data.role === "owner" ? "owner" : data.role}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -222,7 +248,7 @@ function ShoppingListDetailPage() {
                   craft: data.list.sourceCraftId,
                   simItem:
                     data.list.sourceType === "simulator"
-                      ? data.list.sourceItemId ?? undefined
+                      ? (data.list.sourceItemId ?? undefined)
                       : undefined,
                   qty:
                     data.list.sourceType === "craft"
@@ -307,7 +333,7 @@ function ShoppingListDetailPage() {
                 Invited writers can update both counters.
               </p>
               <div className="rounded-lg border px-4 py-3">
-                <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                <p className="text-muted-foreground text-xs tracking-wide uppercase">
                   Buy remaining
                 </p>
                 <p className="mt-1 text-2xl font-semibold tabular-nums">
@@ -317,7 +343,8 @@ function ShoppingListDetailPage() {
                   g
                 </p>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  Based on your profile overrides first, then latest market prices.
+                  Based on your profile overrides first, then latest market
+                  prices.
                 </p>
               </div>
             </div>
@@ -340,7 +367,9 @@ function ShoppingListDetailPage() {
                       size="md"
                     />
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{itemRow.item.name}</p>
+                      <p className="truncate font-medium">
+                        {itemRow.item.name}
+                      </p>
                       <p className="text-muted-foreground text-sm">
                         {itemRow.obtainedQuantity} / {itemRow.requiredQuantity}
                       </p>
@@ -364,7 +393,10 @@ function ShoppingListDetailPage() {
                       updateItemProgress.mutate({
                         listId,
                         itemId: itemRow.itemId,
-                        obtainedQuantity: Math.max(0, Number(event.target.value) || 0),
+                        obtainedQuantity: Math.max(
+                          0,
+                          Number(event.target.value) || 0,
+                        ),
                       })
                     }
                   />
@@ -383,7 +415,9 @@ function ShoppingListDetailPage() {
                     className="flex items-center justify-between gap-4 rounded-lg border px-3 py-3"
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{craftRow.craft.name}</p>
+                      <p className="truncate font-medium">
+                        {craftRow.craft.name}
+                      </p>
                       <p className="text-muted-foreground text-sm">
                         {craftRow.completedCount} / {craftRow.requiredCount}
                       </p>
@@ -399,7 +433,10 @@ function ShoppingListDetailPage() {
                         updateCraftProgress.mutate({
                           listId,
                           craftId: craftRow.craftId,
-                          completedCount: Math.max(0, Number(event.target.value) || 0),
+                          completedCount: Math.max(
+                            0,
+                            Number(event.target.value) || 0,
+                          ),
                         })
                       }
                     />
@@ -448,14 +485,18 @@ function ShoppingListDetailPage() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button
                     size="sm"
-                    onClick={() => createInvite.mutate({ listId, role: "read" })}
+                    onClick={() =>
+                      createInvite.mutate({ listId, role: "read" })
+                    }
                   >
                     Create read invite
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => createInvite.mutate({ listId, role: "write" })}
+                    onClick={() =>
+                      createInvite.mutate({ listId, role: "write" })
+                    }
                   >
                     Create write invite
                   </Button>
@@ -487,7 +528,10 @@ function ShoppingListDetailPage() {
                               size="sm"
                               variant="outline"
                               onClick={() =>
-                                revokeInvite.mutate({ listId, inviteId: invite.id })
+                                revokeInvite.mutate({
+                                  listId,
+                                  inviteId: invite.id,
+                                })
                               }
                             >
                               Revoke
@@ -558,19 +602,12 @@ function ItemCost({
       {lineCost.toLocaleString(undefined, {
         maximumFractionDigits: 0,
       })}
-      g
-      {override != null ? " (override)" : ""}
+      g{override != null ? " (override)" : ""}
     </p>
   );
 }
 
-function ProgressMeter({
-  label,
-  percent,
-}: {
-  label: string;
-  percent: number;
-}) {
+function ProgressMeter({ label, percent }: { label: string; percent: number }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-sm">

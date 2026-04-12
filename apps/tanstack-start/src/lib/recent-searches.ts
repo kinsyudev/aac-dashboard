@@ -3,12 +3,12 @@ import { useState } from "react";
 const STORAGE_KEY = "craft:recent-searches";
 const MAX_RECENT = 10;
 
-export type RecentItem = {
+export interface RecentItem {
   id: number;
   name: string;
   icon: string | null;
   labor: number | null;
-};
+}
 
 function readStorage(): RecentItem[] {
   try {

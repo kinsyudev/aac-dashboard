@@ -27,16 +27,18 @@ function HomePage() {
     <main className="container py-16">
       <div className="flex max-w-5xl flex-col gap-12">
         <section className="flex flex-col gap-4">
-          <p className="text-primary text-sm font-semibold uppercase tracking-[0.2em]">
+          <p className="text-primary text-sm font-semibold tracking-[0.2em] uppercase">
             ArcheAge Classic Tools
           </p>
           <div className="flex max-w-3xl flex-col gap-3">
             <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-              Plan crafts, compare margins, and keep your material runs organized.
+              Plan crafts, compare margins, and keep your material runs
+              organized.
             </h1>
             <p className="text-muted-foreground text-base sm:text-lg">
-              Use the craft explorer, profitability simulator, and shared shopping
-              lists without bouncing between pages that feel disconnected.
+              Use the craft explorer, profitability simulator, and shared
+              shopping lists without bouncing between pages that feel
+              disconnected.
             </p>
           </div>
           <p className="text-muted-foreground text-sm">

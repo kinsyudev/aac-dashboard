@@ -5,9 +5,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Badge } from "@acme/ui/badge";
 import { Input } from "@acme/ui/input";
 
+import type { RecentItem } from "~/lib/recent-searches";
 import { ItemIcon } from "~/component/item-icon";
+import { useRecentSearches } from "~/lib/recent-searches";
 import { useTRPC } from "~/lib/trpc";
-import { useRecentSearches, type RecentItem } from "~/lib/recent-searches";
 
 export const Route = createFileRoute("/craft/")({
   head: () => ({
@@ -43,7 +44,11 @@ function RouteComponent() {
           className="max-w-sm"
         />
         {deferredQuery.trim() ? (
-          <Suspense fallback={<p className="text-muted-foreground text-sm">Loading...</p>}>
+          <Suspense
+            fallback={
+              <p className="text-muted-foreground text-sm">Loading...</p>
+            }
+          >
             <SearchResults query={deferredQuery} onSelect={add} />
           </Suspense>
         ) : (
@@ -62,7 +67,9 @@ function SearchResults({
   onSelect: (item: RecentItem) => void;
 }) {
   const trpc = useTRPC();
-  const { data: allItems } = useSuspenseQuery(trpc.items.craftable.queryOptions());
+  const { data: allItems } = useSuspenseQuery(
+    trpc.items.craftable.queryOptions(),
+  );
 
   const results = useMemo(() => {
     const q = query.toLowerCase();
@@ -96,8 +103,10 @@ function SearchResults({
           >
             <ItemIcon icon={item.icon} name={item.name} size="md" />
             <span className="flex-1 font-medium">{item.name}</span>
-            <span className="text-muted-foreground text-xs">{item.category}</span>
-            {item.labor != null && item.labor > 0 && (
+            <span className="text-muted-foreground text-xs">
+              {item.category}
+            </span>
+            {item.labor > 0 && (
               <Badge variant="secondary">{item.labor} labor</Badge>
             )}
           </Link>
@@ -122,7 +131,7 @@ function RecentList({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-muted-foreground text-xs font-semibold uppercase tracking-widest">
+      <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
         Recent
       </p>
       <ul className="flex flex-col divide-y">

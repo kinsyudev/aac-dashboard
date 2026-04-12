@@ -1,8 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import type { Proficiency } from "@acme/db/schema";
-
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 
@@ -24,10 +22,9 @@ export function useUserData(): UserData {
   const { data } = useQuery(trpc.profile.getUserData.queryOptions());
 
   return useMemo<UserData>(() => {
-    const proficiencyMap: ProficiencyMap = new Map<
-      Proficiency | string,
-      number
-    >(data?.proficiencies.map((p) => [p.proficiency, p.value]) ?? []);
+    const proficiencyMap: ProficiencyMap = new Map(
+      data?.proficiencies.map((p) => [p.proficiency, p.value]) ?? [],
+    );
     const overrideMap: OverrideMap = new Map(
       data?.overrides.map((o) => [o.itemId, parseFloat(o.price)]) ?? [],
     );

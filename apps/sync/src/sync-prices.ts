@@ -53,19 +53,22 @@ function parseRows(csv: string): PriceRow[] {
   const rows: PriceRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const fields = parseCSVLine(lines[i]!);
+    const line = lines[i];
+    if (line == null) continue;
+
+    const fields = parseCSVLine(line);
     const rawId = fields[0]?.trim();
     if (!rawId || isNaN(Number(rawId))) continue;
 
     rows.push({
       itemId: Number(rawId),
       itemName: fields[1]?.trim() ?? "",
-      avg24h: fields[2]?.trim() || null,
-      vol24h: fields[3]?.trim() || null,
-      avg7d: fields[4]?.trim() || null,
-      vol7d: fields[5]?.trim() || null,
-      avg30d: fields[6]?.trim() || null,
-      vol30d: fields[7]?.trim() || null,
+      avg24h: fields[2]?.trim() ?? null,
+      vol24h: fields[3]?.trim() ?? null,
+      avg7d: fields[4]?.trim() ?? null,
+      vol7d: fields[5]?.trim() ?? null,
+      avg30d: fields[6]?.trim() ?? null,
+      vol30d: fields[7]?.trim() ?? null,
     });
   }
 

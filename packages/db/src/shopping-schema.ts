@@ -133,24 +133,27 @@ export const shoppingListInvites = pgTable(
   ],
 );
 
-export const shoppingListsRelations = relations(shoppingLists, ({ one, many }) => ({
-  owner: one(user, {
-    fields: [shoppingLists.ownerUserId],
-    references: [user.id],
+export const shoppingListsRelations = relations(
+  shoppingLists,
+  ({ one, many }) => ({
+    owner: one(user, {
+      fields: [shoppingLists.ownerUserId],
+      references: [user.id],
+    }),
+    sourceItem: one(items, {
+      fields: [shoppingLists.sourceItemId],
+      references: [items.id],
+    }),
+    sourceCraft: one(crafts, {
+      fields: [shoppingLists.sourceCraftId],
+      references: [crafts.id],
+    }),
+    items: many(shoppingListItems),
+    crafts: many(shoppingListCrafts),
+    members: many(shoppingListMembers),
+    invites: many(shoppingListInvites),
   }),
-  sourceItem: one(items, {
-    fields: [shoppingLists.sourceItemId],
-    references: [items.id],
-  }),
-  sourceCraft: one(crafts, {
-    fields: [shoppingLists.sourceCraftId],
-    references: [crafts.id],
-  }),
-  items: many(shoppingListItems),
-  crafts: many(shoppingListCrafts),
-  members: many(shoppingListMembers),
-  invites: many(shoppingListInvites),
-}));
+);
 
 export const shoppingListItemsRelations = relations(
   shoppingListItems,
