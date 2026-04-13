@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -44,6 +44,19 @@ function ShoppingListDetailPage() {
 
   const [name, setName] = useState(data.list.name);
   const [quantity, setQuantity] = useState(String(data.list.sourceQuantity));
+  const [syncedName, setSyncedName] = useState(data.list.name);
+  const [syncedQuantity, setSyncedQuantity] = useState(
+    data.list.sourceQuantity,
+  );
+  if (
+    syncedName !== data.list.name ||
+    syncedQuantity !== data.list.sourceQuantity
+  ) {
+    setSyncedName(data.list.name);
+    setSyncedQuantity(data.list.sourceQuantity);
+    setName(data.list.name);
+    setQuantity(String(data.list.sourceQuantity));
+  }
   const [itemDrafts, setItemDrafts] = useState<Record<number, string>>({});
   const [craftDrafts, setCraftDrafts] = useState<Record<number, string>>({});
   const inviteBase =
@@ -222,11 +235,6 @@ function ShoppingListDetailPage() {
       }),
     [data.items, overrideMap, priceMap],
   );
-
-  useEffect(() => {
-    setName(data.list.name);
-    setQuantity(String(data.list.sourceQuantity));
-  }, [data.list.name, data.list.sourceQuantity]);
 
   const commitItemProgress = (itemId: number, requiredQuantity: number) => {
     const raw = itemDrafts[itemId];
