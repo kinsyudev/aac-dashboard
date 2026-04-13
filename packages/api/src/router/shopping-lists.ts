@@ -624,9 +624,15 @@ export const shoppingListsRouter = {
               proficiency: crafts.proficiency,
               labor: crafts.labor,
             },
+            product: {
+              id: items.id,
+              name: items.name,
+              icon: items.icon,
+            },
           })
           .from(shoppingListCrafts)
           .innerJoin(crafts, eq(crafts.id, shoppingListCrafts.craftId))
+          .leftJoin(items, eq(items.id, crafts.primaryProductId))
           .where(eq(shoppingListCrafts.shoppingListId, shoppingListId))
           .orderBy(asc(crafts.name)),
         ctx.db

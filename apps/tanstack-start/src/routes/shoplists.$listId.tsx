@@ -8,6 +8,13 @@ import {
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "@acme/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@acme/ui/dropdown-menu";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
@@ -58,6 +65,34 @@ function parseGoldInput(value: string) {
   return Math.max(0, Math.round(parsed * 10000));
 }
 
+function formatSourceSummary(list: {
+  sourceType: "craft" | "simulator";
+  sourceQuantity: number;
+  craftModeItemIds: number[];
+}) {
+  const quantityLabel =
+    list.sourceType === "simulator"
+      ? `${list.sourceQuantity.toLocaleString()} attempt${
+          list.sourceQuantity === 1 ? "" : "s"
+        }`
+      : `${list.sourceQuantity.toLocaleString()} craft${
+          list.sourceQuantity === 1 ? "" : "s"
+        }`;
+  const modeLabel =
+    list.craftModeItemIds.length > 0
+      ? `${list.craftModeItemIds.length} subcraft selection${
+          list.craftModeItemIds.length === 1 ? "" : "s"
+        }`
+      : "default subcrafts";
+
+  return {
+    sourceLabel:
+      list.sourceType === "simulator" ? "Simulator list" : "Craft list",
+    quantityLabel,
+    modeLabel,
+  };
+}
+
 function ShoppingListDetailPage() {
   const { listId } = Route.useParams();
   const trpc = useTRPC();
@@ -67,21 +102,6 @@ function ShoppingListDetailPage() {
   const { data } = useSuspenseQuery(listQueryOptions);
   const { overrideMap } = useUserData();
 
-  const [name, setName] = useState(data.list.name);
-  const [quantity, setQuantity] = useState(String(data.list.sourceQuantity));
-  const [syncedName, setSyncedName] = useState(data.list.name);
-  const [syncedQuantity, setSyncedQuantity] = useState(
-    data.list.sourceQuantity,
-  );
-  if (
-    syncedName !== data.list.name ||
-    syncedQuantity !== data.list.sourceQuantity
-  ) {
-    setSyncedName(data.list.name);
-    setSyncedQuantity(data.list.sourceQuantity);
-    setName(data.list.name);
-    setQuantity(String(data.list.sourceQuantity));
-  }
   const [itemDrafts, setItemDrafts] = useState<Record<number, string>>({});
   const [craftDrafts, setCraftDrafts] = useState<Record<number, string>>({});
   const inviteBase =
@@ -107,6 +127,10 @@ function ShoppingListDetailPage() {
     () => data.items.filter((item) => !isCoinItem(item)),
     [data.items],
   );
+  const setupSummary = useMemo(
+    () => formatSourceSummary(data.list),
+    [data.list],
+  );
 
   const invalidate = async () => {
     await Promise.all([
@@ -116,16 +140,6 @@ function ShoppingListDetailPage() {
       ),
     ]);
   };
-
-  const updateDefinition = useMutation(
-    trpc.shoppingLists.updateDefinition.mutationOptions({
-      onSuccess: async () => {
-        await invalidate();
-        toast.success("Shopping list updated.");
-      },
-      onError: () => toast.error("Failed to update shopping list."),
-    }),
-  );
 
   const updateItemProgress = useMutation(
     trpc.shoppingLists.updateItemProgress.mutationOptions({
@@ -363,8 +377,7 @@ function ShoppingListDetailPage() {
     const raw = itemDrafts[itemId];
     if (raw === undefined) return;
     const item = data.items.find((entry) => entry.itemId === itemId);
-    const parsed =
-      item && isCoinItem(item) ? parseGoldInput(raw) : Number(raw);
+    const parsed = item && isCoinItem(item) ? parseGoldInput(raw) : Number(raw);
     const obtainedQuantity = Math.min(
       requiredQuantity,
       Math.max(0, Number.isFinite(parsed) ? parsed : 0),
@@ -418,8 +431,8 @@ function ShoppingListDetailPage() {
   return (
     <main className="container py-16">
       <div className="flex flex-col gap-8">
-        <div className="flex items-center justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
             <Link
               to="/shoplists"
               className="text-muted-foreground text-sm hover:underline"
@@ -431,32 +444,13 @@ function ShoppingListDetailPage() {
               Owned by {data.owner.name} •{" "}
               {data.role === "owner" ? "owner" : data.role}
             </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <StatPill label={setupSummary.sourceLabel} />
+              <StatPill label={setupSummary.quantityLabel} />
+              <StatPill label={setupSummary.modeLabel} />
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => duplicate.mutate({ listId, mode: "fresh" })}
-            >
-              Duplicate fresh
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => duplicate.mutate({ listId, mode: "copyState" })}
-            >
-              Duplicate with progress
-            </Button>
-            {data.isOwner ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={deleteList.isPending}
-              >
-                Delete
-              </Button>
-            ) : null}
+          <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm">
               <Link
                 to="/shoplist"
@@ -478,65 +472,30 @@ function ShoppingListDetailPage() {
                   listId,
                 }}
               >
-                Edit definition
+                <EditIcon />
+                Edit
               </Link>
             </Button>
+            <HeaderActionMenu
+              canDelete={data.isOwner}
+              deletePending={deleteList.isPending}
+              onDelete={handleDelete}
+              onDuplicateFresh={() =>
+                duplicate.mutate({ listId, mode: "fresh" })
+              }
+              onDuplicateWithProgress={() =>
+                duplicate.mutate({ listId, mode: "copyState" })
+              }
+            />
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border p-5">
-            <h2 className="text-lg font-semibold">Definition</h2>
-            <p className="text-muted-foreground mt-2 text-sm">
-              Writers can rename the list and change the top-level{" "}
-              {data.list.sourceType === "simulator"
-                ? "attempt count"
-                : "craft quantity"}
-              . Use the editor to adjust craft selections.
-            </p>
-            <div className="mt-4 flex flex-col gap-3">
-              <label className="text-sm">
-                <span className="mb-1 block font-medium">Name</span>
-                <Input
-                  value={name}
-                  disabled={!data.canWrite}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block font-medium">
-                  {data.list.sourceType === "simulator"
-                    ? "Expected attempts"
-                    : "Craft quantity"}
-                </span>
-                <Input
-                  type="number"
-                  min="1"
-                  disabled={!data.canWrite}
-                  value={quantity}
-                  onChange={(event) => setQuantity(event.target.value)}
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={!data.canWrite}
-                  onClick={() =>
-                    updateDefinition.mutate({
-                      listId,
-                      name: name.trim(),
-                      quantity: Math.max(1, Number(quantity) || 1),
-                    })
-                  }
-                >
-                  Save changes
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border p-5">
+        <section className="rounded-xl border p-5">
+          <div className="flex items-start justify-between gap-4">
             <h2 className="text-lg font-semibold">Progress</h2>
-            <div className="mt-4 flex flex-col gap-4">
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.95fr]">
+            <div className="flex flex-col gap-4">
               <ProgressMeter
                 label="Items obtained"
                 percent={completion.itemPct}
@@ -547,30 +506,28 @@ function ShoppingListDetailPage() {
                 percent={completion.craftPct}
                 summary={`${completion.completedCrafts.toLocaleString()} / ${completion.requiredCrafts.toLocaleString()}`}
               />
-              <p className="text-muted-foreground text-sm">
-                Invited writers can update both counters.
-              </p>
               {coinRow ? (
-                <div className="rounded-lg border px-4 py-3">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <ProgressMeter
-                        label="Coins"
-                        percent={coinCompletion?.percent ?? 0}
-                        summary={`${formatCoinValue(
-                          coinCompletion?.obtained ?? 0,
-                        )} / ${formatCoinValue(
-                          coinCompletion?.required ?? 0,
-                        )}`}
-                      />
-                    </div>
-                    <Input
+                <div className="flex items-end justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <ProgressMeter
+                      label="Coins"
+                      percent={coinCompletion?.percent ?? 0}
+                      summary={`${formatCoinValue(
+                        coinCompletion?.obtained ?? 0,
+                      )} / ${formatCoinValue(coinCompletion?.required ?? 0)}`}
+                    />
+                  </div>
+                  <div className="text-right">
+                    <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
+                      Gold input
+                    </p>
+                    <input
                       type="number"
                       min="0"
                       max={formatGoldInput(coinRow.requiredQuantity)}
                       step="0.0001"
                       disabled={!data.canWrite}
-                      className="w-32"
+                      className="bg-background mt-1 w-28 rounded-md border px-3 py-1.5 text-sm tabular-nums"
                       value={
                         itemDrafts[coinRow.itemId] ??
                         formatGoldInput(coinRow.obtainedQuantity)
@@ -598,44 +555,43 @@ function ShoppingListDetailPage() {
                       }}
                     />
                   </div>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Remaining{" "}
-                    {formatCoinValue(
-                      coinRow.requiredQuantity - coinRow.obtainedQuantity,
-                    )}
-                  </p>
-                  <p className="text-muted-foreground mt-3 text-xs">
-                    Input is in gold. `1` = `1g`, `0.01` = `1s`, `0.0001` = `1c`.
-                  </p>
                 </div>
               ) : null}
-              <div className="rounded-lg border px-4 py-3">
-                <p className="text-muted-foreground text-xs tracking-wide uppercase">
-                  Buy remaining
+              <p className="text-muted-foreground text-sm">
+                Invited writers can update all counters.
+              </p>
+            </div>
+            <div className="bg-muted/30 rounded-lg px-4 py-3">
+              <p className="text-muted-foreground text-xs tracking-wide uppercase">
+                Buy remaining
+              </p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {outstandingBuyCost.toLocaleString(undefined, {
+                  maximumFractionDigits: 0,
+                })}
+                g
+              </p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Based on your profile overrides first, then latest market
+                prices.
+              </p>
+              {coinRow ? (
+                <p className="text-muted-foreground mt-3 text-xs">
+                  Input is in gold. `1` = `1g`, `0.01` = `1s`, `0.0001` = `1c`.
                 </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums">
-                  {outstandingBuyCost.toLocaleString(undefined, {
-                    maximumFractionDigits: 0,
-                  })}
-                  g
-                </p>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  Based on your profile overrides first, then latest market
-                  prices.
-                </p>
-              </div>
+              ) : null}
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+        <section className="grid gap-2 lg:grid-cols-[1.3fr_1fr]">
           <div className="rounded-xl border p-5">
             <h2 className="text-lg font-semibold">Shopping Items</h2>
             <div className="mt-4 flex flex-col gap-2">
               {sortedItems.map((itemRow) => (
                 <div
                   key={itemRow.itemId}
-                  className="flex items-center justify-between gap-4 rounded-lg border px-3 py-3"
+                  className="flex items-center justify-between gap-4"
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <ItemIcon
@@ -696,29 +652,36 @@ function ShoppingListDetailPage() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-4">
-            <div className="rounded-xl border p-5">
+          <div className="flex flex-col gap-6">
+            <section className="rounded-xl border p-5">
               <h2 className="text-lg font-semibold">Craft Progress</h2>
-              <div className="mt-4 flex flex-col gap-2">
+              <div className="mt-4 flex flex-col gap-1">
                 {data.crafts.map((craftRow) => (
                   <div
                     key={craftRow.craftId}
-                    className="flex items-center justify-between gap-4 rounded-lg border px-3 py-3"
+                    className="flex items-center justify-between gap-4 py-2"
                   >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">
-                        {craftRow.craft.name}
-                      </p>
-                      <p className="text-muted-foreground text-sm">
-                        {craftRow.completedCount} / {craftRow.requiredCount}
-                      </p>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ItemIcon
+                        icon={craftRow.product?.icon ?? null}
+                        name={craftRow.product?.name ?? craftRow.craft.name}
+                        size="md"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">
+                          {craftRow.craft.name}
+                        </p>
+                        <p className="text-muted-foreground text-sm tabular-nums">
+                          {craftRow.completedCount} / {craftRow.requiredCount}
+                        </p>
+                      </div>
                     </div>
-                    <Input
+                    <input
                       type="number"
                       min="0"
                       max={String(craftRow.requiredCount)}
                       disabled={!data.canWrite}
-                      className="w-28"
+                      className="bg-background w-24 rounded-md border px-3 py-1.5 text-sm tabular-nums"
                       value={
                         craftDrafts[craftRow.craftId] ??
                         String(craftRow.completedCount)
@@ -748,7 +711,7 @@ function ShoppingListDetailPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
             <div className="rounded-xl border p-5">
               <h2 className="text-lg font-semibold">People</h2>
@@ -771,7 +734,7 @@ function ShoppingListDetailPage() {
                     {data.isOwner ? (
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         onClick={() =>
                           removeMember.mutate({ listId, userId: member.userId })
                         }
@@ -794,7 +757,7 @@ function ShoppingListDetailPage() {
                       createInvite.mutate({ listId, role: "read" })
                     }
                   >
-                    Create read invite
+                    Read invite
                   </Button>
                   <Button
                     size="sm"
@@ -803,7 +766,7 @@ function ShoppingListDetailPage() {
                       createInvite.mutate({ listId, role: "write" })
                     }
                   >
-                    Create write invite
+                    Write invite
                   </Button>
                 </div>
                 <div className="mt-4 flex flex-col gap-2">
@@ -831,7 +794,7 @@ function ShoppingListDetailPage() {
                           {!invite.consumedAt && !invite.revokedAt ? (
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
                               onClick={() =>
                                 revokeInvite.mutate({
                                   listId,
@@ -846,7 +809,7 @@ function ShoppingListDetailPage() {
                         <div className="flex flex-wrap gap-2">
                           <Button
                             size="sm"
-                            variant="outline"
+                            variant="ghost"
                             onClick={() =>
                               navigator.clipboard.writeText(
                                 `${inviteBase}${invite.inviteUrl}`,
@@ -869,6 +832,93 @@ function ShoppingListDetailPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+function HeaderActionMenu({
+  canDelete,
+  deletePending,
+  onDelete,
+  onDuplicateFresh,
+  onDuplicateWithProgress,
+}: {
+  canDelete: boolean;
+  deletePending: boolean;
+  onDelete: () => void;
+  onDuplicateFresh: () => void;
+  onDuplicateWithProgress: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline">
+          <OverflowIcon />
+          <span className="sr-only">More actions</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={onDuplicateFresh}>
+          Duplicate fresh
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onDuplicateWithProgress}>
+          Duplicate with progress
+        </DropdownMenuItem>
+        {canDelete ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={deletePending}
+              onClick={onDelete}
+              className="text-destructive focus:text-destructive"
+            >
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function StatPill({ label }: { label: string }) {
+  return (
+    <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 font-medium">
+      {label}
+    </span>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2.5 11.5 2 14l2.5-.5L12 6 10 4 2.5 11.5Z" />
+      <path d="m9.5 4.5 2 2" />
+      <path d="M8.5 14H14" />
+    </svg>
+  );
+}
+
+function OverflowIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="size-4"
+      fill="currentColor"
+    >
+      <circle cx="3" cy="8" r="1.25" />
+      <circle cx="8" cy="8" r="1.25" />
+      <circle cx="13" cy="8" r="1.25" />
+    </svg>
   );
 }
 
