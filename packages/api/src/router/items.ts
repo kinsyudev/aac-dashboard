@@ -11,6 +11,7 @@ import {
 } from "@acme/db/schema";
 
 import type { CraftWithMaterialsAndProducts } from "./crafts";
+import { hasUnsupportedCraftName } from "./crafts";
 import { protectedProcedure } from "../trpc";
 
 export const itemsRouter = {
@@ -66,10 +67,16 @@ export const itemsRouter = {
       .selectDistinctOn([items.id], {
         ...getTableColumns(items),
         labor: crafts.labor,
+        craftName: crafts.name,
       })
       .from(items)
       .innerJoin(crafts, eq(crafts.primaryProductId, items.id))
-      .orderBy(items.id, asc(items.category), asc(items.name));
+      .orderBy(items.id, asc(items.category), asc(items.name))
+      .then((rows) =>
+        rows
+          .filter((row) => !hasUnsupportedCraftName(row.craftName))
+          .map(({ craftName: _craftName, ...row }) => row),
+      );
   }),
 
   byName: protectedProcedure.input(z.string()).query(({ ctx, input }) => {
@@ -116,7 +123,10 @@ export const itemsRouter = {
           ctx.db
             .select()
             .from(crafts)
-            .where(eq(crafts.primaryProductId, itemId)),
+            .where(eq(crafts.primaryProductId, itemId))
+            .then((rows) =>
+              rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+            ),
           ctx.db
             .select({
               id: crafts.id,
@@ -128,7 +138,10 @@ export const itemsRouter = {
             })
             .from(crafts)
             .innerJoin(craftMaterials, eq(craftMaterials.craftId, crafts.id))
-            .where(eq(craftMaterials.itemId, itemId)),
+            .where(eq(craftMaterials.itemId, itemId))
+            .then((rows) =>
+              rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+            ),
         ],
       );
 
@@ -216,10 +229,14 @@ export const itemsRouter = {
           ? ctx.db
               .selectDistinctOn([crafts.primaryProductId], {
                 itemId: crafts.primaryProductId,
+                craftName: crafts.name,
               })
               .from(crafts)
               .where(inArray(crafts.primaryProductId, relatedItemIds))
               .orderBy(crafts.primaryProductId)
+              .then((rows) =>
+                rows.filter((entry) => !hasUnsupportedCraftName(entry.craftName)),
+              )
           : [],
       ]);
 

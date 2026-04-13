@@ -13,9 +13,17 @@ import {
 import { protectedProcedure } from "../trpc";
 
 const UNSUPPORTED_RECIPE_INGREDIENTS = new Set(["elite trader ticket"]);
+const UNSUPPORTED_CRAFT_NAME_PREFIXES = ["trash_"];
 
 function normalizeItemName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+export function hasUnsupportedCraftName(name: string): boolean {
+  const normalized = normalizeItemName(name);
+  return UNSUPPORTED_CRAFT_NAME_PREFIXES.some((prefix) =>
+    normalized.startsWith(prefix),
+  );
 }
 
 function hasUnsupportedRecipeIngredient(
@@ -52,7 +60,12 @@ export type SubcraftEntry = CraftWithMaterialsAndProducts;
 
 export const craftsRouter = {
   all: protectedProcedure.query(({ ctx }) => {
-    return ctx.db.select().from(crafts);
+    return ctx.db
+      .select()
+      .from(crafts)
+      .then((rows) =>
+        rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+      );
   }),
   byId: protectedProcedure
     .input(z.number().int())
@@ -64,6 +77,7 @@ export const craftsRouter = {
         .then((rows) => rows[0] ?? null);
 
       if (!craft) return null;
+      if (hasUnsupportedCraftName(craft.name)) return null;
 
       const [materials, products] = await Promise.all([
         ctx.db
@@ -98,6 +112,9 @@ export const craftsRouter = {
               .innerJoin(craftMaterials, eq(craftMaterials.craftId, crafts.id))
               .innerJoin(items, eq(items.id, craftMaterials.itemId))
               .where(inArray(crafts.primaryProductId, materialItemIds))
+              .then((rows) =>
+                rows.filter((entry) => !hasUnsupportedCraftName(entry.craft.name)),
+              )
           : [];
 
       return { craft, materials, products, subcrafts };
@@ -109,7 +126,10 @@ export const craftsRouter = {
       return ctx.db
         .select()
         .from(crafts)
-        .where(eq(crafts.primaryProductId, input));
+        .where(eq(crafts.primaryProductId, input))
+        .then((rows) =>
+          rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+        );
     }),
 
   forItem: protectedProcedure
@@ -122,7 +142,13 @@ export const craftsRouter = {
           .from(items)
           .where(eq(items.id, itemId))
           .then((r) => r[0] ?? null),
-        ctx.db.select().from(crafts).where(eq(crafts.primaryProductId, itemId)),
+        ctx.db
+          .select()
+          .from(crafts)
+          .where(eq(crafts.primaryProductId, itemId))
+          .then((rows) =>
+            rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+          ),
       ]);
 
       if (!item) return null;
@@ -229,7 +255,10 @@ export const craftsRouter = {
         const subCraftsRows = await ctx.db
           .select()
           .from(crafts)
-          .where(inArray(crafts.primaryProductId, pendingIds));
+          .where(inArray(crafts.primaryProductId, pendingIds))
+          .then((rows) =>
+            rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+          );
 
         if (!subCraftsRows.length) break;
 
@@ -332,6 +361,7 @@ export const craftsRouter = {
         .where(eq(crafts.id, craftId))
         .then((r) => r[0] ?? null);
       if (!craft) return null;
+      if (hasUnsupportedCraftName(craft.name)) return null;
 
       // Round 2: materials, products, primary item (parallel)
       const [materials, products, item] = await Promise.all([
@@ -382,7 +412,10 @@ export const craftsRouter = {
         const subCraftsRows = await ctx.db
           .select()
           .from(crafts)
-          .where(inArray(crafts.primaryProductId, pendingIds));
+          .where(inArray(crafts.primaryProductId, pendingIds))
+          .then((rows) =>
+            rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+          );
 
         if (!subCraftsRows.length) break;
 

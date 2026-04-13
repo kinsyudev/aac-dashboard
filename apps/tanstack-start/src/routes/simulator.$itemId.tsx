@@ -73,6 +73,18 @@ interface CraftExecution {
   laborPerBatch: number;
 }
 
+function parseFinitePrice(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getMarketPrice(
+  price: { avg24h: string | null; avg7d: string | null } | undefined,
+): number {
+  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+}
+
 function getItemPrice(
   itemId: number,
   priceMap: PriceMap,
@@ -81,7 +93,7 @@ function getItemPrice(
   const custom = overrideMap.get(itemId);
   if (custom != null) return custom;
   const price = priceMap.get(itemId);
-  return parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+  return getMarketPrice(price);
 }
 
 function isManaWisp(name: string): boolean {
@@ -552,10 +564,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     enabled: ayanadItem?.id != null,
   });
   const ayanadMarketPrice = useMemo(
-    () =>
-      parseFloat(
-        ayanadPriceQuery.data?.avg24h ?? ayanadPriceQuery.data?.avg7d ?? "0",
-      ),
+    () => getMarketPrice(ayanadPriceQuery.data),
     [ayanadPriceQuery.data],
   );
   const defaultSalePrice = useMemo(() => {
