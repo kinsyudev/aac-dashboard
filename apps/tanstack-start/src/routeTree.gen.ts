@@ -26,6 +26,8 @@ import { Route as ItemItemIdRouteImport } from './routes/item.$itemId'
 import { Route as CraftItemIdRouteImport } from './routes/craft.$itemId'
 import { Route as ShoplistsInviteTokenRouteImport } from './routes/shoplists.invite.$token'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
+import { Route as ApiStaticItemsAllRouteImport } from './routes/api/static/items-all'
+import { Route as ApiStaticCraftsAllRouteImport } from './routes/api/static/crafts-all'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
 const SimulatorRoute = SimulatorRouteImport.update({
@@ -113,6 +115,16 @@ const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
   path: '/api/trpc/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStaticItemsAllRoute = ApiStaticItemsAllRouteImport.update({
+  id: '/api/static/items-all',
+  path: '/api/static/items-all',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStaticCraftsAllRoute = ApiStaticCraftsAllRouteImport.update({
+  id: '/api/static/crafts-all',
+  path: '/api/static/crafts-all',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -136,6 +148,8 @@ export interface FileRoutesByFullPath {
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
+  '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
@@ -152,6 +166,8 @@ export interface FileRoutesByTo {
   '/shoplists': typeof ShoplistsIndexRoute
   '/simulator': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
+  '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
@@ -173,6 +189,8 @@ export interface FileRoutesById {
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
+  '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/shoplists/invite/$token': typeof ShoplistsInviteTokenRoute
 }
@@ -195,6 +213,8 @@ export interface FileRouteTypes {
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
+    | '/api/static/crafts-all'
+    | '/api/static/items-all'
     | '/api/trpc/$'
     | '/shoplists/invite/$token'
   fileRoutesByTo: FileRoutesByTo
@@ -211,6 +231,8 @@ export interface FileRouteTypes {
     | '/shoplists'
     | '/simulator'
     | '/api/auth/$'
+    | '/api/static/crafts-all'
+    | '/api/static/items-all'
     | '/api/trpc/$'
     | '/shoplists/invite/$token'
   id:
@@ -231,6 +253,8 @@ export interface FileRouteTypes {
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
+    | '/api/static/crafts-all'
+    | '/api/static/items-all'
     | '/api/trpc/$'
     | '/shoplists/invite/$token'
   fileRoutesById: FileRoutesById
@@ -244,6 +268,8 @@ export interface RootRouteChildren {
   ShoplistsRoute: typeof ShoplistsRouteWithChildren
   SimulatorRoute: typeof SimulatorRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiStaticCraftsAllRoute: typeof ApiStaticCraftsAllRoute
+  ApiStaticItemsAllRoute: typeof ApiStaticItemsAllRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
 }
 
@@ -368,6 +394,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTrpcSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/static/items-all': {
+      id: '/api/static/items-all'
+      path: '/api/static/items-all'
+      fullPath: '/api/static/items-all'
+      preLoaderRoute: typeof ApiStaticItemsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/static/crafts-all': {
+      id: '/api/static/crafts-all'
+      path: '/api/static/crafts-all'
+      fullPath: '/api/static/crafts-all'
+      preLoaderRoute: typeof ApiStaticCraftsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -441,6 +481,8 @@ const rootRouteChildren: RootRouteChildren = {
   ShoplistsRoute: ShoplistsRouteWithChildren,
   SimulatorRoute: SimulatorRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiStaticCraftsAllRoute: ApiStaticCraftsAllRoute,
+  ApiStaticItemsAllRoute: ApiStaticItemsAllRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
 }
 export const routeTree = rootRouteImport

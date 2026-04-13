@@ -3,10 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod/v4";
 
 import type { db } from "@acme/db/client";
-import { and, asc, desc, eq, getTableColumns, inArray } from "@acme/db";
+import { and, asc, desc, eq } from "@acme/db";
 import {
-  craftMaterials,
-  craftProducts,
   crafts,
   items,
   shoppingListCrafts,
@@ -20,461 +18,16 @@ import {
 } from "@acme/db/schema";
 
 import { protectedProcedure, publicProcedure } from "../trpc";
-
-const MAX_DEPTH = 4;
-type DbClient = typeof db;
-type DbTx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
-
-type ItemRow = typeof items.$inferSelect;
-type CraftRow = typeof crafts.$inferSelect;
-interface MaterialRow {
-  craftId: number;
-  amount: number;
-  item: ItemRow;
-}
-interface ProductRow {
-  craftId: number;
-  amount: number;
-  rate: number | null;
-  item: ItemRow;
-}
-interface CraftEntry {
-  craft: CraftRow;
-  materials: MaterialRow[];
-  products: ProductRow[];
-}
-type SubcraftMap = Record<number, CraftEntry[]>;
-
-function pickPreferredCraft(entries: CraftEntry[], itemId: number): CraftEntry {
-  const preferred = [...entries].sort((a, b) => {
-    const amountFor = (entry: CraftEntry) =>
-      entry.products.find((product) => product.item.id === itemId)?.amount ??
-      Number.MAX_SAFE_INTEGER;
-    return amountFor(a) - amountFor(b);
-  })[0];
-
-  if (!preferred) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "No craft entries available for preferred craft selection.",
-    });
-  }
-
-  return preferred;
-}
-
-async function fetchCraftBlueprint(dbClient: DbClient | DbTx, craftId: number) {
-  const craft = await dbClient
-    .select()
-    .from(crafts)
-    .where(eq(crafts.id, craftId))
-    .then((rows: CraftRow[]) => rows[0] ?? null);
-
-  if (!craft) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Craft not found." });
-  }
-
-  const [materials, products, item] = await Promise.all([
-    dbClient
-      .select({
-        craftId: craftMaterials.craftId,
-        amount: craftMaterials.amount,
-        item: getTableColumns(items),
-      })
-      .from(craftMaterials)
-      .innerJoin(items, eq(items.id, craftMaterials.itemId))
-      .where(eq(craftMaterials.craftId, craftId)),
-    dbClient
-      .select({
-        craftId: craftProducts.craftId,
-        amount: craftProducts.amount,
-        rate: craftProducts.rate,
-        item: getTableColumns(items),
-      })
-      .from(craftProducts)
-      .innerJoin(items, eq(items.id, craftProducts.itemId))
-      .where(eq(craftProducts.craftId, craftId)),
-    craft.primaryProductId
-      ? dbClient
-          .select()
-          .from(items)
-          .where(eq(items.id, craft.primaryProductId))
-          .then((rows: ItemRow[]) => rows[0] ?? null)
-      : Promise.resolve(null),
-  ]);
-
-  const allMaterialItemIds = new Set<number>(
-    materials.map((m: MaterialRow) => m.item.id),
-  );
-  const subcraftsByItemId: SubcraftMap = {};
-  const visited = new Set<number>([
-    craft.primaryProductId ?? -1,
-    ...allMaterialItemIds,
-  ]);
-  let pendingIds = [...allMaterialItemIds];
-
-  while (pendingIds.length > 0) {
-    const subCraftRows = await dbClient
-      .select()
-      .from(crafts)
-      .where(inArray(crafts.primaryProductId, pendingIds));
-
-    if (!subCraftRows.length) break;
-
-    const subCraftIds = subCraftRows.map((candidate: CraftRow) => candidate.id);
-    const [subMaterials, subProducts] = await Promise.all([
-      dbClient
-        .select({
-          craftId: craftMaterials.craftId,
-          amount: craftMaterials.amount,
-          item: getTableColumns(items),
-        })
-        .from(craftMaterials)
-        .innerJoin(items, eq(items.id, craftMaterials.itemId))
-        .where(inArray(craftMaterials.craftId, subCraftIds)),
-      dbClient
-        .select({
-          craftId: craftProducts.craftId,
-          amount: craftProducts.amount,
-          rate: craftProducts.rate,
-          item: getTableColumns(items),
-        })
-        .from(craftProducts)
-        .innerJoin(items, eq(items.id, craftProducts.itemId))
-        .where(inArray(craftProducts.craftId, subCraftIds)),
-    ]);
-
-    const subMaterialsByCraft = subMaterials.reduce(
-      (acc: Record<number, MaterialRow[]>, row: MaterialRow) => {
-        (acc[row.craftId] ??= []).push(row);
-        return acc;
-      },
-      {},
-    );
-    const subProductsByCraft = subProducts.reduce(
-      (acc: Record<number, ProductRow[]>, row: ProductRow) => {
-        (acc[row.craftId] ??= []).push(row);
-        return acc;
-      },
-      {},
-    );
-
-    for (const subCraft of subCraftRows) {
-      const producedItemId = subCraft.primaryProductId;
-      if (producedItemId == null) continue;
-      (subcraftsByItemId[producedItemId] ??= []).push({
-        craft: subCraft,
-        materials: subMaterialsByCraft[subCraft.id] ?? [],
-        products: subProductsByCraft[subCraft.id] ?? [],
-      });
-    }
-
-    const newIds = subMaterials
-      .map((row: MaterialRow) => row.item.id)
-      .filter((id: number) => !visited.has(id));
-    for (const id of newIds) {
-      visited.add(id);
-      allMaterialItemIds.add(id);
-    }
-    pendingIds = Array.from(new Set<number>(newIds));
-  }
-
-  return {
-    craft,
-    item,
-    materials,
-    products,
-    subcraftsByItemId,
-  };
-}
-
-function getSimulationChain(
-  mainCraft: {
-    materials: MaterialRow[];
-  },
-  subcraftMap: SubcraftMap,
-): { keyMaterialId: number | null; keyMaterialName: string | null } {
-  const tierList = [
-    "illustrious",
-    "magnificent",
-    "epherium",
-    "delphinad",
-    "ayanad",
-  ] as const;
-
-  for (const material of mainCraft.materials) {
-    const name = material.item.name.toLowerCase();
-    if (tierList.some((tier) => name.includes(tier))) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  for (const material of mainCraft.materials) {
-    if (subcraftMap[material.item.id]?.length) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  return { keyMaterialId: null, keyMaterialName: null };
-}
-
-function buildSnapshot(
-  entry: CraftEntry,
-  craftModeSet: Set<number>,
-  subcraftMap: SubcraftMap,
-  quantity: number,
-) {
-  const itemCounts = new Map<
-    number,
-    { item: ItemRow; requiredQuantity: number }
-  >();
-  const craftCounts = new Map<
-    number,
-    { craft: CraftRow; requiredCount: number }
-  >();
-
-  const accumulate = (
-    currentEntry: CraftEntry,
-    scaleFactor: number,
-    depth: number,
-  ): void => {
-    const currentRequiredCount = Math.max(1, Math.ceil(scaleFactor));
-    const existingCraft = craftCounts.get(currentEntry.craft.id);
-    if (existingCraft) {
-      existingCraft.requiredCount += currentRequiredCount;
-    } else {
-      craftCounts.set(currentEntry.craft.id, {
-        craft: currentEntry.craft,
-        requiredCount: currentRequiredCount,
-      });
-    }
-
-    for (const material of currentEntry.materials) {
-      const scaledAmount = material.amount * scaleFactor;
-      const subcraftEntries = subcraftMap[material.item.id];
-      const isCraftable = depth < MAX_DEPTH && !!subcraftEntries?.length;
-      if (craftModeSet.has(material.item.id) && isCraftable) {
-        const subcraft = pickPreferredCraft(subcraftEntries, material.item.id);
-        const producedAmount =
-          subcraft.products.find(
-            (product) => product.item.id === material.item.id,
-          )?.amount ?? 1;
-        accumulate(subcraft, scaledAmount / producedAmount, depth + 1);
-        continue;
-      }
-
-      const requiredQuantity = Math.max(1, Math.ceil(scaledAmount));
-      const existingItem = itemCounts.get(material.item.id);
-      if (existingItem) {
-        existingItem.requiredQuantity += requiredQuantity;
-      } else {
-        itemCounts.set(material.item.id, {
-          item: material.item,
-          requiredQuantity,
-        });
-      }
-    }
-  };
-
-  accumulate(entry, quantity, 0);
-
-  return {
-    items: [...itemCounts.values()].sort((a, b) =>
-      a.item.name.localeCompare(b.item.name),
-    ),
-    crafts: [...craftCounts.values()].sort((a, b) =>
-      a.craft.name.localeCompare(b.craft.name),
-    ),
-  };
-}
-
-async function replaceListSnapshot(
-  tx: DbTx,
-  shoppingListId: string,
-  snapshot: ReturnType<typeof buildSnapshot>,
-  progress?: {
-    itemProgress?: Map<number, number>;
-    craftProgress?: Map<number, number>;
-  },
-) {
-  await tx
-    .delete(shoppingListItems)
-    .where(eq(shoppingListItems.shoppingListId, shoppingListId));
-  await tx
-    .delete(shoppingListCrafts)
-    .where(eq(shoppingListCrafts.shoppingListId, shoppingListId));
-
-  if (snapshot.items.length > 0) {
-    await tx.insert(shoppingListItems).values(
-      snapshot.items.map((row) => ({
-        shoppingListId,
-        itemId: row.item.id,
-        requiredQuantity: row.requiredQuantity,
-        obtainedQuantity: Math.min(
-          row.requiredQuantity,
-          progress?.itemProgress?.get(row.item.id) ?? 0,
-        ),
-        updatedAt: new Date(),
-      })),
-    );
-  }
-
-  if (snapshot.crafts.length > 0) {
-    await tx.insert(shoppingListCrafts).values(
-      snapshot.crafts.map((row) => ({
-        shoppingListId,
-        craftId: row.craft.id,
-        requiredCount: row.requiredCount,
-        completedCount: Math.min(
-          row.requiredCount,
-          progress?.craftProgress?.get(row.craft.id) ?? 0,
-        ),
-        updatedAt: new Date(),
-      })),
-    );
-  }
-}
-
-async function getExistingProgress(
-  tx: DbTx,
-  shoppingListId: string,
-): Promise<{
-  itemProgress: Map<number, number>;
-  craftProgress: Map<number, number>;
-}> {
-  const [existingItems, existingCraftRows] = await Promise.all([
-    tx
-      .select({
-        itemId: shoppingListItems.itemId,
-        obtainedQuantity: shoppingListItems.obtainedQuantity,
-      })
-      .from(shoppingListItems)
-      .where(eq(shoppingListItems.shoppingListId, shoppingListId)),
-    tx
-      .select({
-        craftId: shoppingListCrafts.craftId,
-        completedCount: shoppingListCrafts.completedCount,
-      })
-      .from(shoppingListCrafts)
-      .where(eq(shoppingListCrafts.shoppingListId, shoppingListId)),
-  ]);
-
-  return {
-    itemProgress: new Map<number, number>(
-      existingItems.map((row: { itemId: number; obtainedQuantity: number }) => [
-        row.itemId,
-        row.obtainedQuantity,
-      ]),
-    ),
-    craftProgress: new Map<number, number>(
-      existingCraftRows.map(
-        (row: { craftId: number; completedCount: number }) => [
-          row.craftId,
-          row.completedCount,
-        ],
-      ),
-    ),
-  };
-}
-
-async function regenerateListState(
-  tx: DbTx,
-  list: typeof shoppingLists.$inferSelect,
-  progress?: {
-    itemProgress?: Map<number, number>;
-    craftProgress?: Map<number, number>;
-  },
-) {
-  const craftModeSet = new Set(list.craftModeItemIds);
-  let snapshot: ReturnType<typeof buildSnapshot>;
-
-  if (list.sourceType === "simulator") {
-    const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const simulationChain = getSimulationChain(
-      blueprint,
-      blueprint.subcraftsByItemId,
-    );
-    const finalUpgradeEntry: CraftEntry = {
-      craft: blueprint.craft,
-      materials: blueprint.materials.filter(
-        (material: MaterialRow) =>
-          material.item.id !== simulationChain.keyMaterialId,
-      ),
-      products: blueprint.products,
-    };
-
-    const attemptSnapshot = buildSnapshot(
-      {
-        craft: blueprint.craft,
-        materials: blueprint.materials,
-        products: blueprint.products,
-      },
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      list.sourceQuantity,
-    );
-    const upgradeSnapshot = buildSnapshot(
-      finalUpgradeEntry,
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      1,
-    );
-
-    const mergedItems = new Map<
-      number,
-      { item: ItemRow; requiredQuantity: number }
-    >();
-    const mergedCrafts = new Map<
-      number,
-      { craft: CraftRow; requiredCount: number }
-    >();
-
-    for (const row of [...attemptSnapshot.items, ...upgradeSnapshot.items]) {
-      const existing = mergedItems.get(row.item.id);
-      if (existing) existing.requiredQuantity += row.requiredQuantity;
-      else mergedItems.set(row.item.id, { ...row });
-    }
-
-    for (const row of [...attemptSnapshot.crafts, ...upgradeSnapshot.crafts]) {
-      const existing = mergedCrafts.get(row.craft.id);
-      if (existing) existing.requiredCount += row.requiredCount;
-      else mergedCrafts.set(row.craft.id, { ...row });
-    }
-
-    snapshot = {
-      items: Array.from(mergedItems.values()).sort((a, b) =>
-        a.item.name.localeCompare(b.item.name),
-      ),
-      crafts: Array.from(mergedCrafts.values()).sort((a, b) =>
-        a.craft.name.localeCompare(b.craft.name),
-      ),
-    };
-  } else {
-    const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const rootEntry: CraftEntry = {
-      craft: blueprint.craft,
-      materials: blueprint.materials,
-      products: blueprint.products,
-    };
-    snapshot = buildSnapshot(
-      rootEntry,
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      list.sourceQuantity,
-    );
-  }
-
-  await replaceListSnapshot(tx, list.id, snapshot, progress);
-}
+import {
+  fetchCraftBlueprint,
+  getExistingProgress,
+  getComputedUsage,
+  regenerateListState,
+  type DbTx,
+} from "../lib/shopping-list-state";
 
 async function getListAccess(
-  dbClient: DbClient | DbTx,
+  dbClient: typeof db | DbTx,
   shoppingListId: string,
   userId: string,
 ) {
@@ -602,7 +155,7 @@ export const shoppingListsRouter = {
           .select({
             itemId: shoppingListItems.itemId,
             requiredQuantity: shoppingListItems.requiredQuantity,
-            obtainedQuantity: shoppingListItems.obtainedQuantity,
+            stockQuantity: shoppingListItems.obtainedQuantity,
             item: {
               id: items.id,
               name: items.name,
@@ -617,7 +170,7 @@ export const shoppingListsRouter = {
           .select({
             craftId: shoppingListCrafts.craftId,
             requiredCount: shoppingListCrafts.requiredCount,
-            completedCount: shoppingListCrafts.completedCount,
+            stockCount: shoppingListCrafts.completedCount,
             craft: {
               id: crafts.id,
               name: crafts.name,
@@ -665,6 +218,18 @@ export const shoppingListsRouter = {
               .orderBy(desc(shoppingListInvites.createdAt))
           : Promise.resolve([]),
       ]);
+      const computedUsage = await getComputedUsage(ctx.db, access.list, {
+        itemRows: itemRows.map((row) => ({
+          itemId: row.itemId,
+          requiredQuantity: row.requiredQuantity,
+          stockQuantity: row.stockQuantity,
+        })),
+        craftRows: craftRows.map((row) => ({
+          craftId: row.craftId,
+          requiredCount: row.requiredCount,
+          stockCount: row.stockCount,
+        })),
+      });
 
       return {
         ...access,
@@ -672,8 +237,28 @@ export const shoppingListsRouter = {
           ...access.list,
           craftModeItemIds: access.list.craftModeItemIds,
         },
-        items: itemRows,
-        crafts: craftRows,
+        items: itemRows.map((row) => {
+          const derived = computedUsage.items.get(row.itemId);
+          return {
+            ...row,
+            totalQuantity: derived?.totalQuantity ?? row.requiredQuantity,
+            usedQuantity: derived?.usedQuantity ?? 0,
+            remainingQuantity:
+              derived?.remainingQuantity ??
+              Math.max(0, row.requiredQuantity - row.stockQuantity),
+          };
+        }),
+        crafts: craftRows.map((row) => {
+          const derived = computedUsage.crafts.get(row.craftId);
+          return {
+            ...row,
+            totalCount: derived?.totalCount ?? row.requiredCount,
+            usedCount: derived?.usedCount ?? 0,
+            remainingCount:
+              derived?.remainingCount ??
+              Math.max(0, row.requiredCount - row.stockCount),
+          };
+        }),
         members: memberRows,
         invites: inviteRows.map((invite) => ({
           ...invite,
@@ -903,38 +488,47 @@ export const shoppingListsRouter = {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      const [row] = await ctx.db
-        .select({
-          requiredCount: shoppingListCrafts.requiredCount,
-        })
-        .from(shoppingListCrafts)
-        .where(
-          and(
-            eq(shoppingListCrafts.shoppingListId, input.listId),
-            eq(shoppingListCrafts.craftId, input.craftId),
-          ),
-        )
-        .limit(1);
+      await ctx.db.transaction(async (tx: DbTx) => {
+        const [row] = await tx
+          .select({
+            requiredCount: shoppingListCrafts.requiredCount,
+            completedCount: shoppingListCrafts.completedCount,
+          })
+          .from(shoppingListCrafts)
+          .where(
+            and(
+              eq(shoppingListCrafts.shoppingListId, input.listId),
+              eq(shoppingListCrafts.craftId, input.craftId),
+            ),
+          )
+          .limit(1);
 
-      if (!row) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "List craft not found.",
-        });
-      }
+        if (!row) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "List craft not found.",
+          });
+        }
 
-      await ctx.db
-        .update(shoppingListCrafts)
-        .set({
-          completedCount: Math.min(row.requiredCount, input.completedCount),
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(shoppingListCrafts.shoppingListId, input.listId),
-            eq(shoppingListCrafts.craftId, input.craftId),
-          ),
+        const nextCompletedCount = Math.min(
+          row.requiredCount,
+          input.completedCount,
         );
+        if (nextCompletedCount === row.completedCount) return;
+
+        await tx
+          .update(shoppingListCrafts)
+          .set({
+            completedCount: nextCompletedCount,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(shoppingListCrafts.shoppingListId, input.listId),
+              eq(shoppingListCrafts.craftId, input.craftId),
+            ),
+          );
+      });
     }),
 
   duplicate: protectedProcedure

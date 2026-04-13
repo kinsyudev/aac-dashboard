@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   useMutation,
   useQuery,
@@ -32,6 +32,8 @@ export const Route = createFileRoute("/shoplists/$listId")({
 });
 
 const COIN_ITEM_ID = 500;
+const STOCK_INPUT_CLASS_NAME =
+  "bg-background w-24 rounded-md border px-3 py-1.5 text-sm tabular-nums";
 
 function coerceFiniteNumber(value: number | string | null | undefined) {
   if (typeof value === "number") {
@@ -63,6 +65,17 @@ function parseGoldInput(value: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.round(parsed * 10000));
+}
+
+function setDraftValue(
+  setDrafts: Dispatch<SetStateAction<Record<number, string>>>,
+  id: number,
+  value: string,
+) {
+  setDrafts((drafts) => ({
+    ...drafts,
+    [id]: value,
+  }));
 }
 
 function formatSourceSummary(list: {
@@ -134,7 +147,10 @@ function ShoppingListDetailPage() {
 
   const invalidate = async () => {
     await Promise.all([
-      queryClient.invalidateQueries(listQueryOptions),
+      queryClient.refetchQueries({
+        queryKey: listQueryOptions.queryKey,
+        exact: true,
+      }),
       queryClient.invalidateQueries(
         trpc.shoppingLists.listMineAndShared.pathFilter(),
       ),
@@ -154,9 +170,15 @@ function ShoppingListDetailPage() {
               item.itemId === itemId
                 ? {
                     ...item,
-                    obtainedQuantity: Math.min(
-                      item.requiredQuantity,
+                    stockQuantity: Math.min(
+                      item.totalQuantity,
                       obtainedQuantity,
+                    ),
+                    remainingQuantity: Math.max(
+                      0,
+                      item.totalQuantity -
+                        Math.min(item.totalQuantity, obtainedQuantity) -
+                        item.usedQuantity,
                     ),
                   }
                 : item,
@@ -174,7 +196,6 @@ function ShoppingListDetailPage() {
       onSettled: invalidate,
     }),
   );
-
   const updateCraftProgress = useMutation(
     trpc.shoppingLists.updateCraftProgress.mutationOptions({
       onMutate: async ({ craftId, completedCount }) => {
@@ -188,9 +209,15 @@ function ShoppingListDetailPage() {
               craft.craftId === craftId
                 ? {
                     ...craft,
-                    completedCount: Math.min(
-                      craft.requiredCount,
+                    stockCount: Math.min(
+                      craft.totalCount,
                       completedCount,
+                    ),
+                    remainingCount: Math.max(
+                      0,
+                      craft.totalCount -
+                        Math.min(craft.totalCount, completedCount) -
+                        craft.usedCount,
                     ),
                   }
                 : craft,
@@ -208,6 +235,9 @@ function ShoppingListDetailPage() {
       onSettled: invalidate,
     }),
   );
+  const pendingCraftId = updateCraftProgress.isPending
+    ? updateCraftProgress.variables?.craftId
+    : null;
 
   const createInvite = useMutation(
     trpc.shoppingLists.createInvite.mutationOptions({
@@ -277,41 +307,41 @@ function ShoppingListDetailPage() {
 
   const completion = useMemo(() => {
     const requiredItems = materialItems.reduce(
-      (sum, item) => sum + item.requiredQuantity,
+      (sum, item) => sum + item.totalQuantity,
       0,
     );
-    const obtainedItems = materialItems.reduce(
-      (sum, item) => sum + item.obtainedQuantity,
+    const accountedItems = materialItems.reduce(
+      (sum, item) => sum + item.totalQuantity - item.remainingQuantity,
       0,
     );
     const requiredCrafts = data.crafts.reduce(
-      (sum, craft) => sum + craft.requiredCount,
+      (sum, craft) => sum + craft.totalCount,
       0,
     );
-    const completedCrafts = data.crafts.reduce(
-      (sum, craft) => sum + craft.completedCount,
+    const accountedCrafts = data.crafts.reduce(
+      (sum, craft) => sum + craft.totalCount - craft.remainingCount,
       0,
     );
     return {
-      obtainedItems,
+      accountedItems,
       requiredItems,
-      completedCrafts,
+      accountedCrafts,
       requiredCrafts,
       itemPct:
         requiredItems === 0
           ? 0
-          : Math.round((obtainedItems / requiredItems) * 100),
+          : Math.round((accountedItems / requiredItems) * 100),
       craftPct:
         requiredCrafts === 0
           ? 0
-          : Math.round((completedCrafts / requiredCrafts) * 100),
+          : Math.round((accountedCrafts / requiredCrafts) * 100),
     };
   }, [data.crafts, materialItems]);
 
   const coinCompletion = useMemo(() => {
     if (!coinRow) return null;
-    const required = coinRow.requiredQuantity;
-    const obtained = coinRow.obtainedQuantity;
+    const required = coinRow.totalQuantity;
+    const obtained = coinRow.stockQuantity;
     return {
       required,
       obtained,
@@ -322,10 +352,7 @@ function ShoppingListDetailPage() {
   const outstandingBuyCost = useMemo(
     () =>
       materialItems.reduce((sum, itemRow) => {
-        const remainingQuantity = Math.max(
-          0,
-          itemRow.requiredQuantity - itemRow.obtainedQuantity,
-        );
+        const remainingQuantity = itemRow.remainingQuantity;
         const override = overrideMap.get(itemRow.itemId);
         const market = priceMap.get(itemRow.itemId);
         const unitPrice =
@@ -340,14 +367,8 @@ function ShoppingListDetailPage() {
   const sortedItems = useMemo(
     () =>
       [...materialItems].sort((left, right) => {
-        const leftRemaining = Math.max(
-          0,
-          left.requiredQuantity - left.obtainedQuantity,
-        );
-        const rightRemaining = Math.max(
-          0,
-          right.requiredQuantity - right.obtainedQuantity,
-        );
+        const leftRemaining = left.remainingQuantity;
+        const rightRemaining = right.remainingQuantity;
         const leftOverride = overrideMap.get(left.itemId);
         const rightOverride = overrideMap.get(right.itemId);
         const leftUnitPrice =
@@ -373,13 +394,13 @@ function ShoppingListDetailPage() {
     [materialItems, overrideMap, priceMap],
   );
 
-  const commitItemProgress = (itemId: number, requiredQuantity: number) => {
+  const commitItemProgress = (itemId: number, totalQuantity: number) => {
     const raw = itemDrafts[itemId];
     if (raw === undefined) return;
     const item = data.items.find((entry) => entry.itemId === itemId);
     const parsed = item && isCoinItem(item) ? parseGoldInput(raw) : Number(raw);
     const obtainedQuantity = Math.min(
-      requiredQuantity,
+      totalQuantity,
       Math.max(0, Number.isFinite(parsed) ? parsed : 0),
     );
     const current = item;
@@ -388,7 +409,7 @@ function ShoppingListDetailPage() {
       delete next[itemId];
       return next;
     });
-    if (!current || current.obtainedQuantity === obtainedQuantity) return;
+    if (!current || current.stockQuantity === obtainedQuantity) return;
     updateItemProgress.mutate({ listId, itemId, obtainedQuantity });
   };
 
@@ -401,12 +422,12 @@ function ShoppingListDetailPage() {
     });
   };
 
-  const commitCraftProgress = (craftId: number, requiredCount: number) => {
+  const commitCraftProgress = (craftId: number, totalCount: number) => {
     const raw = craftDrafts[craftId];
     if (raw === undefined) return;
     const parsed = Number(raw);
     const completedCount = Math.min(
-      requiredCount,
+      totalCount,
       Math.max(0, Number.isFinite(parsed) ? parsed : 0),
     );
     const current = data.crafts.find((craft) => craft.craftId === craftId);
@@ -415,7 +436,7 @@ function ShoppingListDetailPage() {
       delete next[craftId];
       return next;
     });
-    if (!current || current.completedCount === completedCount) return;
+    if (!current || current.stockCount === completedCount) return;
     updateCraftProgress.mutate({ listId, craftId, completedCount });
   };
 
@@ -497,14 +518,14 @@ function ShoppingListDetailPage() {
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.95fr]">
             <div className="flex flex-col gap-4">
               <ProgressMeter
-                label="Items obtained"
+                label="Items accounted for"
                 percent={completion.itemPct}
-                summary={`${completion.obtainedItems.toLocaleString()} / ${completion.requiredItems.toLocaleString()}`}
+                summary={`${completion.accountedItems.toLocaleString()} / ${completion.requiredItems.toLocaleString()}`}
               />
               <ProgressMeter
-                label="Crafts completed"
+                label="Crafts accounted for"
                 percent={completion.craftPct}
-                summary={`${completion.completedCrafts.toLocaleString()} / ${completion.requiredCrafts.toLocaleString()}`}
+                summary={`${completion.accountedCrafts.toLocaleString()} / ${completion.requiredCrafts.toLocaleString()}`}
               />
               {coinRow ? (
                 <div className="flex items-end justify-between gap-4">
@@ -521,44 +542,66 @@ function ShoppingListDetailPage() {
                     <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
                       Gold input
                     </p>
-                    <input
-                      type="number"
-                      min="0"
-                      max={formatGoldInput(coinRow.requiredQuantity)}
-                      step="0.0001"
-                      disabled={!data.canWrite}
-                      className="bg-background mt-1 w-28 rounded-md border px-3 py-1.5 text-sm tabular-nums"
-                      value={
-                        itemDrafts[coinRow.itemId] ??
-                        formatGoldInput(coinRow.obtainedQuantity)
-                      }
-                      onChange={(event) =>
-                        setItemDrafts((drafts) => ({
-                          ...drafts,
-                          [coinRow.itemId]: event.target.value,
-                        }))
-                      }
-                      onBlur={() =>
-                        commitItemProgress(
-                          coinRow.itemId,
-                          coinRow.requiredQuantity,
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
+                    <div className="mt-1 flex items-center justify-end gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max={formatGoldInput(coinRow.totalQuantity)}
+                        step="0.0001"
+                        disabled={!data.canWrite}
+                        className={`${STOCK_INPUT_CLASS_NAME} w-28`}
+                        value={
+                          itemDrafts[coinRow.itemId] ??
+                          formatGoldInput(coinRow.stockQuantity)
                         }
-                        if (event.key === "Escape") {
-                          resetItemDraft(coinRow.itemId);
-                          event.currentTarget.blur();
+                        onChange={(event) =>
+                          setDraftValue(
+                            setItemDrafts,
+                            coinRow.itemId,
+                            event.target.value,
+                          )
                         }
-                      }}
-                    />
+                        onBlur={() =>
+                          commitItemProgress(
+                            coinRow.itemId,
+                            coinRow.totalQuantity,
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                          if (event.key === "Escape") {
+                            resetItemDraft(coinRow.itemId);
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!data.canWrite}
+                        onClick={() => {
+                          setDraftValue(
+                            setItemDrafts,
+                            coinRow.itemId,
+                            formatGoldInput(coinRow.totalQuantity),
+                          );
+                          updateItemProgress.mutate({
+                            listId,
+                            itemId: coinRow.itemId,
+                            obtainedQuantity: coinRow.totalQuantity,
+                          });
+                        }}
+                      >
+                        Fill
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ) : null}
               <p className="text-muted-foreground text-sm">
-                Invited writers can update all counters.
+                Invited writers can update raw and crafted stock.
               </p>
             </div>
             <div className="bg-muted/30 rounded-lg px-4 py-3">
@@ -591,7 +634,9 @@ function ShoppingListDetailPage() {
               {sortedItems.map((itemRow) => (
                 <div
                   key={itemRow.itemId}
-                  className="flex items-center justify-between gap-4"
+                  className={`flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-opacity ${
+                    itemRow.remainingQuantity === 0 ? "opacity-45" : ""
+                  }`}
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <ItemIcon
@@ -604,49 +649,73 @@ function ShoppingListDetailPage() {
                         {itemRow.item.name}
                       </p>
                       <p className="text-muted-foreground text-sm">
-                        {itemRow.obtainedQuantity} / {itemRow.requiredQuantity}
+                        {itemRow.remainingQuantity.toLocaleString()} remaining •{" "}
+                        {itemRow.stockQuantity.toLocaleString()} stock •{" "}
+                        {itemRow.usedQuantity.toLocaleString()} used •{" "}
+                        {itemRow.totalQuantity.toLocaleString()} total
                       </p>
                       <ItemCost
                         itemId={itemRow.itemId}
-                        requiredQuantity={itemRow.requiredQuantity}
-                        obtainedQuantity={itemRow.obtainedQuantity}
+                        remainingQuantity={itemRow.remainingQuantity}
                         overrideMap={overrideMap}
                         priceMap={priceMap}
                       />
                     </div>
                   </div>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={String(itemRow.requiredQuantity)}
-                    disabled={!data.canWrite}
-                    className="w-28"
-                    value={
-                      itemDrafts[itemRow.itemId] ??
-                      String(itemRow.obtainedQuantity)
-                    }
-                    onChange={(event) =>
-                      setItemDrafts((drafts) => ({
-                        ...drafts,
-                        [itemRow.itemId]: event.target.value,
-                      }))
-                    }
-                    onBlur={() =>
-                      commitItemProgress(
-                        itemRow.itemId,
-                        itemRow.requiredQuantity,
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.currentTarget.blur();
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min="0"
+                      max={String(itemRow.totalQuantity)}
+                      disabled={!data.canWrite}
+                      className={STOCK_INPUT_CLASS_NAME}
+                      value={
+                        itemDrafts[itemRow.itemId] ??
+                        String(itemRow.stockQuantity)
                       }
-                      if (event.key === "Escape") {
-                        resetItemDraft(itemRow.itemId);
-                        event.currentTarget.blur();
+                      onChange={(event) =>
+                        setDraftValue(
+                          setItemDrafts,
+                          itemRow.itemId,
+                          event.target.value,
+                        )
                       }
-                    }}
-                  />
+                      onBlur={() =>
+                        commitItemProgress(
+                          itemRow.itemId,
+                          itemRow.totalQuantity,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                        if (event.key === "Escape") {
+                          resetItemDraft(itemRow.itemId);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!data.canWrite}
+                      onClick={() => {
+                        setDraftValue(
+                          setItemDrafts,
+                          itemRow.itemId,
+                          String(itemRow.totalQuantity),
+                        );
+                        updateItemProgress.mutate({
+                          listId,
+                          itemId: itemRow.itemId,
+                          obtainedQuantity: itemRow.totalQuantity,
+                        });
+                      }}
+                    >
+                      Fill
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -654,12 +723,21 @@ function ShoppingListDetailPage() {
 
           <div className="flex flex-col gap-6">
             <section className="rounded-xl border p-5">
-              <h2 className="text-lg font-semibold">Craft Progress</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">Craft Stock</h2>
+                {updateCraftProgress.isPending ? (
+                  <span className="text-muted-foreground text-xs font-medium">
+                    Saving craft stock...
+                  </span>
+                ) : null}
+              </div>
               <div className="mt-4 flex flex-col gap-1">
                 {data.crafts.map((craftRow) => (
                   <div
                     key={craftRow.craftId}
-                    className="flex items-center justify-between gap-4 py-2"
+                    className={`flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-opacity ${
+                      craftRow.remainingCount === 0 ? "opacity-45" : ""
+                    }`}
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <ItemIcon
@@ -672,42 +750,72 @@ function ShoppingListDetailPage() {
                           {craftRow.craft.name}
                         </p>
                         <p className="text-muted-foreground text-sm tabular-nums">
-                          {craftRow.completedCount} / {craftRow.requiredCount}
+                          {craftRow.remainingCount.toLocaleString()} remaining •{" "}
+                          {craftRow.stockCount.toLocaleString()} stock •{" "}
+                          {craftRow.usedCount.toLocaleString()} used •{" "}
+                          {craftRow.totalCount.toLocaleString()} total
                         </p>
+                        {pendingCraftId === craftRow.craftId ? (
+                          <p className="text-muted-foreground mt-1 text-xs">
+                            Saving...
+                          </p>
+                        ) : null}
                       </div>
                     </div>
-                    <input
-                      type="number"
-                      min="0"
-                      max={String(craftRow.requiredCount)}
-                      disabled={!data.canWrite}
-                      className="bg-background w-24 rounded-md border px-3 py-1.5 text-sm tabular-nums"
-                      value={
-                        craftDrafts[craftRow.craftId] ??
-                        String(craftRow.completedCount)
-                      }
-                      onChange={(event) =>
-                        setCraftDrafts((drafts) => ({
-                          ...drafts,
-                          [craftRow.craftId]: event.target.value,
-                        }))
-                      }
-                      onBlur={() =>
-                        commitCraftProgress(
-                          craftRow.craftId,
-                          craftRow.requiredCount,
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max={String(craftRow.totalCount)}
+                        disabled={!data.canWrite}
+                        className={STOCK_INPUT_CLASS_NAME}
+                        value={
+                          craftDrafts[craftRow.craftId] ??
+                          String(craftRow.stockCount)
                         }
-                        if (event.key === "Escape") {
-                          resetCraftDraft(craftRow.craftId);
-                          event.currentTarget.blur();
+                        onChange={(event) =>
+                          setDraftValue(
+                            setCraftDrafts,
+                            craftRow.craftId,
+                            event.target.value,
+                          )
                         }
-                      }}
-                    />
+                        onBlur={() =>
+                          commitCraftProgress(
+                            craftRow.craftId,
+                            craftRow.totalCount,
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                          if (event.key === "Escape") {
+                            resetCraftDraft(craftRow.craftId);
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!data.canWrite}
+                        onClick={() => {
+                          setDraftValue(
+                            setCraftDrafts,
+                            craftRow.craftId,
+                            String(craftRow.totalCount),
+                          );
+                          updateCraftProgress.mutate({
+                            listId,
+                            craftId: craftRow.craftId,
+                            completedCount: craftRow.totalCount,
+                          });
+                        }}
+                      >
+                        Fill
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -924,18 +1032,15 @@ function OverflowIcon() {
 
 function ItemCost({
   itemId,
-  requiredQuantity,
-  obtainedQuantity,
+  remainingQuantity,
   overrideMap,
   priceMap,
 }: {
   itemId: number;
-  requiredQuantity: number;
-  obtainedQuantity: number;
+  remainingQuantity: number;
   overrideMap: Map<number, number>;
   priceMap: Map<number, { avg24h: string | null; avg7d: string | null }>;
 }) {
-  const remainingQuantity = Math.max(0, requiredQuantity - obtainedQuantity);
   const override = overrideMap.get(itemId);
   const market = priceMap.get(itemId);
   const unitPrice =
@@ -946,7 +1051,7 @@ function ItemCost({
   if (unitPrice <= 0) {
     return (
       <p className="text-muted-foreground text-xs">
-        No price data for remaining materials.
+        No market price data available.
       </p>
     );
   }
@@ -959,7 +1064,12 @@ function ItemCost({
       {lineCost.toLocaleString(undefined, {
         maximumFractionDigits: 0,
       })}
-      g{override != null ? " (override)" : ""}
+      g total •{" "}
+      {unitPrice.toLocaleString(undefined, {
+        maximumFractionDigits: 2,
+      })}
+      g each
+      {override != null ? " (override)" : ""}
     </p>
   );
 }

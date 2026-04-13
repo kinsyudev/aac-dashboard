@@ -60,7 +60,7 @@ export const crafts = pgTable("crafts", (t) => ({
   castDelayMs: t.integer().notNull().default(0),
   primaryProductId: t.integer().references(() => items.id),
   proficiency: proficiencyEnum(),
-}));
+}), (table) => [index("idx_crafts_primary_product").on(table.primaryProductId)]);
 
 export const craftMaterials = pgTable(
   "craft_materials",
