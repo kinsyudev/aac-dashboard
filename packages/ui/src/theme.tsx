@@ -134,12 +134,17 @@ export function ThemeProvider({ children }: React.PropsWithChildren) {
         toggleMode,
       }}
     >
-      <script
-        dangerouslySetInnerHTML={{ __html: themeDetectorScript }}
-        suppressHydrationWarning
-      />
       {children}
     </ThemeContext>
+  );
+}
+
+export function ThemeScript() {
+  return (
+    <script
+      dangerouslySetInnerHTML={{ __html: themeDetectorScript }}
+      suppressHydrationWarning
+    />
   );
 }
 

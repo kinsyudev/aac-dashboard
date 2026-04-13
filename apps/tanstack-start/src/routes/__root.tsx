@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
-import type * as React from "react";
+import * as React from "react";
 import {
   createRootRouteWithContext,
   HeadContent,
@@ -16,7 +16,7 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { AppRouter } from "@acme/api";
 import { cn } from "@acme/ui";
 import { Button } from "@acme/ui/button";
-import { ThemeProvider, ThemeToggle } from "@acme/ui/theme";
+import { ThemeProvider, ThemeScript, ThemeToggle } from "@acme/ui/theme";
 import { Toaster } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
@@ -69,12 +69,41 @@ function RootComponent() {
 }
 
 function NavigationProgress() {
-  const isLoading = useRouterState({ select: (s) => s.status === "pending" });
-  if (!isLoading) return null;
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [isMounted, setIsMounted] = React.useState(false);
+  const [isVisible, setIsVisible] = React.useState(false);
+  const previousPathnameRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isMounted) return;
+
+    if (previousPathnameRef.current === null) {
+      previousPathnameRef.current = pathname;
+      return;
+    }
+
+    if (previousPathnameRef.current === pathname) return;
+
+    previousPathnameRef.current = pathname;
+    setIsVisible(true);
+
+    const timeoutId = window.setTimeout(() => {
+      setIsVisible(false);
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isMounted, pathname]);
+
+  if (!isMounted || !isVisible) return null;
+
   return (
     <div
-      className="bg-primary fixed top-0 left-0 z-50 h-0.5"
-      style={{ animation: "nav-progress 10s ease-out forwards" }}
+      className="bg-primary pointer-events-none fixed top-0 left-0 z-[60] h-1 shadow-[0_0_12px_currentColor]"
+      style={{ animation: "nav-progress 450ms ease-out forwards" }}
     />
   );
 }
@@ -84,6 +113,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <ThemeProvider>
       <html lang="en" suppressHydrationWarning>
         <head>
+          <ThemeScript />
           <HeadContent />
         </head>
         <body className="bg-background text-foreground min-h-screen font-sans antialiased">
