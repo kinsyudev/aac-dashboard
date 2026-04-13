@@ -2,6 +2,8 @@ import { sql } from "@acme/db";
 import { db } from "@acme/db/client";
 import { craftMaterials, craftProducts, crafts, items } from "@acme/db/schema";
 
+import { buildStaticApiCache } from "./static-api-cache";
+
 const BASE_URL = "https://aa-classic.com/data";
 const HEADERS: Record<string, string> = {
   accept: "*/*",
@@ -269,6 +271,8 @@ async function main() {
   const totalProducts = await db.$count(craftProducts);
   const totalMaterials = await db.$count(craftMaterials);
   console.log(`Crafts done: ${totalCrafts} crafts, ${totalProducts} products, ${totalMaterials} materials`);
+  console.log("Building static API cache...");
+  await buildStaticApiCache();
   console.log("Done!");
 }
 

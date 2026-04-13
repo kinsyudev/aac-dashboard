@@ -8,7 +8,7 @@ import { Input } from "@acme/ui/input";
 import type { RecentItem } from "~/lib/recent-searches";
 import { ItemIcon } from "~/component/item-icon";
 import { useRecentSearches } from "~/lib/recent-searches";
-import { useTRPC } from "~/lib/trpc";
+import { itemsAllQueryOptions } from "~/lib/static-api-client";
 
 export const Route = createFileRoute("/item/")({
   head: () => ({
@@ -22,8 +22,7 @@ export const Route = createFileRoute("/item/")({
     ],
   }),
   loader: ({ context }) => {
-    const { trpc, queryClient } = context;
-    void queryClient.prefetchQuery(trpc.items.all.queryOptions());
+    void context.queryClient.prefetchQuery(itemsAllQueryOptions());
   },
   component: RouteComponent,
 });
@@ -66,8 +65,7 @@ function SearchResults({
   query: string;
   onSelect: (item: RecentItem) => void;
 }) {
-  const trpc = useTRPC();
-  const { data: allItems } = useSuspenseQuery(trpc.items.all.queryOptions());
+  const { data: allItems } = useSuspenseQuery(itemsAllQueryOptions());
 
   const searchIndex = useMemo(() => buildSearchIndex(allItems), [allItems]);
   const results = useMemo(

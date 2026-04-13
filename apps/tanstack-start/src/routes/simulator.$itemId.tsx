@@ -84,7 +84,7 @@ function formatGold(value: number): string {
 }
 
 function getMarketPrice(
-  price: { avg24h: string | null; avg7d: string | null } | undefined,
+  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
 ): number {
   return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
 }

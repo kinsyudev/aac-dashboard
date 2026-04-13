@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build-static-api-cache": "pnpm with-env tsx src/build-static-api-cache.ts",
     "sync-items": "pnpm with-env tsx src/sync-items.ts",
     "sync-items:full-refresh": "pnpm with-env tsx src/sync-items.ts --full-refresh",
     "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
