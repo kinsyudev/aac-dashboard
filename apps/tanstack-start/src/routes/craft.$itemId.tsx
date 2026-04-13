@@ -6,8 +6,8 @@ import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
-import { ItemDescription } from "~/component/item-description";
 import type { ProficiencyMap } from "~/lib/proficiency";
+import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";

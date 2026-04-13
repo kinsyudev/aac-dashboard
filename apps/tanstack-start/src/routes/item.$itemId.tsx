@@ -1,18 +1,18 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import { Suspense, useMemo } from "react";
+import { Suspense, useDeferredValue, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
-
-import { Badge } from "@acme/ui/badge";
+import type { ChartConfig } from "@acme/ui/chart";
 import {
-  type ChartConfig,
-  ChartContainer,
-  ChartTooltip,
-  Recharts,
-} from "@acme/ui/chart";
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@acme/ui/accordion";
+import { Badge } from "@acme/ui/badge";
 import {
   Card,
   CardContent,
@@ -20,8 +20,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@acme/ui/card";
+import { ChartContainer, ChartTooltip, Recharts } from "@acme/ui/chart";
+import { Input } from "@acme/ui/input";
+
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
+import { ProficiencyBadge } from "~/component/proficiency";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
@@ -49,12 +53,17 @@ type ItemDetailData = NonNullable<
 >;
 type RecipeEntry = ItemDetailData["craftedBy"][number];
 type PriceSummary = ItemDetailData["latestPrices"][number];
-type HistoryChartPoint = {
+interface HistoryChartPoint {
   label: string;
   fullLabel: string;
   price: number | null;
   volume: number | null;
-};
+}
+
+interface RecipeGroup {
+  proficiency: string | null;
+  entries: RecipeEntry[];
+}
 
 function parseMetric(value: string | null) {
   if (!value) return null;
@@ -119,6 +128,43 @@ function collapseHistoryByDay(data: ItemDetailData["priceHistory"]) {
   return [...dailySnapshots.values()];
 }
 
+function getRecipeSearchText(entry: RecipeEntry) {
+  return [
+    entry.craft.name,
+    entry.craft.proficiency,
+    ...entry.materials.map((material) => material.item.name),
+    ...entry.products.map((product) => product.item.name),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function groupRecipesByProficiency(entries: RecipeEntry[]) {
+  const groups = new Map<string, RecipeGroup>();
+
+  for (const entry of entries) {
+    const key = entry.craft.proficiency ?? "Unknown";
+    const group = groups.get(key);
+
+    if (group) {
+      group.entries.push(entry);
+      continue;
+    }
+
+    groups.set(key, {
+      proficiency: entry.craft.proficiency,
+      entries: [entry],
+    });
+  }
+
+  return [...groups.values()].sort((left, right) => {
+    if (left.proficiency == null) return 1;
+    if (right.proficiency == null) return -1;
+    return left.proficiency.localeCompare(right.proficiency);
+  });
+}
+
 function RouteComponent() {
   const { itemId } = Route.useParams();
 
@@ -137,13 +183,7 @@ function RouteComponent() {
   );
 }
 
-function ItemStat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function ItemStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border px-4 py-3">
       <p className="text-muted-foreground text-xs uppercase">{label}</p>
@@ -157,12 +197,12 @@ function MarketHistoryTooltip({
   payload,
 }: {
   active?: boolean;
-  payload?: Array<{
+  payload?: {
     name?: string | number;
     value?: string | number | readonly (string | number)[];
     color?: string;
     payload?: HistoryChartPoint;
-  }>;
+  }[];
 }) {
   if (!active || !payload?.length) return null;
 
@@ -171,26 +211,29 @@ function MarketHistoryTooltip({
 
   const priceEntry = payload.find((entry) => entry.name === "price");
   const volumeEntry = payload.find((entry) => entry.name === "volume");
+  const priceRawValue = priceEntry?.value ?? 0;
+  const volumeRawValue = volumeEntry?.value ?? 0;
+  const priceColor = priceEntry?.color ?? "var(--color-price)";
+  const volumeColor = volumeEntry?.color ?? "var(--color-volume)";
   const priceValue =
-    point.price ?? Number(Array.isArray(priceEntry?.value) ? priceEntry?.value[0] : priceEntry?.value ?? 0);
+    point.price ??
+    Number(Array.isArray(priceRawValue) ? priceRawValue[0] : priceRawValue);
   const volumeValue =
     point.volume ??
-    Number(
-      Array.isArray(volumeEntry?.value) ? volumeEntry?.value[0] : volumeEntry?.value ?? 0,
-    );
+    Number(Array.isArray(volumeRawValue) ? volumeRawValue[0] : volumeRawValue);
 
   return (
-    <div className="min-w-[220px] rounded-xl border border-border/60 bg-background/95 p-3 shadow-xl backdrop-blur">
+    <div className="border-border/60 bg-background/95 min-w-[220px] rounded-xl border p-3 shadow-xl backdrop-blur">
       <p className="text-sm font-semibold">{point.fullLabel}</p>
-      <p className="text-muted-foreground mb-3 text-xs">
-        Market snapshot
-      </p>
+      <p className="text-muted-foreground mb-3 text-xs">Market snapshot</p>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2">
           <div className="flex items-center gap-2">
             <span
               className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: priceEntry?.color ?? "var(--color-price)" }}
+              style={{
+                backgroundColor: priceColor,
+              }}
             />
             <span className="text-sm font-medium">Price</span>
           </div>
@@ -203,7 +246,7 @@ function MarketHistoryTooltip({
             <span
               className="h-2.5 w-2.5 rounded-full"
               style={{
-                backgroundColor: volumeEntry?.color ?? "var(--color-volume)",
+                backgroundColor: volumeColor,
               }}
             />
             <span className="text-sm font-medium">Volume</span>
@@ -217,11 +260,7 @@ function MarketHistoryTooltip({
   );
 }
 
-function CombinedHistoryChart({
-  data,
-}: {
-  data: HistoryChartPoint[];
-}) {
+function CombinedHistoryChart({ data }: { data: HistoryChartPoint[] }) {
   const chartConfig = {
     price: {
       label: "Price",
@@ -331,10 +370,7 @@ function CombinedHistoryChart({
                 width={56}
                 tickFormatter={(value) => formatCompact(Number(value))}
               />
-              <ChartTooltip
-                cursor={false}
-                content={<MarketHistoryTooltip />}
-              />
+              <ChartTooltip cursor={false} content={<MarketHistoryTooltip />} />
               <Area
                 yAxisId="volume"
                 dataKey="volume"
@@ -373,11 +409,13 @@ function RecipeCard({
   entry,
   highlightedItemId,
   priceMap,
+  craftableItemIds,
   showOutputs,
 }: {
   entry: RecipeEntry;
   highlightedItemId: number;
   priceMap: Map<number, PriceSummary>;
+  craftableItemIds: Set<number>;
   showOutputs: boolean;
 }) {
   const { proficiencyMap, overrideMap } = useUserData();
@@ -394,25 +432,52 @@ function RecipeCard({
   }, 0);
 
   return (
-    <div className="rounded-xl border p-4">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-semibold">{entry.craft.name}</h3>
-            {entry.craft.proficiency && (
-              <Badge variant="secondary">{entry.craft.proficiency}</Badge>
-            )}
-            {entry.craft.labor > 0 && (
-              <Badge variant="secondary">
-                {getDiscountedLabor(
-                  entry.craft.labor,
-                  entry.craft.proficiency,
-                  proficiencyMap,
-                )}{" "}
-                labor
-              </Badge>
-            )}
+    <AccordionItem value={String(entry.craft.id)}>
+      <AccordionTrigger className="px-4 py-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-base font-semibold">
+                {entry.craft.name}
+              </h3>
+              {entry.craft.labor > 0 && (
+                <Badge variant="secondary">
+                  {getDiscountedLabor(
+                    entry.craft.labor,
+                    entry.craft.proficiency,
+                    proficiencyMap,
+                  )}{" "}
+                  labor
+                </Badge>
+              )}
+            </div>
+            <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+              <span>Materials {formatGold(materialTotal)}</span>
+              <span>•</span>
+              <span>
+                {entry.materials.length}{" "}
+                {entry.materials.length === 1 ? "material" : "materials"}
+              </span>
+              {showOutputs && entry.products.length > 0 && (
+                <>
+                  <span>•</span>
+                  <span>
+                    {entry.products.length}{" "}
+                    {entry.products.length === 1 ? "product" : "products"}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
+          {entry.craft.proficiency && (
+            <Badge variant="outline" className="shrink-0">
+              {entry.craft.proficiency}
+            </Badge>
+          )}
+        </div>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-4">
           <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
             {entry.craft.primaryProductId ? (
               <Link
@@ -428,93 +493,265 @@ function RecipeCard({
             <span>•</span>
             <span>Materials {formatGold(materialTotal)}</span>
           </div>
+
+          {showOutputs && entry.products.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
+                Produces
+              </p>
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {entry.products.map((product) => (
+                  <li key={`${entry.craft.id}-${product.item.id}`}>
+                    <div
+                      className={`hover:bg-muted/40 flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                        product.item.id === highlightedItemId
+                          ? "border-primary"
+                          : ""
+                      }`}
+                    >
+                      <Link
+                        to="/item/$itemId"
+                        params={{ itemId: product.item.id }}
+                        className="flex min-w-0 flex-1 items-center gap-3"
+                      >
+                        <ItemIcon
+                          icon={product.item.icon}
+                          name={product.item.name}
+                          size="md"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">
+                            {product.item.name}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            ×{product.amount}
+                            {product.rate != null && product.rate < 100
+                              ? ` • ${product.rate}%`
+                              : ""}
+                          </p>
+                        </div>
+                      </Link>
+                      {craftableItemIds.has(product.item.id) && (
+                        <Link
+                          to="/craft/$itemId"
+                          params={{ itemId: product.item.id }}
+                          className="text-muted-foreground shrink-0 text-xs font-medium hover:underline"
+                        >
+                          Craft
+                        </Link>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
+              Materials
+            </p>
+            <ul className="flex flex-col gap-2">
+              {entry.materials.map((material) => {
+                const override = overrideMap.get(material.item.id);
+                const latestPrice = priceMap.get(material.item.id);
+                const unitPrice =
+                  override ??
+                  parseMetric(latestPrice?.avg24h ?? null) ??
+                  parseMetric(latestPrice?.avg7d ?? null);
+
+                return (
+                  <li key={`${entry.craft.id}-${material.item.id}`}>
+                    <div
+                      className={`hover:bg-muted/40 flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                        material.item.id === highlightedItemId
+                          ? "border-primary"
+                          : ""
+                      }`}
+                    >
+                      <Link
+                        to="/item/$itemId"
+                        params={{ itemId: material.item.id }}
+                        className="flex min-w-0 flex-1 items-center gap-3"
+                      >
+                        <ItemIcon
+                          icon={material.item.icon}
+                          name={material.item.name}
+                          size="md"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-medium">
+                              {material.item.name}
+                            </p>
+                            {craftableItemIds.has(material.item.id) && (
+                              <Badge variant="outline" className="shrink-0">
+                                Craftable
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-muted-foreground text-xs">
+                            {material.item.category}
+                          </p>
+                        </div>
+                      </Link>
+                      <div className="text-right text-sm tabular-nums">
+                        <p>×{material.amount}</p>
+                        <p className="text-muted-foreground text-xs">
+                          {unitPrice != null
+                            ? formatGold(unitPrice)
+                            : "No price"}
+                        </p>
+                      </div>
+                      {craftableItemIds.has(material.item.id) && (
+                        <Link
+                          to="/craft/$itemId"
+                          params={{ itemId: material.item.id }}
+                          className="text-muted-foreground shrink-0 text-xs font-medium hover:underline"
+                        >
+                          Craft
+                        </Link>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </div>
+      </AccordionContent>
+    </AccordionItem>
+  );
+}
+
+function RecipeSection({
+  title,
+  description,
+  entries,
+  itemId,
+  priceMap,
+  craftableItemIds,
+  showOutputs,
+  emptyMessage,
+}: {
+  title: string;
+  description: string;
+  entries: RecipeEntry[];
+  itemId: number;
+  priceMap: Map<number, PriceSummary>;
+  craftableItemIds: Set<number>;
+  showOutputs: boolean;
+  emptyMessage: string;
+}) {
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+  const normalizedSearch = deferredSearch.trim().toLowerCase();
+
+  const filteredGroups = useMemo(() => {
+    const filteredEntries =
+      normalizedSearch.length === 0
+        ? entries
+        : entries.filter((entry) =>
+            getRecipeSearchText(entry).includes(normalizedSearch),
+          );
+
+    return groupRecipesByProficiency(filteredEntries);
+  }, [entries, normalizedSearch]);
+
+  const totalMatches = filteredGroups.reduce(
+    (sum, group) => sum + group.entries.length,
+    0,
+  );
+  return (
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold">{title}</h2>
+          <p className="text-muted-foreground text-sm">{description}</p>
+        </div>
+        {entries.length > 0 && (
+          <div className="w-full sm:max-w-sm">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search recipes, proficiencies, materials..."
+              aria-label={`${title} search`}
+            />
+          </div>
+        )}
       </div>
 
-      {showOutputs && entry.products.length > 0 && (
-        <div className="mb-4 space-y-2">
-          <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
-            Produces
-          </p>
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {entry.products.map((product) => (
-              <li key={`${entry.craft.id}-${product.item.id}`}>
-                <Link
-                  to="/item/$itemId"
-                  params={{ itemId: product.item.id }}
-                  className={`hover:bg-muted/40 flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
-                    product.item.id === highlightedItemId ? "border-primary" : ""
-                  }`}
-                >
-                  <ItemIcon
-                    icon={product.item.icon}
-                    name={product.item.name}
-                    size="md"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{product.item.name}</p>
-                    <p className="text-muted-foreground text-xs">
-                      ×{product.amount}
-                      {product.rate != null && product.rate < 100
-                        ? ` • ${product.rate}%`
-                        : ""}
-                    </p>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {entries.length === 0 ? (
+        <p className="text-muted-foreground text-sm">{emptyMessage}</p>
+      ) : totalMatches > 0 ? (
+        <div className="space-y-3">
+          <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
+            <Badge variant="outline">
+              {totalMatches} {totalMatches === 1 ? "recipe" : "recipes"}
+            </Badge>
+            <Badge variant="outline">
+              {filteredGroups.length}{" "}
+              {filteredGroups.length === 1 ? "proficiency" : "proficiencies"}
+            </Badge>
+          </div>
+          <Accordion
+            key={normalizedSearch || "all"}
+            type="multiple"
+            className="grid gap-4"
+          >
+            {filteredGroups.map((group) => {
+              const groupLabel = group.proficiency ?? "Unknown";
 
-      <div className="space-y-2">
-        <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
-          Materials
+              return (
+                <AccordionItem key={groupLabel} value={groupLabel}>
+                  <AccordionTrigger className="rounded-xl">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                      {group.proficiency ? (
+                        <ProficiencyBadge proficiency={group.proficiency} />
+                      ) : (
+                        <Badge variant="secondary">Unknown</Badge>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="font-medium">
+                          {group.entries.length}{" "}
+                          {group.entries.length === 1 ? "recipe" : "recipes"}
+                        </span>
+                        <span className="text-muted-foreground hidden sm:inline">
+                          •
+                        </span>
+                        <span className="text-muted-foreground">
+                          {showOutputs
+                            ? "Consumes this item"
+                            : "Produces this item"}
+                        </span>
+                      </div>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <Accordion type="multiple" className="grid gap-3">
+                      {group.entries.map((entry) => (
+                        <RecipeCard
+                          key={entry.craft.id}
+                          entry={entry}
+                          highlightedItemId={itemId}
+                          priceMap={priceMap}
+                          craftableItemIds={craftableItemIds}
+                          showOutputs={showOutputs}
+                        />
+                      ))}
+                    </Accordion>
+                  </AccordionContent>
+                </AccordionItem>
+              );
+            })}
+          </Accordion>
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          No recipes match “{deferredSearch.trim()}”.
         </p>
-        <ul className="flex flex-col gap-2">
-          {entry.materials.map((material) => {
-            const override = overrideMap.get(material.item.id);
-            const latestPrice = priceMap.get(material.item.id);
-            const unitPrice =
-              override ??
-              parseMetric(latestPrice?.avg24h ?? null) ??
-              parseMetric(latestPrice?.avg7d ?? null);
-
-            return (
-              <li key={`${entry.craft.id}-${material.item.id}`}>
-                <Link
-                  to="/item/$itemId"
-                  params={{ itemId: material.item.id }}
-                  className={`hover:bg-muted/40 flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
-                    material.item.id === highlightedItemId
-                      ? "border-primary"
-                      : ""
-                  }`}
-                >
-                  <ItemIcon
-                    icon={material.item.icon}
-                    name={material.item.name}
-                    size="md"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{material.item.name}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {material.item.category}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm tabular-nums">
-                    <p>×{material.amount}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {unitPrice != null ? formatGold(unitPrice) : "No price"}
-                    </p>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
+      )}
+    </section>
   );
 }
 
@@ -524,6 +761,10 @@ function ItemDetail({ itemId }: { itemId: number }) {
 
   const priceMap = useMemo(
     () => new Map(data?.latestPrices.map((price) => [price.itemId, price])),
+    [data],
+  );
+  const craftableItemIds = useMemo(
+    () => new Set(data?.craftableItemIds ?? []),
     [data],
   );
 
@@ -550,7 +791,9 @@ function ItemDetail({ itemId }: { itemId: number }) {
               <h1 className="text-3xl font-bold">{data.item.name}</h1>
               {data.item.sellable && <Badge>Sellable</Badge>}
             </div>
-            <p className="text-muted-foreground text-sm">{data.item.category}</p>
+            <p className="text-muted-foreground text-sm">
+              {data.item.category}
+            </p>
           </div>
         </div>
 
@@ -590,61 +833,33 @@ function ItemDetail({ itemId }: { itemId: number }) {
         </div>
       </div>
 
-      {data.item.description && <ItemDescription text={data.item.description} />}
+      {data.item.description && (
+        <ItemDescription text={data.item.description} />
+      )}
 
       <CombinedHistoryChart data={historyPoints} />
 
-      <section className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Crafting Recipes</h2>
-          <p className="text-muted-foreground text-sm">
-            Recipes that produce this item.
-          </p>
-        </div>
-        {data.craftedBy.length > 0 ? (
-          <div className="grid gap-4">
-            {data.craftedBy.map((entry) => (
-              <RecipeCard
-                key={entry.craft.id}
-                entry={entry}
-                highlightedItemId={itemId}
-                priceMap={priceMap}
-                showOutputs={false}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            No crafting recipes found for this item.
-          </p>
-        )}
-      </section>
+      <RecipeSection
+        title="Crafting Recipes"
+        description="Recipes that produce this item, grouped by proficiency."
+        entries={data.craftedBy}
+        itemId={itemId}
+        priceMap={priceMap}
+        craftableItemIds={craftableItemIds}
+        showOutputs={false}
+        emptyMessage="No crafting recipes found for this item."
+      />
 
-      <section className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Used In Recipes</h2>
-          <p className="text-muted-foreground text-sm">
-            Recipes that consume this item as a material.
-          </p>
-        </div>
-        {data.usedIn.length > 0 ? (
-          <div className="grid gap-4">
-            {data.usedIn.map((entry) => (
-              <RecipeCard
-                key={entry.craft.id}
-                entry={entry}
-                highlightedItemId={itemId}
-                priceMap={priceMap}
-                showOutputs
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            This item is not used in any tracked crafting recipes.
-          </p>
-        )}
-      </section>
+      <RecipeSection
+        title="Used In Recipes"
+        description="Recipes that consume this item as a material, grouped by proficiency."
+        entries={data.usedIn}
+        itemId={itemId}
+        priceMap={priceMap}
+        craftableItemIds={craftableItemIds}
+        showOutputs
+        emptyMessage="This item is not used in any tracked crafting recipes."
+      />
     </div>
   );
 }

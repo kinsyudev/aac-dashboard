@@ -70,7 +70,10 @@ function SearchResults({
   const { data: allItems } = useSuspenseQuery(trpc.items.all.queryOptions());
 
   const searchIndex = useMemo(() => buildSearchIndex(allItems), [allItems]);
-  const results = useMemo(() => searchIndex.search(query), [searchIndex, query]);
+  const results = useMemo(
+    () => searchIndex.search(query),
+    [searchIndex, query],
+  );
 
   if (results.length === 0) {
     return <p className="text-muted-foreground text-sm">No items found.</p>;

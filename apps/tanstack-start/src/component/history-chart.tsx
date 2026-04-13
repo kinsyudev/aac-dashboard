@@ -14,8 +14,9 @@ function getChartPath(points: { x: number; y: number }[]) {
   if (points.length === 0) return "";
 
   return points
-    .map((point, index) =>
-      `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`,
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`,
     )
     .join(" ");
 }

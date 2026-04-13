@@ -1,8 +1,6 @@
 import type { TRPCRouterRecord } from "@trpc/server";
 import { z } from "zod/v4";
 
-import type { CraftWithMaterialsAndProducts } from "./crafts";
-
 import { asc, desc, eq, getTableColumns, ilike, inArray, like } from "@acme/db";
 import {
   craftMaterials,
@@ -12,6 +10,7 @@ import {
   prices,
 } from "@acme/db/schema";
 
+import type { CraftWithMaterialsAndProducts } from "./crafts";
 import { protectedProcedure } from "../trpc";
 
 export const itemsRouter = {
@@ -102,35 +101,42 @@ export const itemsRouter = {
   detail: protectedProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: itemId }) => {
-      const [item, priceHistory, craftedByRows, usedInRows] = await Promise.all([
-        ctx.db
-          .select(getTableColumns(items))
-          .from(items)
-          .where(eq(items.id, itemId))
-          .then((rows) => rows[0] ?? null),
-        ctx.db
-          .select()
-          .from(prices)
-          .where(eq(prices.itemId, itemId))
-          .orderBy(asc(prices.fetchedAt)),
-        ctx.db.select().from(crafts).where(eq(crafts.primaryProductId, itemId)),
-        ctx.db
-          .select({
-            id: crafts.id,
-            name: crafts.name,
-            labor: crafts.labor,
-            castDelayMs: crafts.castDelayMs,
-            primaryProductId: crafts.primaryProductId,
-            proficiency: crafts.proficiency,
-          })
-          .from(crafts)
-          .innerJoin(craftMaterials, eq(craftMaterials.craftId, crafts.id))
-          .where(eq(craftMaterials.itemId, itemId)),
-      ]);
+      const [item, priceHistory, craftedByRows, usedInRows] = await Promise.all(
+        [
+          ctx.db
+            .select(getTableColumns(items))
+            .from(items)
+            .where(eq(items.id, itemId))
+            .then((rows) => rows[0] ?? null),
+          ctx.db
+            .select()
+            .from(prices)
+            .where(eq(prices.itemId, itemId))
+            .orderBy(asc(prices.fetchedAt)),
+          ctx.db
+            .select()
+            .from(crafts)
+            .where(eq(crafts.primaryProductId, itemId)),
+          ctx.db
+            .select({
+              id: crafts.id,
+              name: crafts.name,
+              labor: crafts.labor,
+              castDelayMs: crafts.castDelayMs,
+              primaryProductId: crafts.primaryProductId,
+              proficiency: crafts.proficiency,
+            })
+            .from(crafts)
+            .innerJoin(craftMaterials, eq(craftMaterials.craftId, crafts.id))
+            .where(eq(craftMaterials.itemId, itemId)),
+        ],
+      );
 
       if (!item) return null;
 
-      const craftIds = [...new Set([...craftedByRows, ...usedInRows].map((craft) => craft.id))];
+      const craftIds = [
+        ...new Set([...craftedByRows, ...usedInRows].map((craft) => craft.id)),
+      ];
 
       if (craftIds.length === 0) {
         return {
@@ -138,6 +144,7 @@ export const itemsRouter = {
           priceHistory,
           craftedBy: [] as CraftWithMaterialsAndProducts[],
           usedIn: [] as CraftWithMaterialsAndProducts[],
+          craftableItemIds: [] as number[],
           latestPrices: [] as {
             itemId: number;
             avg24h: string | null;
@@ -186,10 +193,16 @@ export const itemsRouter = {
       const materialItemIds = [
         ...new Set(materials.map((material) => material.item.id)),
       ];
+      const relatedItemIds = [
+        ...new Set([
+          ...materials.map((material) => material.item.id),
+          ...products.map((product) => product.item.id),
+        ]),
+      ];
 
-      const latestPrices =
+      const [latestPrices, craftableItems] = await Promise.all([
         materialItemIds.length > 0
-          ? await ctx.db
+          ? ctx.db
               .selectDistinctOn([prices.itemId], {
                 itemId: prices.itemId,
                 avg24h: prices.avg24h,
@@ -198,7 +211,17 @@ export const itemsRouter = {
               .from(prices)
               .where(inArray(prices.itemId, materialItemIds))
               .orderBy(prices.itemId, desc(prices.fetchedAt))
-          : [];
+          : [],
+        relatedItemIds.length > 0
+          ? ctx.db
+              .selectDistinctOn([crafts.primaryProductId], {
+                itemId: crafts.primaryProductId,
+              })
+              .from(crafts)
+              .where(inArray(crafts.primaryProductId, relatedItemIds))
+              .orderBy(crafts.primaryProductId)
+          : [],
+      ]);
 
       const toCraftEntries = (
         craftRows: typeof craftedByRows,
@@ -214,6 +237,9 @@ export const itemsRouter = {
         priceHistory,
         craftedBy: toCraftEntries(craftedByRows),
         usedIn: toCraftEntries(usedInRows),
+        craftableItemIds: craftableItems
+          .map((entry) => entry.itemId)
+          .filter((itemId): itemId is number => itemId != null),
         latestPrices,
       };
     }),
