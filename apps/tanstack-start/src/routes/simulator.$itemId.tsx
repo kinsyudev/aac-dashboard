@@ -79,6 +79,10 @@ function parseFinitePrice(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function formatGold(value: number): string {
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
+}
+
 function getMarketPrice(
   price: { avg24h: string | null; avg7d: string | null } | undefined,
 ): number {
@@ -1166,7 +1170,7 @@ function SimulatorCraftBreakdown({
                 materials
               </span>
               <span className="text-primary">
-                {total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
+                {formatGold(total)}
               </span>
             </p>
           )}
@@ -1296,18 +1300,11 @@ function SimulatorCraftBreakdown({
                           </span>
                         )}
                         <span className="text-foreground/70">
-                          {unit.toLocaleString(undefined, {
-                            maximumFractionDigits: 0,
-                          })}
-                          g
+                          {formatGold(unit)}
                         </span>
                         {amount > 1 && (
                           <span className="text-foreground ml-1.5 font-medium">
-                            ={" "}
-                            {lineTotal.toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            })}
-                            g
+                            = {formatGold(lineTotal)}
                           </span>
                         )}
                       </span>
@@ -1324,9 +1321,9 @@ function SimulatorCraftBreakdown({
                         }`}
                       >
                         {totalDiff > 0
-                          ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                          ? `↓ ${formatGold(totalDiff)}`
                           : totalDiff < 0
-                            ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                            ? `↑ ${formatGold(Math.abs(totalDiff))}`
                             : "="}
                       </span>
                     )}
@@ -1380,7 +1377,7 @@ function SimulatorCraftBreakdown({
 }
 
 function gold(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 }) + "g";
+  return formatGold(value);
 }
 
 function pct(value: number): string {

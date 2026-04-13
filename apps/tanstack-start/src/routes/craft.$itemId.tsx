@@ -56,6 +56,10 @@ type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 
+function formatGold(value: number): string {
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
+}
+
 function CraftRecipe({
   entry,
   priceMap,
@@ -136,7 +140,7 @@ function CraftRecipe({
                 materials
               </span>
               <span className="text-primary">
-                {total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
+                {formatGold(total)}
               </span>
             </p>
           )}
@@ -235,18 +239,11 @@ function CraftRecipe({
                       </span>
                     )}
                     <span className="text-foreground/70">
-                      {unit.toLocaleString(undefined, {
-                        maximumFractionDigits: 0,
-                      })}
-                      g
+                      {formatGold(unit)}
                     </span>
                     {amount > 1 && (
                       <span className="text-foreground ml-1.5 font-medium">
-                        ={" "}
-                        {lineTotal.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
-                        g
+                        = {formatGold(lineTotal)}
                       </span>
                     )}
                   </span>
@@ -263,9 +260,9 @@ function CraftRecipe({
                     }`}
                   >
                     {totalDiff > 0
-                      ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                      ? `↓ ${formatGold(totalDiff)}`
                       : totalDiff < 0
-                        ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                        ? `↑ ${formatGold(Math.abs(totalDiff))}`
                         : "="}
                   </span>
                 )}
