@@ -26,7 +26,10 @@ export function useUserData(): UserData {
       data?.proficiencies.map((p) => [p.proficiency, p.value]) ?? [],
     );
     const overrideMap: OverrideMap = new Map(
-      data?.overrides.map((o) => [o.itemId, parseFloat(o.price)]) ?? [],
+      data?.overrides.map((o) => {
+        const parsed = Number.parseFloat(o.price);
+        return [o.itemId, Number.isFinite(parsed) ? parsed : 0] as const;
+      }) ?? [],
     );
     return { proficiencyMap, overrideMap };
   }, [data]);

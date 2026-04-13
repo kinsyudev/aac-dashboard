@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -24,6 +24,14 @@ export const Route = createFileRoute("/shoplists/$listId")({
   component: ShoppingListDetailPage,
 });
 
+function coerceFiniteNumber(value: number | string | null | undefined) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  const parsed = Number.parseFloat(value ?? "0");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function ShoppingListDetailPage() {
   const { listId } = Route.useParams();
   const trpc = useTRPC();
@@ -36,6 +44,8 @@ function ShoppingListDetailPage() {
 
   const [name, setName] = useState(data.list.name);
   const [quantity, setQuantity] = useState(String(data.list.sourceQuantity));
+  const [itemDrafts, setItemDrafts] = useState<Record<number, string>>({});
+  const [craftDrafts, setCraftDrafts] = useState<Record<number, string>>({});
   const inviteBase =
     typeof window === "undefined" ? "" : window.location.origin;
   const itemIds = useMemo(
@@ -169,7 +179,9 @@ function ShoppingListDetailPage() {
         const override = overrideMap.get(itemRow.itemId);
         const market = priceMap.get(itemRow.itemId);
         const unitPrice =
-          override ?? Number.parseFloat(market?.avg24h ?? market?.avg7d ?? "0");
+          override != null
+            ? coerceFiniteNumber(override)
+            : coerceFiniteNumber(market?.avg24h ?? market?.avg7d);
         return sum + remainingQuantity * unitPrice;
       }, 0),
     [data.items, overrideMap, priceMap],
@@ -186,20 +198,22 @@ function ShoppingListDetailPage() {
           0,
           right.requiredQuantity - right.obtainedQuantity,
         );
+        const leftOverride = overrideMap.get(left.itemId);
+        const rightOverride = overrideMap.get(right.itemId);
         const leftUnitPrice =
-          overrideMap.get(left.itemId) ??
-          Number.parseFloat(
-            priceMap.get(left.itemId)?.avg24h ??
-              priceMap.get(left.itemId)?.avg7d ??
-              "0",
-          );
+          leftOverride != null
+            ? coerceFiniteNumber(leftOverride)
+            : coerceFiniteNumber(
+                priceMap.get(left.itemId)?.avg24h ??
+                  priceMap.get(left.itemId)?.avg7d,
+              );
         const rightUnitPrice =
-          overrideMap.get(right.itemId) ??
-          Number.parseFloat(
-            priceMap.get(right.itemId)?.avg24h ??
-              priceMap.get(right.itemId)?.avg7d ??
-              "0",
-          );
+          rightOverride != null
+            ? coerceFiniteNumber(rightOverride)
+            : coerceFiniteNumber(
+                priceMap.get(right.itemId)?.avg24h ??
+                  priceMap.get(right.itemId)?.avg7d,
+              );
         const costDelta =
           rightRemaining * rightUnitPrice - leftRemaining * leftUnitPrice;
         return costDelta !== 0
@@ -208,6 +222,65 @@ function ShoppingListDetailPage() {
       }),
     [data.items, overrideMap, priceMap],
   );
+
+  useEffect(() => {
+    setName(data.list.name);
+    setQuantity(String(data.list.sourceQuantity));
+  }, [data.list.name, data.list.sourceQuantity]);
+
+  const commitItemProgress = (itemId: number, requiredQuantity: number) => {
+    const raw = itemDrafts[itemId];
+    if (raw === undefined) return;
+    const parsed = Number(raw);
+    const obtainedQuantity = Math.min(
+      requiredQuantity,
+      Math.max(0, Number.isFinite(parsed) ? parsed : 0),
+    );
+    const current = data.items.find((item) => item.itemId === itemId);
+    setItemDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[itemId];
+      return next;
+    });
+    if (!current || current.obtainedQuantity === obtainedQuantity) return;
+    updateItemProgress.mutate({ listId, itemId, obtainedQuantity });
+  };
+
+  const resetItemDraft = (itemId: number) => {
+    setItemDrafts((drafts) => {
+      if (!(itemId in drafts)) return drafts;
+      const next = { ...drafts };
+      delete next[itemId];
+      return next;
+    });
+  };
+
+  const commitCraftProgress = (craftId: number, requiredCount: number) => {
+    const raw = craftDrafts[craftId];
+    if (raw === undefined) return;
+    const parsed = Number(raw);
+    const completedCount = Math.min(
+      requiredCount,
+      Math.max(0, Number.isFinite(parsed) ? parsed : 0),
+    );
+    const current = data.crafts.find((craft) => craft.craftId === craftId);
+    setCraftDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[craftId];
+      return next;
+    });
+    if (!current || current.completedCount === completedCount) return;
+    updateCraftProgress.mutate({ listId, craftId, completedCount });
+  };
+
+  const resetCraftDraft = (craftId: number) => {
+    setCraftDrafts((drafts) => {
+      if (!(craftId in drafts)) return drafts;
+      const next = { ...drafts };
+      delete next[craftId];
+      return next;
+    });
+  };
 
   return (
     <main className="container py-16">
@@ -388,17 +461,31 @@ function ShoppingListDetailPage() {
                     max={String(itemRow.requiredQuantity)}
                     disabled={!data.canWrite}
                     className="w-28"
-                    value={String(itemRow.obtainedQuantity)}
-                    onChange={(event) =>
-                      updateItemProgress.mutate({
-                        listId,
-                        itemId: itemRow.itemId,
-                        obtainedQuantity: Math.max(
-                          0,
-                          Number(event.target.value) || 0,
-                        ),
-                      })
+                    value={
+                      itemDrafts[itemRow.itemId] ??
+                      String(itemRow.obtainedQuantity)
                     }
+                    onChange={(event) =>
+                      setItemDrafts((drafts) => ({
+                        ...drafts,
+                        [itemRow.itemId]: event.target.value,
+                      }))
+                    }
+                    onBlur={() =>
+                      commitItemProgress(
+                        itemRow.itemId,
+                        itemRow.requiredQuantity,
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      }
+                      if (event.key === "Escape") {
+                        resetItemDraft(itemRow.itemId);
+                        event.currentTarget.blur();
+                      }
+                    }}
                   />
                 </div>
               ))}
@@ -428,17 +515,31 @@ function ShoppingListDetailPage() {
                       max={String(craftRow.requiredCount)}
                       disabled={!data.canWrite}
                       className="w-28"
-                      value={String(craftRow.completedCount)}
-                      onChange={(event) =>
-                        updateCraftProgress.mutate({
-                          listId,
-                          craftId: craftRow.craftId,
-                          completedCount: Math.max(
-                            0,
-                            Number(event.target.value) || 0,
-                          ),
-                        })
+                      value={
+                        craftDrafts[craftRow.craftId] ??
+                        String(craftRow.completedCount)
                       }
+                      onChange={(event) =>
+                        setCraftDrafts((drafts) => ({
+                          ...drafts,
+                          [craftRow.craftId]: event.target.value,
+                        }))
+                      }
+                      onBlur={() =>
+                        commitCraftProgress(
+                          craftRow.craftId,
+                          craftRow.requiredCount,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                        if (event.key === "Escape") {
+                          resetCraftDraft(craftRow.craftId);
+                          event.currentTarget.blur();
+                        }
+                      }}
                     />
                   </div>
                 ))}
@@ -584,7 +685,9 @@ function ItemCost({
   const override = overrideMap.get(itemId);
   const market = priceMap.get(itemId);
   const unitPrice =
-    override ?? Number.parseFloat(market?.avg24h ?? market?.avg7d ?? "0");
+    override != null
+      ? coerceFiniteNumber(override)
+      : coerceFiniteNumber(market?.avg24h ?? market?.avg7d);
 
   if (unitPrice <= 0) {
     return (
