@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 
 import type { db } from "@acme/db/client";
-import { asc, eq, getTableColumns, inArray } from "@acme/db";
+import type { shoppingLists } from "@acme/db/schema";
+import { eq, getTableColumns, inArray } from "@acme/db";
 import {
   craftMaterials,
   craftProducts,
@@ -9,7 +10,6 @@ import {
   items,
   shoppingListCrafts,
   shoppingListItems,
-  shoppingLists,
 } from "@acme/db/schema";
 
 const MAX_DEPTH = 4;
@@ -39,12 +39,18 @@ interface CraftEntry {
 }
 
 type SubcraftMap = Record<number, CraftEntry[]>;
-type SnapshotItemRow = { item: ItemRow; requiredQuantity: number };
-type SnapshotCraftRow = { craft: CraftRow; requiredCount: number };
-type Snapshot = {
+interface SnapshotItemRow {
+  item: ItemRow;
+  requiredQuantity: number;
+}
+interface SnapshotCraftRow {
+  craft: CraftRow;
+  requiredCount: number;
+}
+interface Snapshot {
   items: SnapshotItemRow[];
   crafts: SnapshotCraftRow[];
-};
+}
 interface CraftBlueprint {
   craft: CraftRow;
   item: ItemRow | null;
@@ -197,7 +203,7 @@ async function fetchCraftBlueprintMap(
           craft,
           item:
             craft.primaryProductId != null
-              ? itemById.get(craft.primaryProductId) ?? null
+              ? (itemById.get(craft.primaryProductId) ?? null)
               : null,
           materials: materialsByCraftId.get(craftId) ?? [],
           products: productsByCraftId.get(craftId) ?? [],
@@ -535,34 +541,34 @@ export async function getComputedUsage(
   craftRows
     .filter((row) => row.stockCount > 0)
     .forEach((row) => {
-        const blueprint = blueprintMap.get(row.craftId);
-        if (!blueprint) return;
-        const snapshot = buildSnapshot(
-          {
-            craft: blueprint.craft,
-            materials: blueprint.materials,
-            products: blueprint.products,
-          },
-          craftModeSet,
-          blueprint.subcraftsByItemId,
-          row.stockCount,
+      const blueprint = blueprintMap.get(row.craftId);
+      if (!blueprint) return;
+      const snapshot = buildSnapshot(
+        {
+          craft: blueprint.craft,
+          materials: blueprint.materials,
+          products: blueprint.products,
+        },
+        craftModeSet,
+        blueprint.subcraftsByItemId,
+        row.stockCount,
+      );
+
+      for (const item of snapshot.items) {
+        itemUsed.set(
+          item.item.id,
+          (itemUsed.get(item.item.id) ?? 0) + item.requiredQuantity,
         );
+      }
 
-        for (const item of snapshot.items) {
-          itemUsed.set(
-            item.item.id,
-            (itemUsed.get(item.item.id) ?? 0) + item.requiredQuantity,
-          );
-        }
-
-        for (const craft of snapshot.crafts) {
-          if (craft.craft.id === row.craftId) continue;
-          craftUsed.set(
-            craft.craft.id,
-            (craftUsed.get(craft.craft.id) ?? 0) + craft.requiredCount,
-          );
-        }
-      });
+      for (const craft of snapshot.crafts) {
+        if (craft.craft.id === row.craftId) continue;
+        craftUsed.set(
+          craft.craft.id,
+          (craftUsed.get(craft.craft.id) ?? 0) + craft.requiredCount,
+        );
+      }
+    });
 
   return {
     items: new Map(

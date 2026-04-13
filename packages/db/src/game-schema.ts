@@ -53,14 +53,18 @@ export const items = pgTable("items", (t) => ({
   overIcon: t.text(),
 }));
 
-export const crafts = pgTable("crafts", (t) => ({
-  id: t.integer().primaryKey(),
-  name: t.text().notNull(),
-  labor: t.integer().notNull().default(0),
-  castDelayMs: t.integer().notNull().default(0),
-  primaryProductId: t.integer().references(() => items.id),
-  proficiency: proficiencyEnum(),
-}), (table) => [index("idx_crafts_primary_product").on(table.primaryProductId)]);
+export const crafts = pgTable(
+  "crafts",
+  (t) => ({
+    id: t.integer().primaryKey(),
+    name: t.text().notNull(),
+    labor: t.integer().notNull().default(0),
+    castDelayMs: t.integer().notNull().default(0),
+    primaryProductId: t.integer().references(() => items.id),
+    proficiency: proficiencyEnum(),
+  }),
+  (table) => [index("idx_crafts_primary_product").on(table.primaryProductId)],
+);
 
 export const craftMaterials = pgTable(
   "craft_materials",

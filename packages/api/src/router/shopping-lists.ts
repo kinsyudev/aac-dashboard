@@ -17,14 +17,14 @@ import {
   user,
 } from "@acme/db/schema";
 
-import { protectedProcedure, publicProcedure } from "../trpc";
+import type { DbTx } from "../lib/shopping-list-state";
 import {
   fetchCraftBlueprint,
-  getExistingProgress,
   getComputedUsage,
+  getExistingProgress,
   regenerateListState,
-  type DbTx,
 } from "../lib/shopping-list-state";
+import { protectedProcedure, publicProcedure } from "../trpc";
 
 async function getListAccess(
   dbClient: typeof db | DbTx,

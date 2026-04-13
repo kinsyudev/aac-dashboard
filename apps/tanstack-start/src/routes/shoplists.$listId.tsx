@@ -1,4 +1,5 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -209,10 +210,7 @@ function ShoppingListDetailPage() {
               craft.craftId === craftId
                 ? {
                     ...craft,
-                    stockCount: Math.min(
-                      craft.totalCount,
-                      completedCount,
-                    ),
+                    stockCount: Math.min(craft.totalCount, completedCount),
                     remainingCount: Math.max(
                       0,
                       craft.totalCount -
@@ -236,7 +234,7 @@ function ShoppingListDetailPage() {
     }),
   );
   const pendingCraftId = updateCraftProgress.isPending
-    ? updateCraftProgress.variables?.craftId
+    ? updateCraftProgress.variables.craftId
     : null;
 
   const createInvite = useMutation(
