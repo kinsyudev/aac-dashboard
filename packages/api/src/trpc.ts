@@ -16,7 +16,12 @@ import { eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import { account } from "@acme/db/schema";
 
-const allowedDiscordIds = authEnv().AUTH_ALLOWED_DISCORD_IDS;
+const allowedDiscordIds = new Set(
+  authEnv()
+    .AUTH_ALLOWED_DISCORD_IDS.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 
 // In-memory cache of internal user IDs whose Discord account is in the allowlist.
 // Populated on startup and refreshed every 60 seconds.
