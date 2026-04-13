@@ -113,7 +113,9 @@ export const craftsRouter = {
               .innerJoin(items, eq(items.id, craftMaterials.itemId))
               .where(inArray(crafts.primaryProductId, materialItemIds))
               .then((rows) =>
-                rows.filter((entry) => !hasUnsupportedCraftName(entry.craft.name)),
+                rows.filter(
+                  (entry) => !hasUnsupportedCraftName(entry.craft.name),
+                ),
               )
           : [];
 

@@ -11,8 +11,8 @@ import {
 } from "@acme/db/schema";
 
 import type { CraftWithMaterialsAndProducts } from "./crafts";
-import { hasUnsupportedCraftName } from "./crafts";
 import { protectedProcedure } from "../trpc";
+import { hasUnsupportedCraftName } from "./crafts";
 
 export const itemsRouter = {
   all: protectedProcedure.query(({ ctx }) => {
@@ -235,7 +235,9 @@ export const itemsRouter = {
               .where(inArray(crafts.primaryProductId, relatedItemIds))
               .orderBy(crafts.primaryProductId)
               .then((rows) =>
-                rows.filter((entry) => !hasUnsupportedCraftName(entry.craftName)),
+                rows.filter(
+                  (entry) => !hasUnsupportedCraftName(entry.craftName),
+                ),
               )
           : [],
       ]);

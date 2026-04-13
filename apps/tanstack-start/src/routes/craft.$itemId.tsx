@@ -139,9 +139,7 @@ function CraftRecipe({
               <span className="text-muted-foreground mr-1 text-xs font-normal">
                 materials
               </span>
-              <span className="text-primary">
-                {formatGold(total)}
-              </span>
+              <span className="text-primary">{formatGold(total)}</span>
             </p>
           )}
           {depth === 0 && (
