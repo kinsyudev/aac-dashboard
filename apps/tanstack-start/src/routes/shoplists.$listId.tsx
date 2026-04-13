@@ -24,6 +24,8 @@ export const Route = createFileRoute("/shoplists/$listId")({
   component: ShoppingListDetailPage,
 });
 
+const COIN_ITEM_ID = 500;
+
 function coerceFiniteNumber(value: number | string | null | undefined) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -32,14 +34,37 @@ function coerceFiniteNumber(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isCoinItem(item: { itemId: number; item: { name: string } }) {
+  return item.itemId === COIN_ITEM_ID || item.item.name === "Coin";
+}
+
+function formatCoinValue(value: number) {
+  const copper = Math.max(0, Math.round(value));
+  const gold = Math.floor(copper / 10000);
+  const silver = Math.floor((copper % 10000) / 100);
+  const remainingCopper = copper % 100;
+
+  return `${gold.toLocaleString()}g ${silver}s ${remainingCopper}c`;
+}
+
+function formatGoldInput(value: number) {
+  const goldValue = Math.max(0, value) / 10000;
+  return goldValue.toFixed(4).replace(/\.?0+$/, "");
+}
+
+function parseGoldInput(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.round(parsed * 10000));
+}
+
 function ShoppingListDetailPage() {
   const { listId } = Route.useParams();
   const trpc = useTRPC();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data } = useSuspenseQuery(
-    trpc.shoppingLists.getById.queryOptions(listId),
-  );
+  const listQueryOptions = trpc.shoppingLists.getById.queryOptions(listId);
+  const { data } = useSuspenseQuery(listQueryOptions);
   const { overrideMap } = useUserData();
 
   const [name, setName] = useState(data.list.name);
@@ -74,10 +99,18 @@ function ShoppingListDetailPage() {
     () => new Map(prices.map((price) => [price.itemId, price])),
     [prices],
   );
+  const coinRow = useMemo(
+    () => data.items.find((item) => isCoinItem(item)) ?? null,
+    [data.items],
+  );
+  const materialItems = useMemo(
+    () => data.items.filter((item) => !isCoinItem(item)),
+    [data.items],
+  );
 
   const invalidate = async () => {
     await Promise.all([
-      queryClient.invalidateQueries(trpc.shoppingLists.getById.pathFilter()),
+      queryClient.invalidateQueries(listQueryOptions),
       queryClient.invalidateQueries(
         trpc.shoppingLists.listMineAndShared.pathFilter(),
       ),
@@ -96,15 +129,69 @@ function ShoppingListDetailPage() {
 
   const updateItemProgress = useMutation(
     trpc.shoppingLists.updateItemProgress.mutationOptions({
-      onSuccess: invalidate,
-      onError: () => toast.error("Failed to update item progress."),
+      onMutate: async ({ itemId, obtainedQuantity }) => {
+        await queryClient.cancelQueries(listQueryOptions);
+        const previous = queryClient.getQueryData(listQueryOptions.queryKey);
+        queryClient.setQueryData(listQueryOptions.queryKey, (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            items: old.items.map((item) =>
+              item.itemId === itemId
+                ? {
+                    ...item,
+                    obtainedQuantity: Math.min(
+                      item.requiredQuantity,
+                      obtainedQuantity,
+                    ),
+                  }
+                : item,
+            ),
+          };
+        });
+        return { previous };
+      },
+      onError: (_error, _variables, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(listQueryOptions.queryKey, context.previous);
+        }
+        toast.error("Failed to update item progress.");
+      },
+      onSettled: invalidate,
     }),
   );
 
   const updateCraftProgress = useMutation(
     trpc.shoppingLists.updateCraftProgress.mutationOptions({
-      onSuccess: invalidate,
-      onError: () => toast.error("Failed to update craft progress."),
+      onMutate: async ({ craftId, completedCount }) => {
+        await queryClient.cancelQueries(listQueryOptions);
+        const previous = queryClient.getQueryData(listQueryOptions.queryKey);
+        queryClient.setQueryData(listQueryOptions.queryKey, (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            crafts: old.crafts.map((craft) =>
+              craft.craftId === craftId
+                ? {
+                    ...craft,
+                    completedCount: Math.min(
+                      craft.requiredCount,
+                      completedCount,
+                    ),
+                  }
+                : craft,
+            ),
+          };
+        });
+        return { previous };
+      },
+      onError: (_error, _variables, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(listQueryOptions.queryKey, context.previous);
+        }
+        toast.error("Failed to update craft progress.");
+      },
+      onSettled: invalidate,
     }),
   );
 
@@ -175,11 +262,11 @@ function ShoppingListDetailPage() {
   };
 
   const completion = useMemo(() => {
-    const requiredItems = data.items.reduce(
+    const requiredItems = materialItems.reduce(
       (sum, item) => sum + item.requiredQuantity,
       0,
     );
-    const obtainedItems = data.items.reduce(
+    const obtainedItems = materialItems.reduce(
       (sum, item) => sum + item.obtainedQuantity,
       0,
     );
@@ -192,6 +279,10 @@ function ShoppingListDetailPage() {
       0,
     );
     return {
+      obtainedItems,
+      requiredItems,
+      completedCrafts,
+      requiredCrafts,
       itemPct:
         requiredItems === 0
           ? 0
@@ -201,11 +292,22 @@ function ShoppingListDetailPage() {
           ? 0
           : Math.round((completedCrafts / requiredCrafts) * 100),
     };
-  }, [data.crafts, data.items]);
+  }, [data.crafts, materialItems]);
+
+  const coinCompletion = useMemo(() => {
+    if (!coinRow) return null;
+    const required = coinRow.requiredQuantity;
+    const obtained = coinRow.obtainedQuantity;
+    return {
+      required,
+      obtained,
+      percent: required === 0 ? 0 : Math.round((obtained / required) * 100),
+    };
+  }, [coinRow]);
 
   const outstandingBuyCost = useMemo(
     () =>
-      data.items.reduce((sum, itemRow) => {
+      materialItems.reduce((sum, itemRow) => {
         const remainingQuantity = Math.max(
           0,
           itemRow.requiredQuantity - itemRow.obtainedQuantity,
@@ -218,12 +320,12 @@ function ShoppingListDetailPage() {
             : coerceFiniteNumber(market?.avg24h ?? market?.avg7d);
         return sum + remainingQuantity * unitPrice;
       }, 0),
-    [data.items, overrideMap, priceMap],
+    [materialItems, overrideMap, priceMap],
   );
 
   const sortedItems = useMemo(
     () =>
-      [...data.items].sort((left, right) => {
+      [...materialItems].sort((left, right) => {
         const leftRemaining = Math.max(
           0,
           left.requiredQuantity - left.obtainedQuantity,
@@ -254,18 +356,20 @@ function ShoppingListDetailPage() {
           ? costDelta
           : left.item.name.localeCompare(right.item.name);
       }),
-    [data.items, overrideMap, priceMap],
+    [materialItems, overrideMap, priceMap],
   );
 
   const commitItemProgress = (itemId: number, requiredQuantity: number) => {
     const raw = itemDrafts[itemId];
     if (raw === undefined) return;
-    const parsed = Number(raw);
+    const item = data.items.find((entry) => entry.itemId === itemId);
+    const parsed =
+      item && isCoinItem(item) ? parseGoldInput(raw) : Number(raw);
     const obtainedQuantity = Math.min(
       requiredQuantity,
       Math.max(0, Number.isFinite(parsed) ? parsed : 0),
     );
-    const current = data.items.find((item) => item.itemId === itemId);
+    const current = item;
     setItemDrafts((drafts) => {
       const next = { ...drafts };
       delete next[itemId];
@@ -436,14 +540,75 @@ function ShoppingListDetailPage() {
               <ProgressMeter
                 label="Items obtained"
                 percent={completion.itemPct}
+                summary={`${completion.obtainedItems.toLocaleString()} / ${completion.requiredItems.toLocaleString()}`}
               />
               <ProgressMeter
                 label="Crafts completed"
                 percent={completion.craftPct}
+                summary={`${completion.completedCrafts.toLocaleString()} / ${completion.requiredCrafts.toLocaleString()}`}
               />
               <p className="text-muted-foreground text-sm">
                 Invited writers can update both counters.
               </p>
+              {coinRow ? (
+                <div className="rounded-lg border px-4 py-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <ProgressMeter
+                        label="Coins"
+                        percent={coinCompletion?.percent ?? 0}
+                        summary={`${formatCoinValue(
+                          coinCompletion?.obtained ?? 0,
+                        )} / ${formatCoinValue(
+                          coinCompletion?.required ?? 0,
+                        )}`}
+                      />
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={formatGoldInput(coinRow.requiredQuantity)}
+                      step="0.0001"
+                      disabled={!data.canWrite}
+                      className="w-32"
+                      value={
+                        itemDrafts[coinRow.itemId] ??
+                        formatGoldInput(coinRow.obtainedQuantity)
+                      }
+                      onChange={(event) =>
+                        setItemDrafts((drafts) => ({
+                          ...drafts,
+                          [coinRow.itemId]: event.target.value,
+                        }))
+                      }
+                      onBlur={() =>
+                        commitItemProgress(
+                          coinRow.itemId,
+                          coinRow.requiredQuantity,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                        if (event.key === "Escape") {
+                          resetItemDraft(coinRow.itemId);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    Remaining{" "}
+                    {formatCoinValue(
+                      coinRow.requiredQuantity - coinRow.obtainedQuantity,
+                    )}
+                  </p>
+                  <p className="text-muted-foreground mt-3 text-xs">
+                    Input is in gold. `1` = `1g`, `0.01` = `1s`, `0.0001` = `1c`.
+                  </p>
+                </div>
+              ) : null}
               <div className="rounded-lg border px-4 py-3">
                 <p className="text-muted-foreground text-xs tracking-wide uppercase">
                   Buy remaining
@@ -749,11 +914,24 @@ function ItemCost({
   );
 }
 
-function ProgressMeter({ label, percent }: { label: string; percent: number }) {
+function ProgressMeter({
+  label,
+  percent,
+  summary,
+}: {
+  label: string;
+  percent: number;
+  summary?: string;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-sm">
-        <span>{label}</span>
+        <div className="flex flex-col">
+          <span>{label}</span>
+          {summary ? (
+            <span className="text-muted-foreground text-xs">{summary}</span>
+          ) : null}
+        </div>
         <span className="font-medium">{percent}%</span>
       </div>
       <div className="bg-muted h-2 rounded-full">
