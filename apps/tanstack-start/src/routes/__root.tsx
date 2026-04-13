@@ -27,6 +27,7 @@ const APP_DESCRIPTION =
   "ArcheAge Classic crafting, simulation, shared shopping lists, and profile tools.";
 const NAV_ITEMS = [
   { to: "/craft", label: "Craft" },
+  { to: "/item", label: "Items" },
   { to: "/simulator", label: "Simulator" },
   { to: "/shoplists", label: "Shopping Lists" },
   { to: "/profile", label: "Profile" },

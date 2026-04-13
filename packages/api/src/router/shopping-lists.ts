@@ -1122,6 +1122,22 @@ export const shoppingListsRouter = {
         );
     }),
 
+  delete: protectedProcedure
+    .input(z.object({ listId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.isOwner) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      await ctx.db
+        .delete(shoppingLists)
+        .where(eq(shoppingLists.id, input.listId));
+    }),
+
   getInvitePreview: publicProcedure
     .input(z.string())
     .query(async ({ ctx, input }) => {

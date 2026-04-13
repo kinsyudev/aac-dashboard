@@ -1,5 +1,4 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import type React from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -7,6 +6,7 @@ import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
 
+import { ItemDescription } from "~/component/item-description";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
@@ -44,51 +44,6 @@ function RouteComponent() {
         <ItemDetail itemId={itemId} />
       </Suspense>
     </main>
-  );
-}
-
-function ItemDescription({ text }: { text: string }) {
-  const lines = text
-    .replace(/\|ni;/g, "")
-    .replace(/\|nd;/g, "")
-    .replace(/\|r/g, "\n")
-    .split("\n")
-    .map((l) => l.trim());
-
-  const elements: React.ReactNode[] = [];
-  let listBuffer: string[] = [];
-
-  const flushList = (key: number) => {
-    if (listBuffer.length > 0) {
-      elements.push(
-        <ul key={key} className="list-disc pl-4">
-          {listBuffer.map((item, i) => (
-            <li key={i}>{item}</li>
-          ))}
-        </ul>,
-      );
-      listBuffer = [];
-    }
-  };
-
-  lines.forEach((line, i) => {
-    if (!line) {
-      flushList(i);
-      return;
-    }
-    if (line.startsWith("- ")) {
-      listBuffer.push(line.slice(2));
-    } else {
-      flushList(i);
-      elements.push(<p key={i}>{line}</p>);
-    }
-  });
-  flushList(lines.length);
-
-  return (
-    <div className="text-muted-foreground flex flex-col gap-1 text-sm">
-      {elements}
-    </div>
   );
 }
 
@@ -376,7 +331,16 @@ function ItemDetail({ itemId }: { itemId: number }) {
       <div className="flex items-center gap-4">
         {item.icon && <ItemIcon icon={item.icon} name={item.name} size="lg" />}
         <div>
-          <h1 className="text-3xl font-bold">{item.name}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">{item.name}</h1>
+            <Link
+              to="/item/$itemId"
+              params={{ itemId: item.id }}
+              className="text-muted-foreground text-sm hover:underline"
+            >
+              View item page
+            </Link>
+          </div>
           <p className="text-muted-foreground text-sm">{item.category}</p>
         </div>
       </div>

@@ -1,6 +1,5 @@
 import { useState } from "react";
 
-const STORAGE_KEY = "craft:recent-searches";
 const MAX_RECENT = 10;
 
 export interface RecentItem {
@@ -10,25 +9,27 @@ export interface RecentItem {
   labor: number | null;
 }
 
-function readStorage(): RecentItem[] {
+function readStorage(storageKey: string): RecentItem[] {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(storageKey);
     return stored ? (JSON.parse(stored) as RecentItem[]) : [];
   } catch {
     return [];
   }
 }
 
-function writeStorage(items: RecentItem[]) {
+function writeStorage(storageKey: string, items: RecentItem[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    localStorage.setItem(storageKey, JSON.stringify(items));
   } catch {
     // ignore
   }
 }
 
-export function useRecentSearches() {
-  const [recents, setRecents] = useState<RecentItem[]>(readStorage);
+export function useRecentSearches(storageKey = "craft:recent-searches") {
+  const [recents, setRecents] = useState<RecentItem[]>(() =>
+    readStorage(storageKey),
+  );
 
   const add = (item: RecentItem) => {
     setRecents((prev) => {
@@ -36,7 +37,7 @@ export function useRecentSearches() {
         0,
         MAX_RECENT,
       );
-      writeStorage(next);
+      writeStorage(storageKey, next);
       return next;
     });
   };
@@ -44,7 +45,7 @@ export function useRecentSearches() {
   const remove = (id: number) => {
     setRecents((prev) => {
       const next = prev.filter((i) => i.id !== id);
-      writeStorage(next);
+      writeStorage(storageKey, next);
       return next;
     });
   };

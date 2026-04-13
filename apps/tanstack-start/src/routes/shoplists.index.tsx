@@ -71,6 +71,28 @@ function ShoplistsContent() {
     }),
   );
 
+  const deleteList = useMutation(
+    trpc.shoppingLists.delete.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.shoppingLists.listMineAndShared.pathFilter(),
+        );
+        toast.success("Shopping list deleted.");
+      },
+      onError: () => toast.error("Failed to delete shopping list."),
+    }),
+  );
+
+  const handleDelete = (listId: string, name: string) => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Delete "${name}"? This cannot be undone.`,
+      );
+      if (!confirmed) return;
+    }
+    deleteList.mutate({ listId });
+  };
+
   return (
     <div className="flex flex-col gap-10">
       <div className="flex items-end justify-between gap-4">
@@ -104,6 +126,7 @@ function ShoplistsContent() {
                 onSnapshotDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "copyState" })
                 }
+                onDelete={() => handleDelete(list.id, list.name)}
               />
             ))}
           </div>
@@ -156,6 +179,7 @@ function ListCard({
   actionLabel,
   onFreshDuplicate,
   onSnapshotDuplicate,
+  onDelete,
 }: {
   list: {
     id: string;
@@ -174,6 +198,7 @@ function ListCard({
   actionLabel: string;
   onFreshDuplicate: () => void;
   onSnapshotDuplicate: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4 rounded-xl border p-5">
@@ -229,6 +254,11 @@ function ListCard({
         <Button size="sm" variant="outline" onClick={onSnapshotDuplicate}>
           Duplicate with progress
         </Button>
+        {onDelete ? (
+          <Button size="sm" variant="destructive" onClick={onDelete}>
+            Delete
+          </Button>
+        ) : null}
       </div>
     </div>
   );

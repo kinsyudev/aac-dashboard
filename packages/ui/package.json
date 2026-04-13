@@ -12,6 +12,8 @@
     "./separator": "./src/separator.tsx",
     "./theme": "./src/theme.tsx",
     "./badge": "./src/badge.tsx",
+    "./card": "./src/card.tsx",
+    "./chart": "./src/chart.tsx",
     "./toast": "./src/toast.tsx"
   },
   "license": "MIT",
@@ -25,7 +27,9 @@
   "dependencies": {
     "@radix-ui/react-icons": "^1.3.2",
     "class-variance-authority": "^0.7.1",
+    "lucide-react": "^1.8.0",
     "radix-ui": "^1.4.3",
+    "recharts": "3.8.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1"
   },

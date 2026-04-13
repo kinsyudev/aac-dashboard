@@ -1,3 +1,4 @@
+import { sql } from "@acme/db";
 import { db } from "@acme/db/client";
 import { prices } from "@acme/db/schema";
 
@@ -13,6 +14,12 @@ interface PriceRow {
   vol7d: string | null;
   avg30d: string | null;
   vol30d: string | null;
+}
+
+function toDailyTimestamp(value = new Date()) {
+  return new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
+  ).toISOString();
 }
 
 function parseCSVLine(line: string): string[] {
@@ -92,7 +99,7 @@ async function main() {
     return;
   }
 
-  const now = new Date().toISOString();
+  const fetchedAt = toDailyTimestamp();
   const BATCH_SIZE = 500;
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
@@ -109,10 +116,21 @@ async function main() {
           vol7d: r.vol7d,
           avg30d: r.avg30d,
           vol30d: r.vol30d,
-          fetchedAt: now,
+          fetchedAt,
         })),
       )
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [prices.itemId, prices.fetchedAt],
+        set: {
+          itemName: sql`excluded.item_name`,
+          avg24h: sql`excluded.avg_24h`,
+          vol24h: sql`excluded.vol_24h`,
+          avg7d: sql`excluded.avg_7d`,
+          vol7d: sql`excluded.vol_7d`,
+          avg30d: sql`excluded.avg_30d`,
+          vol30d: sql`excluded.vol_30d`,
+        },
+      });
   }
 
   console.log(`Synced ${rows.length} price rows`);

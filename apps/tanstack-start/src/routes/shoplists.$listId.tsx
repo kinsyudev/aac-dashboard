@@ -153,6 +153,27 @@ function ShoppingListDetailPage() {
     }),
   );
 
+  const deleteList = useMutation(
+    trpc.shoppingLists.delete.mutationOptions({
+      onSuccess: async () => {
+        await invalidate();
+        toast.success("Shopping list deleted.");
+        await navigate({ to: "/shoplists" });
+      },
+      onError: () => toast.error("Failed to delete shopping list."),
+    }),
+  );
+
+  const handleDelete = () => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Delete "${data.list.name}"? This cannot be undone.`,
+      );
+      if (!confirmed) return;
+    }
+    deleteList.mutate({ listId });
+  };
+
   const completion = useMemo(() => {
     const requiredItems = data.items.reduce(
       (sum, item) => sum + item.requiredQuantity,
@@ -322,6 +343,16 @@ function ShoppingListDetailPage() {
             >
               Duplicate with progress
             </Button>
+            {data.isOwner ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={deleteList.isPending}
+              >
+                Delete
+              </Button>
+            ) : null}
             <Button asChild size="sm">
               <Link
                 to="/shoplist"
