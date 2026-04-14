@@ -3,9 +3,8 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { Badge } from "@acme/ui/badge";
-import { Input } from "@acme/ui/input";
 
-import { ItemIcon } from "~/component/item-icon";
+import { ItemSearchResultList, SearchPageShell } from "~/component/item-search";
 import { useTRPC } from "~/lib/trpc";
 
 const SEALED_DELPHINAD_PREFIX = "sealed delphinad";
@@ -34,27 +33,22 @@ function SimulatorIndex() {
   const deferred = useDeferredValue(query);
 
   return (
-    <main className="container py-16">
-      <h1 className="mb-2 text-3xl font-bold">Craft Simulator</h1>
-      <p className="text-muted-foreground mb-6 text-sm">
-        Select a sealed item to simulate profitability of the craft chain.
-      </p>
-
-      <Input
-        placeholder="Search items... (e.g. Sealed Delphinad Cuirass)"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="mb-6 max-w-md"
-      />
-
-      {deferred.trim().length >= 2 && (
+    <SearchPageShell
+      title="Craft Simulator"
+      description="Select a sealed item to simulate profitability of the craft chain."
+      query={query}
+      onQueryChange={setQuery}
+      placeholder="Search items... (e.g. Sealed Delphinad Cuirass)"
+      inputClassName="max-w-md"
+    >
+      {deferred.trim().length >= 2 ? (
         <Suspense
           fallback={<p className="text-muted-foreground text-sm">Loading...</p>}
         >
           <SearchResults query={deferred} />
         </Suspense>
-      )}
-    </main>
+      ) : null}
+    </SearchPageShell>
   );
 }
 
@@ -72,30 +66,21 @@ function SearchResults({ query }: { query: string }) {
     });
   }, [allItems, query]);
 
-  if (results.length === 0) {
-    return <p className="text-muted-foreground text-sm">No items found.</p>;
-  }
-
   return (
-    <ul className="flex flex-col divide-y">
-      {results.map((item) => (
-        <li key={item.id}>
-          <Link
-            to="/simulator/$itemId"
-            params={{ itemId: item.id }}
-            className="hover:bg-muted/50 flex items-center gap-3 rounded-md px-2 py-2 transition-colors"
-          >
-            <ItemIcon icon={item.icon} name={item.name} size="md" />
-            <span className="flex-1 font-medium">{item.name}</span>
-            <span className="text-muted-foreground text-xs">
-              {item.category}
-            </span>
-            {item.labor > 0 && (
-              <Badge variant="secondary">{item.labor} labor</Badge>
-            )}
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <ItemSearchResultList
+      items={results}
+      emptyMessage="No items found."
+      getMeta={(item) => item.category}
+      getBadge={(item) =>
+        item.labor > 0 ? (
+          <Badge variant="secondary">{item.labor} labor</Badge>
+        ) : null
+      }
+      renderLink={(item, content) => (
+        <Link to="/simulator/$itemId" params={{ itemId: item.id }}>
+          {content}
+        </Link>
+      )}
+    />
   );
 }

@@ -13,6 +13,14 @@ import { toast } from "@acme/ui/toast";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
+import {
+  CraftModeToggle,
+  RecipeCardShell,
+  RecipeCollapseToggle,
+  RecipeHeader,
+  RecipeItemRow,
+  RecipeLegend,
+} from "~/component/recipe-breakdown";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
@@ -254,6 +262,8 @@ function RecipeTree({
   subcraftMap,
   craftModeSet,
   toggleMode,
+  collapsedCraftIds,
+  toggleCollapsed,
   depth = 0,
 }: {
   entry: RecipeEntry | SubcraftEntry;
@@ -263,9 +273,12 @@ function RecipeTree({
   subcraftMap: SubcraftMap;
   craftModeSet: Set<number>;
   toggleMode: (itemId: number) => void;
+  collapsedCraftIds: Set<number>;
+  toggleCollapsed: (craftId: number) => void;
   depth?: number;
 }) {
   const { craft, materials } = entry;
+  const isCollapsed = collapsedCraftIds.has(craft.id);
 
   const getCraftCostPerUnit = (itemId: number): number => {
     const subEntries = subcraftMap[itemId];
@@ -300,191 +313,151 @@ function RecipeTree({
   );
 
   return (
-    <div
-      className={`rounded-md border ${depth > 0 ? "bg-muted/20 border-dashed" : ""} p-3`}
-    >
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className={`font-semibold ${depth > 0 ? "text-sm" : ""} truncate`}>
-            {craft.name}
-          </p>
-          <ProficiencyBadge proficiency={craft.proficiency} />
-          {craft.labor > 0 && (
-            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {getDiscountedLabor(
-                craft.labor,
-                craft.proficiency,
-                proficiencyMap,
-              )}{" "}
-              labor
-            </span>
-          )}
-        </div>
-        {hasPrices && (
-          <p className="shrink-0 text-sm font-medium tabular-nums">
-            <span className="text-muted-foreground mr-1 text-xs font-normal">
-              materials
-            </span>
-            <span className="text-primary">
-              {total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g
-            </span>
-          </p>
-        )}
-      </div>
+    <RecipeCardShell depth={depth}>
+      <RecipeHeader
+        depth={depth}
+        title={craft.name}
+        proficiency={craft.proficiency}
+        laborLabel={
+          craft.labor > 0
+            ? `${getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap)} labor`
+            : null
+        }
+        materialsLabel={
+          hasPrices
+            ? `${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+            : null
+        }
+        collapseToggle={
+          <RecipeCollapseToggle
+            collapsed={isCollapsed}
+            onToggle={() => toggleCollapsed(craft.id)}
+          />
+        }
+      />
 
-      <ul className="flex flex-col gap-1">
-        {materials.map(({ item, amount }) => {
-          const isCraftable = depth < 4 && !!subcraftMap[item.id];
-          const mode = craftModeSet.has(item.id) ? "craft" : "buy";
-          const customPrice = overrideMap.get(item.id);
-          const price = priceMap.get(item.id);
-          const isCustom = customPrice != null;
-          const buyUnit = isCustom
-            ? customPrice
-            : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-          const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
-          const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
-          const lineTotal = unit * amount;
-          const hasPrice = isCustom || !!price;
-          const totalDiff =
-            isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-          const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
-            : null;
-          const subLabor = subEntry
-            ? getDiscountedLabor(
-                subEntry.craft.labor,
-                subEntry.craft.proficiency,
-                proficiencyMap,
-              )
-            : 0;
+      {!isCollapsed && (
+        <>
+          <ul className="flex flex-col gap-1">
+            {materials.map(({ item, amount }) => {
+              const isCraftable = depth < 4 && !!subcraftMap[item.id];
+              const mode = craftModeSet.has(item.id) ? "craft" : "buy";
+              const customPrice = overrideMap.get(item.id);
+              const price = priceMap.get(item.id);
+              const isCustom = customPrice != null;
+              const buyUnit = isCustom
+                ? customPrice
+                : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+              const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
+              const unit =
+                mode === "craft" && isCraftable ? craftUnit : buyUnit;
+              const lineTotal = unit * amount;
+              const hasPrice = isCustom || !!price;
+              const totalDiff =
+                isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
+              const subEntry = isCraftable
+                ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
+                : null;
+              const subLabor = subEntry
+                ? getDiscountedLabor(
+                    subEntry.craft.labor,
+                    subEntry.craft.proficiency,
+                    proficiencyMap,
+                  )
+                : 0;
 
-          return (
-            <Fragment key={item.id}>
-              <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
-                <ItemIcon icon={item.icon} name={item.name} />
-                <span className="min-w-0 flex-1 truncate">
-                  {item.name}
-                  {amount > 1 && (
-                    <span className="text-muted-foreground ml-1 text-xs">
-                      ×{amount}
-                    </span>
-                  )}
-                </span>
-
-                {isCraftable && (
-                  <span className="inline-flex overflow-hidden rounded-full border text-xs">
-                    <button
-                      onClick={() => toggleMode(item.id)}
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "buy"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      onClick={() => toggleMode(item.id)}
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "craft"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Craft
-                    </button>
-                  </span>
-                )}
-
-                {(hasPrice || mode === "craft") && (
-                  <span className="text-muted-foreground shrink-0 tabular-nums">
-                    {isCustom && mode === "buy" && (
-                      <span className="text-primary mr-1 text-xs">
-                        (custom)
-                      </span>
-                    )}
-                    {mode === "craft" && isCraftable && subLabor > 0 && (
-                      <span className="mr-1 text-xs text-amber-500">
-                        {subLabor}L +
-                      </span>
-                    )}
-                    <span className="text-foreground/70">
-                      {unit.toLocaleString(undefined, {
-                        maximumFractionDigits: 0,
-                      })}
-                      g
-                    </span>
-                    {amount > 1 && (
-                      <span className="text-foreground ml-1.5 font-medium">
-                        ={" "}
-                        {lineTotal.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
-                        g
-                      </span>
-                    )}
-                  </span>
-                )}
-
-                {totalDiff !== null && (
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
-                      totalDiff > 0
-                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                        : totalDiff < 0
-                          ? "bg-red-500/10 text-red-500"
-                          : "text-muted-foreground"
-                    }`}
-                  >
-                    {totalDiff > 0
-                      ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
-                      : totalDiff < 0
-                        ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
-                        : "="}
-                  </span>
-                )}
-              </li>
-
-              {mode === "craft" && isCraftable && subEntry && (
-                <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
-                  <RecipeTree
-                    entry={subEntry}
-                    priceMap={priceMap}
-                    overrideMap={overrideMap}
-                    proficiencyMap={proficiencyMap}
-                    subcraftMap={subcraftMap}
-                    craftModeSet={craftModeSet}
-                    toggleMode={toggleMode}
-                    depth={depth + 1}
+              return (
+                <Fragment key={item.id}>
+                  <RecipeItemRow
+                    icon={<ItemIcon icon={item.icon} name={item.name} />}
+                    name={item.name}
+                    amount={amount}
+                    controls={
+                      isCraftable ? (
+                        <CraftModeToggle
+                          mode={mode}
+                          onBuy={() => toggleMode(item.id)}
+                          onCraft={() => toggleMode(item.id)}
+                        />
+                      ) : null
+                    }
+                    value={
+                      hasPrice || mode === "craft" ? (
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          {isCustom && mode === "buy" ? (
+                            <span className="text-primary mr-1 text-xs">
+                              (custom)
+                            </span>
+                          ) : null}
+                          {mode === "craft" && isCraftable && subLabor > 0 ? (
+                            <span className="mr-1 text-xs text-amber-500">
+                              {subLabor}L +
+                            </span>
+                          ) : null}
+                          <span className="text-foreground/70">
+                            {unit.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })}
+                            g
+                          </span>
+                          {amount > 1 ? (
+                            <span className="text-foreground ml-1.5 font-medium">
+                              ={" "}
+                              {lineTotal.toLocaleString(undefined, {
+                                maximumFractionDigits: 0,
+                              })}
+                              g
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null
+                    }
+                    diff={
+                      totalDiff !== null ? (
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
+                            totalDiff > 0
+                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : totalDiff < 0
+                                ? "bg-red-500/10 text-red-500"
+                                : "text-muted-foreground"
+                          }`}
+                        >
+                          {totalDiff > 0
+                            ? `↓ ${totalDiff.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                            : totalDiff < 0
+                              ? `↑ ${Math.abs(totalDiff).toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+                              : "="}
+                        </span>
+                      ) : null
+                    }
                   />
-                </li>
-              )}
-            </Fragment>
-          );
-        })}
-      </ul>
 
-      {depth === 0 && hasCraftable && (
-        <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-0.5 border-t pt-2 text-xs">
-          <span>
-            <span className="font-medium text-green-600 dark:text-green-400">
-              ↓ Xg
-            </span>{" "}
-            craft saves gold
-          </span>
-          <span>
-            <span className="font-medium text-red-500">↑ Xg</span> craft costs
-            more
-          </span>
-          <span>
-            <span className="font-medium text-amber-500">XL</span> labor to
-            craft
-          </span>
-          <span>toggle Buy / Craft per ingredient</span>
-        </div>
+                  {mode === "craft" && isCraftable && subEntry && (
+                    <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
+                      <RecipeTree
+                        entry={subEntry}
+                        priceMap={priceMap}
+                        overrideMap={overrideMap}
+                        proficiencyMap={proficiencyMap}
+                        subcraftMap={subcraftMap}
+                        craftModeSet={craftModeSet}
+                        toggleMode={toggleMode}
+                        collapsedCraftIds={collapsedCraftIds}
+                        toggleCollapsed={toggleCollapsed}
+                        depth={depth + 1}
+                      />
+                    </li>
+                  )}
+                </Fragment>
+              );
+            })}
+          </ul>
+
+          {depth === 0 && hasCraftable ? <RecipeLegend /> : null}
+        </>
       )}
-    </div>
+    </RecipeCardShell>
   );
 }
 
@@ -558,6 +531,9 @@ function ShoplistDetail({
     () => new Set<number>((sub ?? "").split(",").filter(Boolean).map(Number)),
     [sub],
   );
+  const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
+    () => new Set(),
+  );
 
   const toggleMode = (itemId: number) => {
     const next = new Set(craftModeSet);
@@ -568,6 +544,14 @@ function ShoplistDetail({
       .join(",");
     const newSub = serializedSub === "" ? undefined : serializedSub;
     void navigate({ search: (prev) => ({ ...prev, sub: newSub }) });
+  };
+  const toggleCollapsed = (craftId: number) => {
+    setCollapsedCraftIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(craftId)) next.delete(craftId);
+      else next.add(craftId);
+      return next;
+    });
   };
 
   const commitQty = (value: number) => {
@@ -753,6 +737,8 @@ function ShoplistDetail({
         craftModeSet={craftModeSet}
         proficiencyMap={proficiencyMap}
         toggleMode={toggleMode}
+        collapsedCraftIds={collapsedCraftIds}
+        toggleCollapsed={toggleCollapsed}
         listName={listName}
         setListName={setListName}
         listId={listId}
@@ -869,6 +855,8 @@ function ShoplistDetail({
       craftModeSet={craftModeSet}
       proficiencyMap={proficiencyMap}
       toggleMode={toggleMode}
+      collapsedCraftIds={collapsedCraftIds}
+      toggleCollapsed={toggleCollapsed}
       listName={listName}
       setListName={setListName}
       listId={listId}
@@ -895,6 +883,8 @@ function ShoplistLayout({
   craftModeSet,
   proficiencyMap,
   toggleMode,
+  collapsedCraftIds,
+  toggleCollapsed,
   listName,
   setListName,
   listId,
@@ -917,6 +907,8 @@ function ShoplistLayout({
   craftModeSet: Set<number>;
   proficiencyMap: ProficiencyMap;
   toggleMode: (itemId: number) => void;
+  collapsedCraftIds: Set<number>;
+  toggleCollapsed: (craftId: number) => void;
   listName: string;
   setListName: (value: string) => void;
   listId?: string;
@@ -1013,6 +1005,8 @@ function ShoplistLayout({
             subcraftMap={subcraftMap}
             craftModeSet={craftModeSet}
             toggleMode={toggleMode}
+            collapsedCraftIds={collapsedCraftIds}
+            toggleCollapsed={toggleCollapsed}
           />
         </div>
       ))}

@@ -3,10 +3,13 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { Badge } from "@acme/ui/badge";
-import { Input } from "@acme/ui/input";
 
 import type { RecentItem } from "~/lib/recent-searches";
-import { ItemIcon } from "~/component/item-icon";
+import {
+  ItemSearchResultList,
+  RecentItemList,
+  SearchPageShell,
+} from "~/component/item-search";
 import { useRecentSearches } from "~/lib/recent-searches";
 import { itemsAllQueryOptions } from "~/lib/static-api-client";
 
@@ -33,28 +36,30 @@ function RouteComponent() {
   const { recents, add, remove } = useRecentSearches("item:recent-searches");
 
   return (
-    <main className="container py-16">
-      <h1 className="mb-6 text-3xl font-bold">Items</h1>
-      <div className="flex flex-col gap-4">
-        <Input
-          placeholder="Search all items..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="max-w-sm"
+    <SearchPageShell
+      title="Items"
+      query={query}
+      onQueryChange={setQuery}
+      placeholder="Search all items..."
+    >
+      {deferredQuery.trim() ? (
+        <Suspense
+          fallback={<p className="text-muted-foreground text-sm">Loading...</p>}
+        >
+          <SearchResults query={deferredQuery} onSelect={add} />
+        </Suspense>
+      ) : (
+        <RecentItemList
+          recents={recents}
+          onRemove={remove}
+          renderLink={(item, content) => (
+            <Link to="/item/$itemId" params={{ itemId: item.id }}>
+              {content}
+            </Link>
+          )}
         />
-        {deferredQuery.trim() ? (
-          <Suspense
-            fallback={
-              <p className="text-muted-foreground text-sm">Loading...</p>
-            }
-          >
-            <SearchResults query={deferredQuery} onSelect={add} />
-          </Suspense>
-        ) : (
-          <RecentList recents={recents} onRemove={remove} />
-        )}
-      </div>
-    </main>
+      )}
+    </SearchPageShell>
   );
 }
 
@@ -78,32 +83,30 @@ function SearchResults({
   }
 
   return (
-    <ul className="flex flex-col divide-y">
-      {results.map((item) => (
-        <li key={item.id}>
-          <Link
-            to="/item/$itemId"
-            params={{ itemId: item.id }}
-            onClick={() =>
-              onSelect({
-                id: item.id,
-                name: item.name,
-                icon: item.icon,
-                labor: null,
-              })
-            }
-            className="hover:bg-muted/50 flex items-center gap-3 rounded-md px-2 py-2 transition-colors"
-          >
-            <ItemIcon icon={item.icon} name={item.name} size="md" />
-            <span className="flex-1 font-medium">{item.name}</span>
-            <span className="text-muted-foreground text-xs">
-              {item.category}
-            </span>
-            {item.sellable && <Badge variant="secondary">Sellable</Badge>}
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <ItemSearchResultList
+      items={results}
+      emptyMessage="No items found."
+      getMeta={(item) => item.category}
+      getBadge={(item) =>
+        item.sellable ? <Badge variant="secondary">Sellable</Badge> : null
+      }
+      renderLink={(item, content) => (
+        <Link
+          to="/item/$itemId"
+          params={{ itemId: item.id }}
+          onClick={() =>
+            onSelect({
+              id: item.id,
+              name: item.name,
+              icon: item.icon,
+              labor: null,
+            })
+          }
+        >
+          {content}
+        </Link>
+      )}
+    />
   );
 }
 
@@ -179,47 +182,4 @@ function buildSearchIndex<
       return matches;
     },
   };
-}
-
-function RecentList({
-  recents,
-  onRemove,
-}: {
-  recents: RecentItem[];
-  onRemove: (id: number) => void;
-}) {
-  if (recents.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">No recent searches yet.</p>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
-        Recent
-      </p>
-      <ul className="flex flex-col divide-y">
-        {recents.map((item) => (
-          <li key={item.id} className="flex items-center gap-3">
-            <Link
-              to="/item/$itemId"
-              params={{ itemId: item.id }}
-              className="hover:bg-muted/50 flex flex-1 items-center gap-3 rounded-md px-2 py-2 transition-colors"
-            >
-              <ItemIcon icon={item.icon} name={item.name} size="md" />
-              <span className="flex-1 font-medium">{item.name}</span>
-            </Link>
-            <button
-              onClick={() => onRemove(item.id)}
-              className="text-muted-foreground hover:text-foreground px-2 text-sm transition-colors"
-              aria-label="Remove"
-            >
-              ✕
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
 }

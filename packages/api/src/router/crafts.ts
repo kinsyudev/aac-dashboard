@@ -329,9 +329,10 @@ export const craftsRouter = {
         pendingIds = [...new Set(newIds)];
       }
 
-      // Round 4: latest prices for all BFS material ids
+      // Round 4: latest prices for all BFS material ids plus the crafted item
+      const pricedItemIds = [itemId, ...allMaterialItemIds];
       const latestPrices =
-        allMaterialItemIds.size > 0
+        pricedItemIds.length > 0
           ? await ctx.db
               .selectDistinctOn([prices.itemId], {
                 itemId: prices.itemId,
@@ -339,7 +340,7 @@ export const craftsRouter = {
                 avg7d: prices.avg7d,
               })
               .from(prices)
-              .where(inArray(prices.itemId, [...allMaterialItemIds]))
+              .where(inArray(prices.itemId, pricedItemIds))
               .orderBy(prices.itemId, desc(prices.fetchedAt))
           : [];
 
@@ -486,9 +487,13 @@ export const craftsRouter = {
         pendingIds = [...new Set(newIds)];
       }
 
-      // Round 4: latest prices for all BFS material ids
+      // Round 4: latest prices for all BFS material ids plus the primary item
+      const pricedItemIds = [
+        craft.primaryProductId,
+        ...allMaterialItemIds,
+      ].filter((value): value is number => value != null);
       const latestPrices =
-        allMaterialItemIds.size > 0
+        pricedItemIds.length > 0
           ? await ctx.db
               .selectDistinctOn([prices.itemId], {
                 itemId: prices.itemId,
@@ -496,7 +501,7 @@ export const craftsRouter = {
                 avg7d: prices.avg7d,
               })
               .from(prices)
-              .where(inArray(prices.itemId, [...allMaterialItemIds]))
+              .where(inArray(prices.itemId, pricedItemIds))
               .orderBy(prices.itemId, desc(prices.fetchedAt))
           : [];
 

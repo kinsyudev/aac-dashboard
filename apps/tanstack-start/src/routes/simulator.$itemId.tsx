@@ -10,6 +10,14 @@ import type { ProficiencyMap } from "~/lib/proficiency";
 import type { SimulationResult } from "~/lib/simulator";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
+import {
+  CraftModeToggle,
+  RecipeCardShell,
+  RecipeHeader,
+  RecipeItemRow,
+  RecipeLegend,
+} from "~/component/recipe-breakdown";
+import { StatCard } from "~/component/stat-card";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
@@ -1135,11 +1143,18 @@ function SimulatorCraftBreakdown({
   );
 
   return (
-    <div
-      className={`rounded-md border ${depth > 0 ? "bg-muted/20 border-dashed" : ""} p-3`}
-    >
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
+    <RecipeCardShell depth={depth}>
+      <RecipeHeader
+        depth={depth}
+        title={craft.name}
+        proficiency={craft.proficiency}
+        laborLabel={
+          craft.labor > 0
+            ? `${getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap)} labor`
+            : null
+        }
+        materialsLabel={hasPrices ? formatGold(total) : null}
+        collapseToggle={
           <button
             type="button"
             onClick={() => toggleCollapsed(craft.id)}
@@ -1148,31 +1163,9 @@ function SimulatorCraftBreakdown({
           >
             {isCollapsed ? "▶" : "▼"}
           </button>
-          <p className={`truncate font-semibold ${depth > 0 ? "text-sm" : ""}`}>
-            {craft.name}
-          </p>
-          <ProficiencyBadge proficiency={craft.proficiency} />
-          {craft.labor > 0 && (
-            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {getDiscountedLabor(
-                craft.labor,
-                craft.proficiency,
-                proficiencyMap,
-              )}{" "}
-              labor
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {hasPrices && (
-            <p className="text-sm font-medium tabular-nums">
-              <span className="text-muted-foreground mr-1 text-xs font-normal">
-                materials
-              </span>
-              <span className="text-primary">{formatGold(total)}</span>
-            </p>
-          )}
-          {depth === 0 && (
+        }
+        action={
+          depth === 0 ? (
             <Link
               to="/craft/$itemId"
               params={{ itemId }}
@@ -1180,9 +1173,9 @@ function SimulatorCraftBreakdown({
             >
               Full craft →
             </Link>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
       {!isCollapsed && (
         <>
@@ -1239,93 +1232,73 @@ function SimulatorCraftBreakdown({
 
               return (
                 <Fragment key={item.id}>
-                  <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
-                    <ItemIcon icon={item.icon} name={item.name} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {item.name}
-                      {amount > 1 && (
-                        <span className="text-muted-foreground ml-1 text-xs">
-                          ×{amount}
-                        </span>
-                      )}
-                    </span>
-
-                    {isCraftable && (
-                      <span className="inline-flex overflow-hidden rounded-full border text-xs">
-                        <button
-                          onClick={() =>
+                  <RecipeItemRow
+                    icon={<ItemIcon icon={item.icon} name={item.name} />}
+                    name={item.name}
+                    amount={amount}
+                    controls={
+                      isCraftable ? (
+                        <CraftModeToggle
+                          mode={mode}
+                          onBuy={() =>
                             setModes((prev) => ({ ...prev, [item.id]: "buy" }))
                           }
-                          className={`px-2.5 py-0.5 transition-colors ${
-                            mode === "buy"
-                              ? "bg-primary text-primary-foreground"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                        >
-                          Buy
-                        </button>
-                        <button
-                          onClick={() =>
+                          onCraft={() =>
                             setModes((prev) => ({
                               ...prev,
                               [item.id]: "craft",
                             }))
                           }
-                          className={`px-2.5 py-0.5 transition-colors ${
-                            mode === "craft"
-                              ? "bg-primary text-primary-foreground"
-                              : "text-muted-foreground hover:text-foreground"
+                        />
+                      ) : null
+                    }
+                    value={
+                      hasPrice || mode === "craft" ? (
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          {isCustom && mode === "buy" ? (
+                            <span className="text-primary mr-1 text-xs">
+                              (custom)
+                            </span>
+                          ) : null}
+                          {mode === "craft" && isCraftable && subLabor > 0 ? (
+                            <span className="mr-1 text-xs text-amber-500">
+                              {subLabor.toLocaleString(undefined, {
+                                maximumFractionDigits: 0,
+                              })}
+                              L +
+                            </span>
+                          ) : null}
+                          <span className="text-foreground/70">
+                            {formatGold(unit)}
+                          </span>
+                          {amount > 1 ? (
+                            <span className="text-foreground ml-1.5 font-medium">
+                              = {formatGold(lineTotal)}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null
+                    }
+                    diff={
+                      totalDiff !== null ? (
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
+                            totalDiff > 0
+                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : totalDiff < 0
+                                ? "bg-red-500/10 text-red-500"
+                                : "text-muted-foreground"
                           }`}
                         >
-                          Craft
-                        </button>
-                      </span>
-                    )}
-
-                    {(hasPrice || mode === "craft") && (
-                      <span className="text-muted-foreground shrink-0 tabular-nums">
-                        {isCustom && mode === "buy" && (
-                          <span className="text-primary mr-1 text-xs">
-                            (custom)
-                          </span>
-                        )}
-                        {mode === "craft" && isCraftable && subLabor > 0 && (
-                          <span className="mr-1 text-xs text-amber-500">
-                            {subLabor.toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            })}
-                            L +
-                          </span>
-                        )}
-                        <span className="text-foreground/70">
-                          {formatGold(unit)}
-                        </span>
-                        {amount > 1 && (
-                          <span className="text-foreground ml-1.5 font-medium">
-                            = {formatGold(lineTotal)}
-                          </span>
-                        )}
-                      </span>
-                    )}
-
-                    {totalDiff !== null && (
-                      <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
-                          totalDiff > 0
-                            ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                          {totalDiff > 0
+                            ? `↓ ${formatGold(totalDiff)}`
                             : totalDiff < 0
-                              ? "bg-red-500/10 text-red-500"
-                              : "text-muted-foreground"
-                        }`}
-                      >
-                        {totalDiff > 0
-                          ? `↓ ${formatGold(totalDiff)}`
-                          : totalDiff < 0
-                            ? `↑ ${formatGold(Math.abs(totalDiff))}`
-                            : "="}
-                      </span>
-                    )}
-                  </li>
+                              ? `↑ ${formatGold(Math.abs(totalDiff))}`
+                              : "="}
+                        </span>
+                      ) : null
+                    }
+                  />
 
                   {mode === "craft" && isCraftable && subEntry && (
                     <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
@@ -1349,28 +1322,10 @@ function SimulatorCraftBreakdown({
             })}
           </ul>
 
-          {depth === 0 && hasCraftable && (
-            <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-0.5 border-t pt-2 text-xs">
-              <span>
-                <span className="font-medium text-green-600 dark:text-green-400">
-                  ↓ Xg
-                </span>{" "}
-                craft saves gold
-              </span>
-              <span>
-                <span className="font-medium text-red-500">↑ Xg</span> craft
-                costs more
-              </span>
-              <span>
-                <span className="font-medium text-amber-500">XL</span> labor to
-                craft
-              </span>
-              <span>toggle Buy / Craft per ingredient</span>
-            </div>
-          )}
+          {depth === 0 && hasCraftable ? <RecipeLegend /> : null}
         </>
       )}
-    </div>
+    </RecipeCardShell>
   );
 }
 
@@ -1479,30 +1434,6 @@ function SimulationResults({ result }: { result: SimulationResult }) {
           }
         />
       </div>
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  variant,
-}: {
-  label: string;
-  value: string;
-  variant?: "positive" | "negative" | "neutral";
-}) {
-  const colorClass =
-    variant === "positive"
-      ? "text-green-600 dark:text-green-400"
-      : variant === "negative"
-        ? "text-red-500"
-        : "";
-
-  return (
-    <div className="bg-muted/50 rounded-md border p-3">
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className={`mt-1 font-medium tabular-nums ${colorClass}`}>{value}</p>
     </div>
   );
 }

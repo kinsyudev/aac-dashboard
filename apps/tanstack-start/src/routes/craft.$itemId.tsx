@@ -1,14 +1,25 @@
 import type { inferProcedureOutput } from "@trpc/server";
+import type { Dispatch, SetStateAction } from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
+import { Input } from "@acme/ui/input";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
+import {
+  CraftModeToggle,
+  RecipeCardShell,
+  RecipeCollapseToggle,
+  RecipeHeader,
+  RecipeItemRow,
+  RecipeLegend,
+} from "~/component/recipe-breakdown";
+import { StatCard } from "~/component/stat-card";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
@@ -55,94 +66,263 @@ type SubcraftEntry = PageData["subcraftsByItemId"][number][number];
 type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = Record<number, SubcraftEntry[]>;
+type CraftMode = "buy" | "craft";
+type ModesMap = Record<number, CraftMode>;
 
 function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
 }
 
+function formatSilverPerLabor(value: number): string {
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} s/L`;
+}
+
+function parseFinitePrice(value: string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getMarketPrice(
+  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
+): number {
+  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+}
+
+function getItemPrice(
+  itemId: number,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+): number {
+  return overrideMap.get(itemId) ?? getMarketPrice(priceMap.get(itemId));
+}
+
+function getProducedAmount(
+  entry: CraftEntry | SubcraftEntry,
+  itemId: number,
+): number {
+  return (
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1
+  );
+}
+
+function getPreferredSubcraft(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+): SubcraftEntry | null {
+  const entries = subcraftMap[itemId];
+  return entries?.length ? pickPreferredCraft(entries, itemId) : null;
+}
+
+function getCraftCostPerUnit(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  modes: ModesMap,
+  maxDepth = 4,
+  visited = new Set<number>(),
+): number {
+  if (visited.has(itemId) || maxDepth <= 0) {
+    return getItemPrice(itemId, priceMap, overrideMap);
+  }
+
+  const subEntry = getPreferredSubcraft(itemId, subcraftMap);
+  if (!subEntry) return getItemPrice(itemId, priceMap, overrideMap);
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(itemId);
+
+  const batchCost = subEntry.materials.reduce((sum, { item, amount }) => {
+    const shouldCraft =
+      !!subcraftMap[item.id]?.length && (modes[item.id] ?? "buy") === "craft";
+    const unitCost = shouldCraft
+      ? getCraftCostPerUnit(
+          item.id,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          modes,
+          maxDepth - 1,
+          nextVisited,
+        )
+      : getItemPrice(item.id, priceMap, overrideMap);
+    return sum + unitCost * amount;
+  }, 0);
+
+  return batchCost / getProducedAmount(subEntry, itemId);
+}
+
+function getCraftLaborPerUnit(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  proficiencyMap: ProficiencyMap,
+  modes: ModesMap,
+  maxDepth = 4,
+  visited = new Set<number>(),
+): number {
+  if (visited.has(itemId) || maxDepth <= 0) return 0;
+
+  const subEntry = getPreferredSubcraft(itemId, subcraftMap);
+  if (!subEntry) return 0;
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(itemId);
+
+  let labor = getDiscountedLabor(
+    subEntry.craft.labor,
+    subEntry.craft.proficiency,
+    proficiencyMap,
+  );
+
+  for (const { item, amount } of subEntry.materials) {
+    const shouldCraft =
+      !!subcraftMap[item.id]?.length && (modes[item.id] ?? "buy") === "craft";
+    if (!shouldCraft) continue;
+    labor +=
+      getCraftLaborPerUnit(
+        item.id,
+        subcraftMap,
+        proficiencyMap,
+        modes,
+        maxDepth - 1,
+        nextVisited,
+      ) * amount;
+  }
+
+  return labor / getProducedAmount(subEntry, itemId);
+}
+
+function getVariant(value: number): "positive" | "negative" | "neutral" {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
 function CraftRecipe({
   entry,
+  itemId,
   priceMap,
   overrideMap,
   proficiencyMap,
   subcraftMap = {},
   depth = 0,
+  modes,
+  setModes,
+  collapsedCraftIds,
+  toggleCollapsed,
 }: {
   entry: CraftEntry | SubcraftEntry;
+  itemId: number;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   proficiencyMap: ProficiencyMap;
   subcraftMap?: SubcraftMap;
   depth?: number;
+  modes?: ModesMap;
+  setModes?: Dispatch<SetStateAction<ModesMap>>;
+  collapsedCraftIds?: Set<number>;
+  toggleCollapsed?: (craftId: number) => void;
 }) {
   const { craft, materials } = entry;
-  const [modes, setModes] = useState<Record<number, "buy" | "craft">>({});
+  const [localModes, setLocalModes] = useState<ModesMap>({});
+  const resolvedModes = modes ?? localModes;
+  const updateModes = setModes ?? setLocalModes;
+  const [localSalePrice, setLocalSalePrice] = useState("");
+  const [localCollapsedCraftIds, setLocalCollapsedCraftIds] = useState<
+    Set<number>
+  >(() => new Set());
+  const resolvedCollapsedCraftIds = collapsedCraftIds ?? localCollapsedCraftIds;
+  const updateCollapsed =
+    toggleCollapsed ??
+    ((craftId: number) =>
+      setLocalCollapsedCraftIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(craftId)) next.delete(craftId);
+        else next.add(craftId);
+        return next;
+      }));
+  const isCollapsed = resolvedCollapsedCraftIds.has(craft.id);
 
-  const getMode = (itemId: number): "buy" | "craft" => modes[itemId] ?? "buy";
+  const getMode = (materialItemId: number): CraftMode =>
+    resolvedModes[materialItemId] ?? "buy";
 
-  const getCraftCostPerUnit = (itemId: number): number => {
-    const subEntries = subcraftMap[itemId];
-    if (!subEntries) return 0;
-    const sub = pickPreferredCraft(subEntries, itemId);
-    const batchCost = sub.materials.reduce((sum, { item, amount }) => {
-      const custom = overrideMap.get(item.id);
-      const price = priceMap.get(item.id);
-      const u = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-      return sum + u * amount;
-    }, 0);
-    const produced =
-      sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
-    return batchCost / produced;
-  };
+  const producedAmount = getProducedAmount(entry, itemId);
+  const directLabor = getDiscountedLabor(
+    craft.labor,
+    craft.proficiency,
+    proficiencyMap,
+  );
 
-  const total = materials.reduce((sum, { item, amount }) => {
-    const isCraftable = depth < 4 && !!subcraftMap[item.id];
-    const custom = overrideMap.get(item.id);
-    const price = priceMap.get(item.id);
-    const buyUnit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+  const materialsCost = materials.reduce((sum, { item, amount }) => {
+    const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
     const unit =
       getMode(item.id) === "craft" && isCraftable
-        ? getCraftCostPerUnit(item.id)
-        : buyUnit;
+        ? getCraftCostPerUnit(
+            item.id,
+            subcraftMap,
+            priceMap,
+            overrideMap,
+            resolvedModes,
+            4 - depth,
+          )
+        : getItemPrice(item.id, priceMap, overrideMap);
     return sum + unit * amount;
   }, 0);
 
+  const subcraftLabor = materials.reduce((sum, { item, amount }) => {
+    const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
+    if (getMode(item.id) !== "craft" || !isCraftable) return sum;
+    return (
+      sum +
+      getCraftLaborPerUnit(
+        item.id,
+        subcraftMap,
+        proficiencyMap,
+        resolvedModes,
+        4 - depth,
+      ) *
+        amount
+    );
+  }, 0);
+
+  const totalLaborPerBatch = directLabor + subcraftLabor;
+  const costPerUnit = producedAmount > 0 ? materialsCost / producedAmount : 0;
+  const laborPerUnit =
+    producedAmount > 0 ? totalLaborPerBatch / producedAmount : 0;
+
+  const defaultSalePrice = getItemPrice(itemId, priceMap, overrideMap);
+  const localSaleOverride = parseFinitePrice(localSalePrice);
+  const effectiveSalePrice =
+    localSalePrice.trim() !== "" &&
+    localSaleOverride != null &&
+    localSaleOverride >= 0
+      ? localSaleOverride
+      : defaultSalePrice;
+  const profitPerUnit = effectiveSalePrice - costPerUnit;
+  const silverPerLabor =
+    laborPerUnit > 0 ? (profitPerUnit * 100) / laborPerUnit : null;
+
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
   const hasCraftable = materials.some(
-    ({ item }) => depth < 4 && !!subcraftMap[item.id],
+    ({ item }) => depth < 4 && !!subcraftMap[item.id]?.length,
   );
 
   return (
-    <div
-      className={`rounded-md border ${depth > 0 ? "bg-muted/20 border-dashed" : ""} p-3`}
-    >
-      {/* Header */}
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className={`font-semibold ${depth > 0 ? "text-sm" : ""} truncate`}>
-            {craft.name}
-          </p>
-          {craft.labor > 0 && (
-            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {getDiscountedLabor(
-                craft.labor,
-                craft.proficiency,
-                proficiencyMap,
-              )}{" "}
-              labor
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {hasPrices && (
-            <p className="text-sm font-medium tabular-nums">
-              <span className="text-muted-foreground mr-1 text-xs font-normal">
-                materials
-              </span>
-              <span className="text-primary">{formatGold(total)}</span>
-            </p>
-          )}
-          {depth === 0 && (
+    <RecipeCardShell depth={depth}>
+      <RecipeHeader
+        depth={depth}
+        title={craft.name}
+        laborLabel={craft.labor > 0 ? `${directLabor} labor` : null}
+        materialsLabel={hasPrices ? formatGold(materialsCost) : null}
+        collapseToggle={
+          <RecipeCollapseToggle
+            collapsed={isCollapsed}
+            onToggle={() => updateCollapsed(craft.id)}
+          />
+        }
+        action={
+          depth === 0 ? (
             <Link
               to="/shoplist"
               search={{ craft: craft.id, qty: 1 }}
@@ -150,160 +330,221 @@ function CraftRecipe({
             >
               Shoplist →
             </Link>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
-      {/* Materials */}
-      <ul className="flex flex-col gap-1">
-        {materials.map(({ item, amount }) => {
-          const isCraftable = depth < 4 && !!subcraftMap[item.id];
-          const mode = getMode(item.id);
-          const customPrice = overrideMap.get(item.id);
-          const price = priceMap.get(item.id);
-          const isCustom = customPrice != null;
-          const buyUnit = isCustom
-            ? customPrice
-            : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-          const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
-          const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
-          const lineTotal = unit * amount;
-          const hasPrice = isCustom || !!price;
-          const totalDiff =
-            isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-          const subEntry = isCraftable
-            ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
-            : null;
-          const subLabor = subEntry
-            ? getDiscountedLabor(
-                subEntry.craft.labor,
-                subEntry.craft.proficiency,
-                proficiencyMap,
-              )
-            : 0;
-
-          return (
-            <Fragment key={item.id}>
-              <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
-                <ItemIcon icon={item.icon} name={item.name} />
-                <span className="min-w-0 flex-1 truncate">
-                  {item.name}
-                  {amount > 1 && (
-                    <span className="text-muted-foreground ml-1 text-xs">
-                      ×{amount}
-                    </span>
-                  )}
-                </span>
-
-                {isCraftable && (
-                  <span className="inline-flex overflow-hidden rounded-full border text-xs">
-                    <button
-                      onClick={() =>
-                        setModes((m) => ({ ...m, [item.id]: "buy" }))
-                      }
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "buy"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      onClick={() =>
-                        setModes((m) => ({ ...m, [item.id]: "craft" }))
-                      }
-                      className={`px-2.5 py-0.5 transition-colors ${
-                        mode === "craft"
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Craft
-                    </button>
-                  </span>
-                )}
-
-                {(hasPrice || mode === "craft") && (
-                  <span className="text-muted-foreground shrink-0 tabular-nums">
-                    {isCustom && mode === "buy" && (
-                      <span className="text-primary mr-1 text-xs">
-                        (custom)
-                      </span>
-                    )}
-                    {mode === "craft" && isCraftable && subLabor > 0 && (
-                      <span className="mr-1 text-xs text-amber-500">
-                        {subLabor}L +
-                      </span>
-                    )}
-                    <span className="text-foreground/70">
-                      {formatGold(unit)}
-                    </span>
-                    {amount > 1 && (
-                      <span className="text-foreground ml-1.5 font-medium">
-                        = {formatGold(lineTotal)}
-                      </span>
-                    )}
-                  </span>
-                )}
-
-                {totalDiff !== null && (
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
-                      totalDiff > 0
-                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                        : totalDiff < 0
-                          ? "bg-red-500/10 text-red-500"
-                          : "text-muted-foreground"
-                    }`}
-                  >
-                    {totalDiff > 0
-                      ? `↓ ${formatGold(totalDiff)}`
-                      : totalDiff < 0
-                        ? `↑ ${formatGold(Math.abs(totalDiff))}`
-                        : "="}
-                  </span>
-                )}
-              </li>
-
-              {mode === "craft" && isCraftable && subEntry && (
-                <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
-                  <CraftRecipe
-                    entry={subEntry}
-                    priceMap={priceMap}
-                    overrideMap={overrideMap}
-                    proficiencyMap={proficiencyMap}
-                    subcraftMap={subcraftMap}
-                    depth={depth + 1}
+      {!isCollapsed && (
+        <>
+          {depth === 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-md border p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Sale price</p>
+                  <p className="text-muted-foreground text-xs">
+                    Uses profile override or market price by default. This input
+                    is temporary to this craft card.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={localSalePrice}
+                    onChange={(event) => setLocalSalePrice(event.target.value)}
+                    placeholder={
+                      defaultSalePrice > 0 ? String(defaultSalePrice) : "0"
+                    }
+                    className="w-32 tabular-nums"
+                    aria-label={`${craft.name} sale price`}
                   />
-                </li>
-              )}
-            </Fragment>
-          );
-        })}
-      </ul>
+                  <span className="text-muted-foreground text-sm">g</span>
+                </div>
+              </div>
 
-      {/* Legend — only on top-level cards that have craftable ingredients */}
-      {depth === 0 && hasCraftable && (
-        <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-0.5 border-t pt-2 text-xs">
-          <span>
-            <span className="font-medium text-green-600 dark:text-green-400">
-              ↓ Xg
-            </span>{" "}
-            craft saves gold
-          </span>
-          <span>
-            <span className="font-medium text-red-500">↑ Xg</span> craft costs
-            more
-          </span>
-          <span>
-            <span className="font-medium text-amber-500">XL</span> labor to
-            craft
-          </span>
-          <span>toggle Buy / Craft per ingredient</span>
-        </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatCard
+                  label="Sale price"
+                  value={formatGold(effectiveSalePrice)}
+                />
+                <StatCard label="Cost / unit" value={formatGold(costPerUnit)} />
+                <StatCard
+                  label="Profit / unit"
+                  value={formatGold(profitPerUnit)}
+                  variant={getVariant(profitPerUnit)}
+                />
+                <StatCard
+                  label="Silver / labor"
+                  value={
+                    silverPerLabor == null
+                      ? "—"
+                      : formatSilverPerLabor(silverPerLabor)
+                  }
+                  variant={
+                    silverPerLabor == null
+                      ? "neutral"
+                      : getVariant(silverPerLabor)
+                  }
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatCard
+                  label="Batch cost"
+                  value={formatGold(materialsCost)}
+                />
+                <StatCard
+                  label="Items / batch"
+                  value={producedAmount.toLocaleString()}
+                />
+                <StatCard
+                  label="Labor / batch"
+                  value={totalLaborPerBatch.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}
+                />
+                <StatCard
+                  label="Labor / unit"
+                  value={laborPerUnit.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Materials */}
+          <ul className="flex flex-col gap-1">
+            {materials.map(({ item, amount }) => {
+              const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
+              const mode = getMode(item.id);
+              const customPrice = overrideMap.get(item.id);
+              const isCustom = customPrice != null;
+              const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
+              const craftUnit = isCraftable
+                ? getCraftCostPerUnit(
+                    item.id,
+                    subcraftMap,
+                    priceMap,
+                    overrideMap,
+                    resolvedModes,
+                    4 - depth,
+                  )
+                : 0;
+              const unit =
+                mode === "craft" && isCraftable ? craftUnit : buyUnit;
+              const lineTotal = unit * amount;
+              const hasPrice = isCustom || priceMap.has(item.id);
+              const totalDiff =
+                isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
+              const subEntry = isCraftable
+                ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
+                : null;
+              const subLabor = subEntry
+                ? getCraftLaborPerUnit(
+                    item.id,
+                    subcraftMap,
+                    proficiencyMap,
+                    resolvedModes,
+                    4 - depth,
+                  )
+                : 0;
+
+              return (
+                <Fragment key={item.id}>
+                  <RecipeItemRow
+                    icon={<ItemIcon icon={item.icon} name={item.name} />}
+                    name={item.name}
+                    amount={amount}
+                    controls={
+                      isCraftable ? (
+                        <CraftModeToggle
+                          mode={mode}
+                          onBuy={() =>
+                            updateModes((m) => ({ ...m, [item.id]: "buy" }))
+                          }
+                          onCraft={() =>
+                            updateModes((m) => ({ ...m, [item.id]: "craft" }))
+                          }
+                        />
+                      ) : null
+                    }
+                    value={
+                      hasPrice || mode === "craft" ? (
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          {isCustom && mode === "buy" ? (
+                            <span className="text-primary mr-1 text-xs">
+                              (custom)
+                            </span>
+                          ) : null}
+                          {mode === "craft" && isCraftable && subLabor > 0 ? (
+                            <span className="mr-1 text-xs text-amber-500">
+                              {subLabor.toLocaleString(undefined, {
+                                maximumFractionDigits: 2,
+                              })}
+                              L +
+                            </span>
+                          ) : null}
+                          <span className="text-foreground/70">
+                            {formatGold(unit)}
+                          </span>
+                          {amount > 1 ? (
+                            <span className="text-foreground ml-1.5 font-medium">
+                              = {formatGold(lineTotal)}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null
+                    }
+                    diff={
+                      totalDiff !== null ? (
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
+                            totalDiff > 0
+                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : totalDiff < 0
+                                ? "bg-red-500/10 text-red-500"
+                                : "text-muted-foreground"
+                          }`}
+                        >
+                          {totalDiff > 0
+                            ? `↓ ${formatGold(totalDiff)}`
+                            : totalDiff < 0
+                              ? `↑ ${formatGold(Math.abs(totalDiff))}`
+                              : "="}
+                        </span>
+                      ) : null
+                    }
+                  />
+
+                  {mode === "craft" && isCraftable && subEntry && (
+                    <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
+                      <CraftRecipe
+                        entry={subEntry}
+                        itemId={itemId}
+                        priceMap={priceMap}
+                        overrideMap={overrideMap}
+                        proficiencyMap={proficiencyMap}
+                        subcraftMap={subcraftMap}
+                        depth={depth + 1}
+                        modes={resolvedModes}
+                        setModes={updateModes}
+                        collapsedCraftIds={resolvedCollapsedCraftIds}
+                        toggleCollapsed={updateCollapsed}
+                      />
+                    </li>
+                  )}
+                </Fragment>
+              );
+            })}
+          </ul>
+
+          {/* Legend — only on top-level cards that have craftable ingredients */}
+          {depth === 0 && hasCraftable ? <RecipeLegend /> : null}
+        </>
       )}
-    </div>
+    </RecipeCardShell>
   );
 }
 
@@ -349,6 +590,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
             <CraftRecipe
               key={entry.craft.id}
               entry={entry}
+              itemId={item.id}
               priceMap={priceMap}
               overrideMap={overrideMap}
               proficiencyMap={proficiencyMap}
