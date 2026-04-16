@@ -53,9 +53,7 @@ export function parseFinitePrice(
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function getMarketPrice(
-  price: PriceEntry | null | undefined,
-): number {
+export function getMarketPrice(price: PriceEntry | null | undefined): number {
   return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
 }
 

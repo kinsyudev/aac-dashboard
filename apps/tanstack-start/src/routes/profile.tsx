@@ -325,7 +325,7 @@ function PriceOverrides() {
                             onClick={() => saveEdit(o.itemId)}
                             loading={
                               setOverride.isPending &&
-                              setOverride.variables?.itemId === o.itemId
+                              setOverride.variables.itemId === o.itemId
                             }
                             loadingText="Saving..."
                           >

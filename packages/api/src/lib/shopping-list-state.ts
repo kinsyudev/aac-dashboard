@@ -216,42 +216,6 @@ async function fetchCraftBlueprintMap(
   );
 }
 
-function getSimulationChain(
-  mainCraft: {
-    materials: MaterialRow[];
-  },
-  subcraftMap: SubcraftMap,
-): { keyMaterialId: number | null; keyMaterialName: string | null } {
-  const tierList = [
-    "illustrious",
-    "magnificent",
-    "epherium",
-    "delphinad",
-    "ayanad",
-  ] as const;
-
-  for (const material of mainCraft.materials) {
-    const name = material.item.name.toLowerCase();
-    if (tierList.some((tier) => name.includes(tier))) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  for (const material of mainCraft.materials) {
-    if (subcraftMap[material.item.id]?.length) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  return { keyMaterialId: null, keyMaterialName: null };
-}
-
 function getMatchingAyanadName(name: string): string | null {
   if (!name.toLowerCase().includes("sealed delphinad")) return null;
   return name.replace(/delphinad/i, "Ayanad");
@@ -464,10 +428,6 @@ export async function regenerateListState(
 
   if (list.sourceType === "simulator") {
     const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const simulationChain = getSimulationChain(
-      blueprint,
-      blueprint.subcraftsByItemId,
-    );
     const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
       tx,
       blueprint.item,
@@ -475,10 +435,12 @@ export async function regenerateListState(
     const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
       ? {
           craft: ayanadBlueprint.craft,
-          materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
-            const lower = material.item.name.toLowerCase();
-            return !(lower.includes("delphinad") || lower.includes("ayanad"));
-          }),
+          materials: ayanadBlueprint.materials.filter(
+            (material: MaterialRow) => {
+              const lower = material.item.name.toLowerCase();
+              return !(lower.includes("delphinad") || lower.includes("ayanad"));
+            },
+          ),
           products: ayanadBlueprint.products,
         }
       : null;

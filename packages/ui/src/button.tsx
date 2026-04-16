@@ -53,7 +53,7 @@ export function Button({
     loadingText?: React.ReactNode;
   }) {
   const Comp = asChild ? SlotPrimitive.Slot : "button";
-  const resolvedDisabled = disabled || loading;
+  const resolvedDisabled = disabled ?? loading;
 
   return (
     <Comp

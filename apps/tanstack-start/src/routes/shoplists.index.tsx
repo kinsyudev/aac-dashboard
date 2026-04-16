@@ -122,17 +122,17 @@ function ShoplistsContent() {
                 actionLabel="Open"
                 freshDuplicatePending={
                   duplicate.isPending &&
-                  duplicate.variables?.listId === list.id &&
-                  duplicate.variables?.mode === "fresh"
+                  duplicate.variables.listId === list.id &&
+                  duplicate.variables.mode === "fresh"
                 }
                 snapshotDuplicatePending={
                   duplicate.isPending &&
-                  duplicate.variables?.listId === list.id &&
-                  duplicate.variables?.mode === "copyState"
+                  duplicate.variables.listId === list.id &&
+                  duplicate.variables.mode === "copyState"
                 }
                 deletePending={
                   deleteList.isPending &&
-                  deleteList.variables?.listId === list.id
+                  deleteList.variables.listId === list.id
                 }
                 onFreshDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "fresh" })
@@ -166,13 +166,13 @@ function ShoplistsContent() {
                 actionLabel="Open"
                 freshDuplicatePending={
                   duplicate.isPending &&
-                  duplicate.variables?.listId === list.id &&
-                  duplicate.variables?.mode === "fresh"
+                  duplicate.variables.listId === list.id &&
+                  duplicate.variables.mode === "fresh"
                 }
                 snapshotDuplicatePending={
                   duplicate.isPending &&
-                  duplicate.variables?.listId === list.id &&
-                  duplicate.variables?.mode === "copyState"
+                  duplicate.variables.listId === list.id &&
+                  duplicate.variables.mode === "copyState"
                 }
                 onFreshDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "fresh" })

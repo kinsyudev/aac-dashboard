@@ -498,10 +498,10 @@ function ShoppingListDetailPage() {
             <HeaderActionMenu
               canDelete={data.isOwner}
               duplicateFreshPending={
-                duplicate.isPending && duplicate.variables?.mode === "fresh"
+                duplicate.isPending && duplicate.variables.mode === "fresh"
               }
               duplicateWithProgressPending={
-                duplicate.isPending && duplicate.variables?.mode === "copyState"
+                duplicate.isPending && duplicate.variables.mode === "copyState"
               }
               deletePending={deleteList.isPending}
               onDelete={handleDelete}
@@ -587,8 +587,7 @@ function ShoppingListDetailPage() {
                         disabled={!data.canWrite}
                         loading={
                           updateItemProgress.isPending &&
-                          updateItemProgress.variables?.itemId ===
-                            coinRow.itemId
+                          updateItemProgress.variables.itemId === coinRow.itemId
                         }
                         onClick={() => {
                           setDraftValue(
@@ -711,7 +710,7 @@ function ShoppingListDetailPage() {
                       disabled={!data.canWrite}
                       loading={
                         updateItemProgress.isPending &&
-                        updateItemProgress.variables?.itemId === itemRow.itemId
+                        updateItemProgress.variables.itemId === itemRow.itemId
                       }
                       onClick={() => {
                         setDraftValue(
@@ -815,7 +814,7 @@ function ShoppingListDetailPage() {
                         disabled={!data.canWrite}
                         loading={
                           updateCraftProgress.isPending &&
-                          updateCraftProgress.variables?.craftId ===
+                          updateCraftProgress.variables.craftId ===
                             craftRow.craftId
                         }
                         onClick={() => {
@@ -863,7 +862,7 @@ function ShoppingListDetailPage() {
                         variant="ghost"
                         loading={
                           removeMember.isPending &&
-                          removeMember.variables?.userId === member.userId
+                          removeMember.variables.userId === member.userId
                         }
                         loadingText="Removing..."
                         onClick={() =>
@@ -886,7 +885,7 @@ function ShoppingListDetailPage() {
                     size="sm"
                     loading={
                       createInvite.isPending &&
-                      createInvite.variables?.role === "read"
+                      createInvite.variables.role === "read"
                     }
                     loadingText="Creating..."
                     onClick={() =>
@@ -900,7 +899,7 @@ function ShoppingListDetailPage() {
                     variant="outline"
                     loading={
                       createInvite.isPending &&
-                      createInvite.variables?.role === "write"
+                      createInvite.variables.role === "write"
                     }
                     loadingText="Creating..."
                     onClick={() =>
@@ -938,7 +937,7 @@ function ShoppingListDetailPage() {
                               variant="ghost"
                               loading={
                                 revokeInvite.isPending &&
-                                revokeInvite.variables?.inviteId === invite.id
+                                revokeInvite.variables.inviteId === invite.id
                               }
                               loadingText="Revoking..."
                               onClick={() =>

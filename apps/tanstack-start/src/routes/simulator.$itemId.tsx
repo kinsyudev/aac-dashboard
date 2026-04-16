@@ -27,7 +27,6 @@ import {
   getItemPrice,
   getMarketPrice,
   getSimulationChain,
-  parseFinitePrice,
   pickCheapestCraftForItem,
   useAyanadUpgradeData,
 } from "~/lib/simulator-upgrade";
@@ -92,7 +91,6 @@ function formatGold(value: number): string {
 function isManaWisp(name: string): boolean {
   return name.toLowerCase().includes("mana wisp");
 }
-
 
 function deepCraftLabor(
   itemId: number,
