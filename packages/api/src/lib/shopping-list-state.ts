@@ -59,9 +59,11 @@ interface CraftBlueprint {
   subcraftsByItemId: SubcraftMap;
 }
 
-function pickPreferredCraft(entries: CraftEntry[], itemId: number): CraftEntry {
+function pickPreferredCraft<
+  T extends { products: { item: { id: number }; amount: number }[] },
+>(entries: T[], itemId: number): T {
   const preferred = [...entries].sort((a, b) => {
-    const amountFor = (entry: CraftEntry) =>
+    const amountFor = (entry: T) =>
       entry.products.find((product) => product.item.id === itemId)?.amount ??
       Number.MAX_SAFE_INTEGER;
     return amountFor(a) - amountFor(b);
@@ -250,6 +252,52 @@ function getSimulationChain(
   return { keyMaterialId: null, keyMaterialName: null };
 }
 
+function getMatchingAyanadName(name: string): string | null {
+  if (!name.toLowerCase().includes("sealed delphinad")) return null;
+  return name.replace(/delphinad/i, "Ayanad");
+}
+
+async function resolveAyanadUpgradeBlueprint(
+  dbClient: DbClient | DbTx,
+  sourceItem: ItemRow | null,
+): Promise<CraftBlueprint | null> {
+  const ayanadItemName = sourceItem
+    ? getMatchingAyanadName(sourceItem.name)
+    : null;
+  if (!ayanadItemName) return null;
+
+  const [ayanadItem] = await dbClient
+    .select()
+    .from(items)
+    .where(eq(items.name, ayanadItemName))
+    .limit(1);
+
+  if (!ayanadItem) return null;
+
+  const ayanadCraftRows = await dbClient
+    .select()
+    .from(crafts)
+    .where(eq(crafts.primaryProductId, ayanadItem.id));
+
+  const supportedCrafts = ayanadCraftRows.filter(
+    (craft) => !craft.name.startsWith("trash_"),
+  );
+  if (!supportedCrafts.length) return null;
+
+  const blueprintMap = await fetchCraftBlueprintMap(
+    dbClient,
+    supportedCrafts.map((craft) => craft.id),
+  );
+  const preferredBlueprint = pickPreferredCraft(
+    supportedCrafts
+      .map((craft) => blueprintMap.get(craft.id))
+      .filter((blueprint): blueprint is CraftBlueprint => blueprint != null),
+    ayanadItem.id,
+  );
+
+  return preferredBlueprint;
+}
+
 function buildSnapshot(
   entry: CraftEntry,
   craftModeSet: Set<number>,
@@ -420,14 +468,20 @@ export async function regenerateListState(
       blueprint,
       blueprint.subcraftsByItemId,
     );
-    const finalUpgradeEntry: CraftEntry = {
-      craft: blueprint.craft,
-      materials: blueprint.materials.filter(
-        (material: MaterialRow) =>
-          material.item.id !== simulationChain.keyMaterialId,
-      ),
-      products: blueprint.products,
-    };
+    const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
+      tx,
+      blueprint.item,
+    );
+    const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
+      ? {
+          craft: ayanadBlueprint.craft,
+          materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
+            const lower = material.item.name.toLowerCase();
+            return !(lower.includes("delphinad") || lower.includes("ayanad"));
+          }),
+          products: ayanadBlueprint.products,
+        }
+      : null;
 
     const attemptSnapshot = buildSnapshot(
       {
@@ -439,12 +493,14 @@ export async function regenerateListState(
       blueprint.subcraftsByItemId,
       list.sourceQuantity,
     );
-    const upgradeSnapshot = buildSnapshot(
-      finalUpgradeEntry,
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      1,
-    );
+    const upgradeSnapshot = finalUpgradeEntry
+      ? buildSnapshot(
+          finalUpgradeEntry,
+          craftModeSet,
+          ayanadBlueprint?.subcraftsByItemId ?? blueprint.subcraftsByItemId,
+          1,
+        )
+      : { items: [], crafts: [] };
 
     const mergedItems = new Map<
       number,

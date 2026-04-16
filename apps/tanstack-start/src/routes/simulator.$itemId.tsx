@@ -21,6 +21,16 @@ import { StatCard } from "~/component/stat-card";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
+import {
+  deepCraftCost,
+  getCraftEntryUnitCost,
+  getItemPrice,
+  getMarketPrice,
+  getSimulationChain,
+  parseFinitePrice,
+  pickCheapestCraftForItem,
+  useAyanadUpgradeData,
+} from "~/lib/simulator-upgrade";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -67,12 +77,6 @@ type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = ForItemOutput["subcraftsByItemId"];
 
-interface SimulationChain {
-  keyMaterialId: number | null;
-  keyMaterialName: string | null;
-  upgradeMaterials: CraftEntry["materials"];
-}
-
 interface CraftExecution {
   craftId: number;
   name: string;
@@ -81,110 +85,14 @@ interface CraftExecution {
   laborPerBatch: number;
 }
 
-function parseFinitePrice(value: string | null | undefined): number | null {
-  if (value == null) return null;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
-}
-
-function getMarketPrice(
-  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
-): number {
-  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
-}
-
-function getItemPrice(
-  itemId: number,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-): number {
-  const custom = overrideMap.get(itemId);
-  if (custom != null) return custom;
-  const price = priceMap.get(itemId);
-  return getMarketPrice(price);
 }
 
 function isManaWisp(name: string): boolean {
   return name.toLowerCase().includes("mana wisp");
 }
 
-function getMatchingAyanadName(name: string): string | null {
-  if (!name.toLowerCase().includes("sealed delphinad")) return null;
-  return name.replace(/delphinad/i, "Ayanad");
-}
-
-function getCraftEntryUnitCost(
-  entry: CraftEntry | SubcraftEntry,
-  itemId: number,
-  subcraftMap: SubcraftMap,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-  modes: Record<number, CraftMode> = {},
-  visited = new Set<number>(),
-): number {
-  const produced =
-    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
-
-  const batchCost = entry.materials.reduce((sum, { item, amount }) => {
-    const subEntries = subcraftMap[item.id];
-    const mode = modes[item.id] ?? "craft";
-    const unitCost =
-      subEntries?.length && mode === "craft" && !visited.has(item.id)
-        ? deepCraftCost(
-            item.id,
-            subcraftMap,
-            priceMap,
-            overrideMap,
-            modes,
-            new Set([...visited, itemId]),
-          )
-        : getItemPrice(item.id, priceMap, overrideMap);
-    return sum + unitCost * amount;
-  }, 0);
-
-  return batchCost / produced;
-}
-
-function deepCraftCost(
-  itemId: number,
-  subcraftMap: SubcraftMap,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-  modes: Record<number, CraftMode> = {},
-  visited = new Set<number>(),
-): number {
-  if (visited.has(itemId)) return getItemPrice(itemId, priceMap, overrideMap);
-  visited.add(itemId);
-
-  const entries = subcraftMap[itemId];
-  if (!entries?.length) return getItemPrice(itemId, priceMap, overrideMap);
-
-  const entry = pickCheapestCraft(entries, itemId, (candidate, productItemId) =>
-    getCraftEntryUnitCost(
-      candidate,
-      productItemId,
-      subcraftMap,
-      priceMap,
-      overrideMap,
-      modes,
-      new Set(visited),
-    ),
-  );
-
-  return getCraftEntryUnitCost(
-    entry,
-    itemId,
-    subcraftMap,
-    priceMap,
-    overrideMap,
-    modes,
-    new Set(visited),
-  );
-}
 
 function deepCraftLabor(
   itemId: number,
@@ -271,49 +179,6 @@ function findWispInChain(
     id: wisp.id,
     name: wisp.name,
     price: getItemPrice(wisp.id, priceMap, overrideMap),
-  };
-}
-
-function getSimulationChain(
-  mainCraft: CraftEntry,
-  subcraftMap: SubcraftMap,
-): SimulationChain {
-  const tierList = [
-    "illustrious",
-    "magnificent",
-    "epherium",
-    "delphinad",
-    "ayanad",
-  ] as const;
-
-  let keyMaterialId: number | null = null;
-  let keyMaterialName: string | null = null;
-
-  for (const mat of mainCraft.materials) {
-    const n = mat.item.name.toLowerCase();
-    if (tierList.some((t) => n.includes(t))) {
-      keyMaterialId = mat.item.id;
-      keyMaterialName = mat.item.name;
-      break;
-    }
-  }
-
-  if (!keyMaterialId) {
-    for (const mat of mainCraft.materials) {
-      if (subcraftMap[mat.item.id]?.length) {
-        keyMaterialId = mat.item.id;
-        keyMaterialName = mat.item.name;
-        break;
-      }
-    }
-  }
-
-  return {
-    keyMaterialId,
-    keyMaterialName,
-    upgradeMaterials: mainCraft.materials.filter(
-      ({ item }) => item.id !== keyMaterialId,
-    ),
   };
 }
 
@@ -552,25 +417,9 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     () => (data ? findWispInChain(data, priceMap, overrideMap) : null),
     [data, priceMap, overrideMap],
   );
-  const ayanadItemName = useMemo(
-    () => (data ? getMatchingAyanadName(data.item.name) : null),
-    [data],
+  const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(
+    data?.item.name ?? null,
   );
-  const ayanadItemQuery = useQuery({
-    ...trpc.items.byName.queryOptions(ayanadItemName ?? ""),
-    enabled: !!ayanadItemName,
-  });
-  const ayanadItem = useMemo(
-    () =>
-      ayanadItemQuery.data?.find((item) => item.name === ayanadItemName) ??
-      null,
-    [ayanadItemName, ayanadItemQuery.data],
-  );
-  const ayanadCraftQuery = useQuery({
-    ...trpc.crafts.forItem.queryOptions(ayanadItem?.id ?? -1),
-    enabled: ayanadItem?.id != null,
-  });
-  const ayanadCraftData = ayanadCraftQuery.data ?? null;
   const ayanadPriceQuery = useQuery({
     ...trpc.items.price.queryOptions(ayanadItem?.id ?? -1),
     enabled: ayanadItem?.id != null,
@@ -591,36 +440,26 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   const mainCraft = useMemo(() => {
     if (!data?.crafts.length) return null;
     const subcraftMap = data.subcraftsByItemId;
-    return pickCheapestCraft(
+    return pickCheapestCraftForItem(
       data.crafts,
       data.item.id,
-      (entry, productItemId) =>
-        getCraftEntryUnitCost(
-          entry,
-          productItemId,
-          subcraftMap,
-          priceMap,
-          overrideMap,
-          modes,
-        ),
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
     );
   }, [data, modes, overrideMap, priceMap]);
 
   const ayanadCraft = useMemo(() => {
     if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
     const subcraftMap = ayanadCraftData.subcraftsByItemId;
-    return pickCheapestCraft(
+    return pickCheapestCraftForItem(
       ayanadCraftData.crafts,
       ayanadItem.id,
-      (entry, productItemId) =>
-        getCraftEntryUnitCost(
-          entry,
-          productItemId,
-          subcraftMap,
-          priceMap,
-          overrideMap,
-          modes,
-        ),
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      modes,
     );
   }, [ayanadCraftData, ayanadItem, modes, overrideMap, priceMap]);
   const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;

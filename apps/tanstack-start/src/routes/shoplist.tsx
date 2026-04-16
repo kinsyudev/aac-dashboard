@@ -23,6 +23,11 @@ import {
 } from "~/component/recipe-breakdown";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
+import {
+  getSimulationChain,
+  pickCheapestCraftForItem,
+  useAyanadUpgradeData,
+} from "~/lib/simulator-upgrade";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -195,42 +200,6 @@ function buildLaborByProficiency(
       );
     }
   }
-}
-
-function getSimulationChain(
-  mainCraft: {
-    materials: { item: { id: number; name: string } }[];
-  },
-  subcraftMap: SubcraftMap,
-): { keyMaterialId: number | null; keyMaterialName: string | null } {
-  const tierList = [
-    "illustrious",
-    "magnificent",
-    "epherium",
-    "delphinad",
-    "ayanad",
-  ] as const;
-
-  for (const material of mainCraft.materials) {
-    const name = material.item.name.toLowerCase();
-    if (tierList.some((tier) => name.includes(tier))) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  for (const material of mainCraft.materials) {
-    if (subcraftMap[material.item.id]?.length) {
-      return {
-        keyMaterialId: material.item.id,
-        keyMaterialName: material.item.name,
-      };
-    }
-  }
-
-  return { keyMaterialId: null, keyMaterialName: null };
 }
 
 // ─── Share button ─────────────────────────────────────────────────────────────
@@ -531,6 +500,13 @@ function ShoplistDetail({
     () => new Set<number>((sub ?? "").split(",").filter(Boolean).map(Number)),
     [sub],
   );
+  const craftModes = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(craftModeSet).map((itemId) => [itemId, "craft" as const]),
+      ),
+    [craftModeSet],
+  );
   const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -564,6 +540,9 @@ function ShoplistDetail({
   };
 
   const simulatorSubcraftMap = simulatorData?.subcraftsByItemId ?? {};
+  const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(
+    simulatorData?.item.name ?? null,
+  );
   const simulatorMainCraft = useMemo(() => {
     if (!simulatorData?.crafts.length) return null;
     if (craftId != null) {
@@ -575,6 +554,23 @@ function ShoplistDetail({
     }
     return simulatorData.crafts[0] ?? null;
   }, [craftId, simulatorData?.crafts]);
+  const ayanadCraft = useMemo(() => {
+    if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
+    return pickCheapestCraftForItem(
+      ayanadCraftData.crafts,
+      ayanadItem.id,
+      ayanadCraftData.subcraftsByItemId,
+      priceMap,
+      overrideMap,
+      craftModes,
+    );
+  }, [
+    ayanadCraftData,
+    ayanadItem,
+    craftModes,
+    overrideMap,
+    priceMap,
+  ]);
 
   const craftSubcraftMap = craftData?.subcraftsByItemId ?? {};
 
@@ -728,12 +724,18 @@ function ShoplistDetail({
         localQty={localQty}
         setLocalQty={setLocalQty}
         commitQty={commitQty}
-        recipeSections={[{ title: "Recipe", entry: scaledEntry, note: null }]}
+        recipeSections={[
+          {
+            title: "Recipe",
+            entry: scaledEntry,
+            note: null,
+            subcraftMap: craftSubcraftMap,
+          },
+        ]}
         shoppingList={shoppingList}
         laborByProficiency={laborByProficiency}
         priceMap={priceMap}
         overrideMap={overrideMap}
-        subcraftMap={craftSubcraftMap}
         craftModeSet={craftModeSet}
         proficiencyMap={proficiencyMap}
         toggleMode={toggleMode}
@@ -765,13 +767,18 @@ function ShoplistDetail({
     })),
     products: simulatorCraft.products,
   };
-  const finalUpgradeEntry: RecipeEntry = {
-    craft: simulatorCraft.craft,
-    materials: simulatorCraft.materials.filter(
-      ({ item }) => item.id !== simulatorChain.keyMaterialId,
-    ),
-    products: simulatorCraft.products,
-  };
+  const finalUpgradeSubcraftMap =
+    ayanadCraftData?.subcraftsByItemId ?? simulatorSubcraftMap;
+  const finalUpgradeEntry: RecipeEntry | null = ayanadCraft
+    ? {
+        craft: ayanadCraft.craft,
+        materials: ayanadCraft.materials.filter(({ item }) => {
+          const lower = item.name.toLowerCase();
+          return !(lower.includes("delphinad") || lower.includes("ayanad"));
+        }),
+        products: ayanadCraft.products,
+      }
+    : null;
   const simulatorShoppingList = (() => {
     const acc = new Map<number, ShoppingListItem>();
     buildShoppingList(
@@ -782,14 +789,16 @@ function ShoplistDetail({
       acc,
       effectiveQty,
     );
-    buildShoppingList(
-      finalUpgradeEntry.materials,
-      craftModeSet,
-      simulatorSubcraftMap,
-      0,
-      acc,
-      1,
-    );
+    if (finalUpgradeEntry) {
+      buildShoppingList(
+        finalUpgradeEntry.materials,
+        craftModeSet,
+        finalUpgradeSubcraftMap,
+        0,
+        acc,
+        1,
+      );
+    }
     return Array.from(acc.values()).sort((a, b) =>
       a.item.name.localeCompare(b.item.name),
     );
@@ -806,16 +815,18 @@ function ShoplistDetail({
       acc,
       proficiencyMap,
     );
-    buildLaborByProficiency(
-      finalUpgradeEntry.craft,
-      finalUpgradeEntry.materials,
-      craftModeSet,
-      simulatorSubcraftMap,
-      0,
-      1,
-      acc,
-      proficiencyMap,
-    );
+    if (finalUpgradeEntry) {
+      buildLaborByProficiency(
+        finalUpgradeEntry.craft,
+        finalUpgradeEntry.materials,
+        craftModeSet,
+        finalUpgradeSubcraftMap,
+        0,
+        1,
+        acc,
+        proficiencyMap,
+      );
+    }
     return acc;
   })();
 
@@ -838,20 +849,29 @@ function ShoplistDetail({
       setLocalQty={setLocalQty}
       commitQty={commitQty}
       recipeSections={[
-        { title: "Attempt chain", entry: scaledAttemptEntry, note: null },
         {
-          title: "Final upgrade",
-          entry: finalUpgradeEntry,
-          note: simulatorChain.keyMaterialName
-            ? `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
-            : null,
+          title: "Attempt chain",
+          entry: scaledAttemptEntry,
+          note: null,
+          subcraftMap: simulatorSubcraftMap,
         },
+        ...(finalUpgradeEntry
+          ? [
+              {
+                title: "Final upgrade",
+                entry: finalUpgradeEntry,
+                note: simulatorChain.keyMaterialName
+                  ? `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
+                  : null,
+                subcraftMap: finalUpgradeSubcraftMap,
+              },
+            ]
+          : []),
       ]}
       shoppingList={simulatorShoppingList}
       laborByProficiency={simulatorLaborByProficiency}
       priceMap={priceMap}
       overrideMap={overrideMap}
-      subcraftMap={simulatorSubcraftMap}
       craftModeSet={craftModeSet}
       proficiencyMap={proficiencyMap}
       toggleMode={toggleMode}
@@ -879,7 +899,6 @@ function ShoplistLayout({
   laborByProficiency,
   priceMap,
   overrideMap,
-  subcraftMap,
   craftModeSet,
   proficiencyMap,
   toggleMode,
@@ -898,12 +917,16 @@ function ShoplistLayout({
   localQty: number;
   setLocalQty: (value: number) => void;
   commitQty: (value: number) => void;
-  recipeSections: { title: string; entry: RecipeEntry; note: string | null }[];
+  recipeSections: {
+    title: string;
+    entry: RecipeEntry;
+    note: string | null;
+    subcraftMap: SubcraftMap;
+  }[];
   shoppingList: ShoppingListItem[];
   laborByProficiency: Map<string, number>;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
-  subcraftMap: SubcraftMap;
   craftModeSet: Set<number>;
   proficiencyMap: ProficiencyMap;
   toggleMode: (itemId: number) => void;
@@ -1002,7 +1025,7 @@ function ShoplistLayout({
             priceMap={priceMap}
             overrideMap={overrideMap}
             proficiencyMap={proficiencyMap}
-            subcraftMap={subcraftMap}
+            subcraftMap={section.subcraftMap}
             craftModeSet={craftModeSet}
             toggleMode={toggleMode}
             collapsedCraftIds={collapsedCraftIds}
