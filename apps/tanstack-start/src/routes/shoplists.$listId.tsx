@@ -44,6 +44,19 @@ function coerceFiniteNumber(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseFinitePrice(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getMarketPrice(price: {
+  avg24h: string | null;
+  avg7d: string | null;
+} | null | undefined) {
+  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+}
+
 function isCoinItem(item: { itemId: number; item: { name: string } }) {
   return item.itemId === COIN_ITEM_ID || item.item.name === "Coin";
 }
@@ -356,7 +369,7 @@ function ShoppingListDetailPage() {
         const unitPrice =
           override != null
             ? coerceFiniteNumber(override)
-            : coerceFiniteNumber(market?.avg24h ?? market?.avg7d);
+            : getMarketPrice(market);
         return sum + remainingQuantity * unitPrice;
       }, 0),
     [materialItems, overrideMap, priceMap],
@@ -372,17 +385,11 @@ function ShoppingListDetailPage() {
         const leftUnitPrice =
           leftOverride != null
             ? coerceFiniteNumber(leftOverride)
-            : coerceFiniteNumber(
-                priceMap.get(left.itemId)?.avg24h ??
-                  priceMap.get(left.itemId)?.avg7d,
-              );
+            : getMarketPrice(priceMap.get(left.itemId));
         const rightUnitPrice =
           rightOverride != null
             ? coerceFiniteNumber(rightOverride)
-            : coerceFiniteNumber(
-                priceMap.get(right.itemId)?.avg24h ??
-                  priceMap.get(right.itemId)?.avg7d,
-              );
+            : getMarketPrice(priceMap.get(right.itemId));
         const costDelta =
           rightRemaining * rightUnitPrice - leftRemaining * leftUnitPrice;
         return costDelta !== 0
@@ -1095,7 +1102,7 @@ function ItemCost({
   const unitPrice =
     override != null
       ? coerceFiniteNumber(override)
-      : coerceFiniteNumber(market?.avg24h ?? market?.avg7d);
+      : getMarketPrice(market);
 
   if (unitPrice <= 0) {
     return (
