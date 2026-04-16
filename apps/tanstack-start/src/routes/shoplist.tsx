@@ -24,6 +24,7 @@ import {
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
+  getItemPrice,
   getSimulationChain,
   pickCheapestCraftForItem,
   useAyanadUpgradeData,
@@ -254,10 +255,7 @@ function RecipeTree({
     if (!subEntries) return 0;
     const sub = pickPreferredCraft(subEntries, itemId);
     const batchCost = sub.materials.reduce((sum, { item, amount }) => {
-      const custom = overrideMap.get(item.id);
-      const price = priceMap.get(item.id);
-      const u = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
-      return sum + u * amount;
+      return sum + getItemPrice(item.id, priceMap, overrideMap) * amount;
     }, 0);
     const produced =
       sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
@@ -266,9 +264,7 @@ function RecipeTree({
 
   const total = materials.reduce((sum, { item, amount }) => {
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
-    const custom = overrideMap.get(item.id);
-    const price = priceMap.get(item.id);
-    const buyUnit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+    const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
     const unit =
       craftModeSet.has(item.id) && isCraftable
         ? getCraftCostPerUnit(item.id)
@@ -312,16 +308,15 @@ function RecipeTree({
               const isCraftable = depth < 4 && !!subcraftMap[item.id];
               const mode = craftModeSet.has(item.id) ? "craft" : "buy";
               const customPrice = overrideMap.get(item.id);
-              const price = priceMap.get(item.id);
               const isCustom = customPrice != null;
               const buyUnit = isCustom
                 ? customPrice
-                : parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+                : getItemPrice(item.id, priceMap, overrideMap);
               const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
               const unit =
                 mode === "craft" && isCraftable ? craftUnit : buyUnit;
               const lineTotal = unit * amount;
-              const hasPrice = isCustom || !!price;
+              const hasPrice = buyUnit > 0;
               const totalDiff =
                 isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
               const subEntry = isCraftable
@@ -946,9 +941,7 @@ function ShoplistLayout({
   const totalCost = useMemo(
     () =>
       shoppingList.reduce((sum, { item, totalAmount }) => {
-        const custom = overrideMap.get(item.id);
-        const price = priceMap.get(item.id);
-        const unit = custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+        const unit = getItemPrice(item.id, priceMap, overrideMap);
         return sum + unit * Math.ceil(totalAmount);
       }, 0),
     [overrideMap, priceMap, shoppingList],
@@ -1071,9 +1064,7 @@ function ShoplistLayout({
         <ul className="flex flex-col gap-1 rounded-md border p-3">
           {shoppingList.map(({ item, totalAmount }) => {
             const custom = overrideMap.get(item.id);
-            const price = priceMap.get(item.id);
-            const unit =
-              custom ?? parseFloat(price?.avg24h ?? price?.avg7d ?? "0");
+            const unit = getItemPrice(item.id, priceMap, overrideMap);
             const roundedQuantity = Math.ceil(totalAmount);
             const lineTotal = unit * roundedQuantity;
             return (
