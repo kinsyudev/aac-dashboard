@@ -194,7 +194,9 @@ function AddOverrideForm({ onAdded }: { onAdded: () => void }) {
       </div>
       <Button
         type="submit"
-        disabled={!selected || !price || setOverride.isPending}
+        disabled={!selected || !price}
+        loading={setOverride.isPending}
+        loadingText="Saving..."
       >
         Save
       </Button>
@@ -321,7 +323,11 @@ function PriceOverrides() {
                           <Button
                             size="sm"
                             onClick={() => saveEdit(o.itemId)}
-                            disabled={setOverride.isPending}
+                            loading={
+                              setOverride.isPending &&
+                              setOverride.variables?.itemId === o.itemId
+                            }
+                            loadingText="Saving..."
                           >
                             Save
                           </Button>
@@ -416,7 +422,11 @@ function PriceOverrides() {
                           variant="ghost"
                           className="text-destructive hover:text-destructive"
                           onClick={() => deleteOverride.mutate(o.itemId)}
-                          disabled={deleteOverride.isPending}
+                          loading={
+                            deleteOverride.isPending &&
+                            deleteOverride.variables === o.itemId
+                          }
+                          loadingText="Deleting..."
                         >
                           Delete
                         </Button>

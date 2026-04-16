@@ -1,4 +1,5 @@
 import type { inferProcedureOutput } from "@trpc/server";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
@@ -23,6 +24,7 @@ function InviteAcceptancePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: session } = authClient.useSession();
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const { data, isLoading } = useQuery(
     trpc.shoppingLists.getInvitePreview.queryOptions(token),
   );
@@ -78,13 +80,20 @@ function InviteAcceptancePage() {
 
             {!session ? (
               <Button
+                loading={isSigningIn}
+                loadingText="Signing in..."
                 onClick={async () => {
-                  const result = await authClient.signIn.social({
-                    provider: "discord",
-                    callbackURL: `/shoplists/invite/${token}`,
-                  });
-                  if (result.data?.url) {
-                    await navigate({ href: result.data.url, replace: true });
+                  setIsSigningIn(true);
+                  try {
+                    const result = await authClient.signIn.social({
+                      provider: "discord",
+                      callbackURL: `/shoplists/invite/${token}`,
+                    });
+                    if (result.data?.url) {
+                      await navigate({ href: result.data.url, replace: true });
+                    }
+                  } finally {
+                    setIsSigningIn(false);
                   }
                 }}
               >
@@ -93,6 +102,8 @@ function InviteAcceptancePage() {
             ) : (
               <Button
                 disabled={!data.isAvailable}
+                loading={acceptInvite.isPending}
+                loadingText="Accepting..."
                 onClick={() => acceptInvite.mutate(token)}
               >
                 Accept invite

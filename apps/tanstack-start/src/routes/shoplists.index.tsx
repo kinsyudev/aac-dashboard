@@ -120,6 +120,20 @@ function ShoplistsContent() {
                 key={list.id}
                 list={list}
                 actionLabel="Open"
+                freshDuplicatePending={
+                  duplicate.isPending &&
+                  duplicate.variables?.listId === list.id &&
+                  duplicate.variables?.mode === "fresh"
+                }
+                snapshotDuplicatePending={
+                  duplicate.isPending &&
+                  duplicate.variables?.listId === list.id &&
+                  duplicate.variables?.mode === "copyState"
+                }
+                deletePending={
+                  deleteList.isPending &&
+                  deleteList.variables?.listId === list.id
+                }
                 onFreshDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "fresh" })
                 }
@@ -150,6 +164,16 @@ function ShoplistsContent() {
                 list={list}
                 role={list.role}
                 actionLabel="Open"
+                freshDuplicatePending={
+                  duplicate.isPending &&
+                  duplicate.variables?.listId === list.id &&
+                  duplicate.variables?.mode === "fresh"
+                }
+                snapshotDuplicatePending={
+                  duplicate.isPending &&
+                  duplicate.variables?.listId === list.id &&
+                  duplicate.variables?.mode === "copyState"
+                }
                 onFreshDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "fresh" })
                 }
@@ -180,6 +204,9 @@ function ListCard({
   onFreshDuplicate,
   onSnapshotDuplicate,
   onDelete,
+  freshDuplicatePending = false,
+  snapshotDuplicatePending = false,
+  deletePending = false,
 }: {
   list: {
     id: string;
@@ -199,6 +226,9 @@ function ListCard({
   onFreshDuplicate: () => void;
   onSnapshotDuplicate: () => void;
   onDelete?: () => void;
+  freshDuplicatePending?: boolean;
+  snapshotDuplicatePending?: boolean;
+  deletePending?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4 rounded-xl border p-5">
@@ -248,14 +278,32 @@ function ListCard({
             {actionLabel}
           </Link>
         </Button>
-        <Button size="sm" variant="outline" onClick={onFreshDuplicate}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onFreshDuplicate}
+          loading={freshDuplicatePending}
+          loadingText="Duplicating..."
+        >
           Duplicate fresh
         </Button>
-        <Button size="sm" variant="outline" onClick={onSnapshotDuplicate}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSnapshotDuplicate}
+          loading={snapshotDuplicatePending}
+          loadingText="Duplicating..."
+        >
           Duplicate with progress
         </Button>
         {onDelete ? (
-          <Button size="sm" variant="destructive" onClick={onDelete}>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={onDelete}
+            loading={deletePending}
+            loadingText="Deleting..."
+          >
             Delete
           </Button>
         ) : null}

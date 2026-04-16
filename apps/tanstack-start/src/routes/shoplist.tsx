@@ -564,13 +564,7 @@ function ShoplistDetail({
       overrideMap,
       craftModes,
     );
-  }, [
-    ayanadCraftData,
-    ayanadItem,
-    craftModes,
-    overrideMap,
-    priceMap,
-  ]);
+  }, [ayanadCraftData, ayanadItem, craftModes, overrideMap, priceMap]);
 
   const craftSubcraftMap = craftData?.subcraftsByItemId ?? {};
 
@@ -745,6 +739,7 @@ function ShoplistDetail({
         setListName={setListName}
         listId={listId}
         persistList={persistList.mutate}
+        persistListPending={persistList.isPending}
       />
     );
   }
@@ -881,6 +876,7 @@ function ShoplistDetail({
       setListName={setListName}
       listId={listId}
       persistList={persistList.mutate}
+      persistListPending={persistList.isPending}
     />
   );
 }
@@ -908,6 +904,7 @@ function ShoplistLayout({
   setListName,
   listId,
   persistList,
+  persistListPending,
 }: {
   backLink: React.ReactNode;
   title: string;
@@ -936,6 +933,7 @@ function ShoplistLayout({
   setListName: (value: string) => void;
   listId?: string;
   persistList: () => void;
+  persistListPending: boolean;
 }) {
   const totalLabor = useMemo(
     () =>
@@ -991,7 +989,11 @@ function ShoplistLayout({
                 </Link>
               </Button>
             ) : null}
-            <Button onClick={persistList}>
+            <Button
+              onClick={persistList}
+              loading={persistListPending}
+              loadingText={listId ? "Updating..." : "Creating..."}
+            >
               {listId ? "Update multiplayer list" : "Create multiplayer list"}
             </Button>
           </div>

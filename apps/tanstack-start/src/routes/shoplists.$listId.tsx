@@ -497,6 +497,12 @@ function ShoppingListDetailPage() {
             </Button>
             <HeaderActionMenu
               canDelete={data.isOwner}
+              duplicateFreshPending={
+                duplicate.isPending && duplicate.variables?.mode === "fresh"
+              }
+              duplicateWithProgressPending={
+                duplicate.isPending && duplicate.variables?.mode === "copyState"
+              }
               deletePending={deleteList.isPending}
               onDelete={handleDelete}
               onDuplicateFresh={() =>
@@ -579,6 +585,11 @@ function ShoppingListDetailPage() {
                         size="sm"
                         variant="outline"
                         disabled={!data.canWrite}
+                        loading={
+                          updateItemProgress.isPending &&
+                          updateItemProgress.variables?.itemId ===
+                            coinRow.itemId
+                        }
                         onClick={() => {
                           setDraftValue(
                             setItemDrafts,
@@ -698,6 +709,10 @@ function ShoppingListDetailPage() {
                       size="sm"
                       variant="outline"
                       disabled={!data.canWrite}
+                      loading={
+                        updateItemProgress.isPending &&
+                        updateItemProgress.variables?.itemId === itemRow.itemId
+                      }
                       onClick={() => {
                         setDraftValue(
                           setItemDrafts,
@@ -798,6 +813,11 @@ function ShoppingListDetailPage() {
                         size="sm"
                         variant="outline"
                         disabled={!data.canWrite}
+                        loading={
+                          updateCraftProgress.isPending &&
+                          updateCraftProgress.variables?.craftId ===
+                            craftRow.craftId
+                        }
                         onClick={() => {
                           setDraftValue(
                             setCraftDrafts,
@@ -841,6 +861,11 @@ function ShoppingListDetailPage() {
                       <Button
                         size="sm"
                         variant="ghost"
+                        loading={
+                          removeMember.isPending &&
+                          removeMember.variables?.userId === member.userId
+                        }
+                        loadingText="Removing..."
                         onClick={() =>
                           removeMember.mutate({ listId, userId: member.userId })
                         }
@@ -859,6 +884,11 @@ function ShoppingListDetailPage() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button
                     size="sm"
+                    loading={
+                      createInvite.isPending &&
+                      createInvite.variables?.role === "read"
+                    }
+                    loadingText="Creating..."
                     onClick={() =>
                       createInvite.mutate({ listId, role: "read" })
                     }
@@ -868,6 +898,11 @@ function ShoppingListDetailPage() {
                   <Button
                     size="sm"
                     variant="outline"
+                    loading={
+                      createInvite.isPending &&
+                      createInvite.variables?.role === "write"
+                    }
+                    loadingText="Creating..."
                     onClick={() =>
                       createInvite.mutate({ listId, role: "write" })
                     }
@@ -901,6 +936,11 @@ function ShoppingListDetailPage() {
                             <Button
                               size="sm"
                               variant="ghost"
+                              loading={
+                                revokeInvite.isPending &&
+                                revokeInvite.variables?.inviteId === invite.id
+                              }
+                              loadingText="Revoking..."
                               onClick={() =>
                                 revokeInvite.mutate({
                                   listId,
@@ -943,12 +983,16 @@ function ShoppingListDetailPage() {
 
 function HeaderActionMenu({
   canDelete,
+  duplicateFreshPending,
+  duplicateWithProgressPending,
   deletePending,
   onDelete,
   onDuplicateFresh,
   onDuplicateWithProgress,
 }: {
   canDelete: boolean;
+  duplicateFreshPending: boolean;
+  duplicateWithProgressPending: boolean;
   deletePending: boolean;
   onDelete: () => void;
   onDuplicateFresh: () => void;
@@ -963,11 +1007,19 @@ function HeaderActionMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={onDuplicateFresh}>
-          Duplicate fresh
+        <DropdownMenuItem
+          disabled={duplicateFreshPending}
+          onClick={onDuplicateFresh}
+        >
+          {duplicateFreshPending ? "Duplicating..." : "Duplicate fresh"}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onDuplicateWithProgress}>
-          Duplicate with progress
+        <DropdownMenuItem
+          disabled={duplicateWithProgressPending}
+          onClick={onDuplicateWithProgress}
+        >
+          {duplicateWithProgressPending
+            ? "Duplicating..."
+            : "Duplicate with progress"}
         </DropdownMenuItem>
         {canDelete ? (
           <>

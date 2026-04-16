@@ -144,6 +144,8 @@ function SiteHeader() {
   const { data: session } = authClient.useSession();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [isSigningOut, setIsSigningOut] = React.useState(false);
+  const [isSigningIn, setIsSigningIn] = React.useState(false);
 
   return (
     <header className="bg-background/90 fixed top-0 right-0 left-0 z-40 border-b backdrop-blur">
@@ -201,9 +203,16 @@ function SiteHeader() {
               <Button
                 variant="ghost"
                 size="sm"
+                loading={isSigningOut}
+                loadingText="Signing out..."
                 onClick={async () => {
-                  await authClient.signOut();
-                  await navigate({ href: "/", replace: true });
+                  setIsSigningOut(true);
+                  try {
+                    await authClient.signOut();
+                    await navigate({ href: "/", replace: true });
+                  } finally {
+                    setIsSigningOut(false);
+                  }
                 }}
               >
                 Sign out
@@ -212,17 +221,24 @@ function SiteHeader() {
           ) : (
             <Button
               size="sm"
+              loading={isSigningIn}
+              loadingText="Signing in..."
               onClick={async () => {
-                const result = await authClient.signIn.social({
-                  provider: "discord",
-                  callbackURL: pathname,
-                });
+                setIsSigningIn(true);
+                try {
+                  const result = await authClient.signIn.social({
+                    provider: "discord",
+                    callbackURL: pathname,
+                  });
 
-                if (!result.data?.url) {
-                  throw new Error("No URL returned from signInSocial");
+                  if (!result.data?.url) {
+                    throw new Error("No URL returned from signInSocial");
+                  }
+
+                  await navigate({ href: result.data.url, replace: true });
+                } finally {
+                  setIsSigningIn(false);
                 }
-
-                await navigate({ href: result.data.url, replace: true });
               }}
             >
               Sign in with Discord
