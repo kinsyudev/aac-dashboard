@@ -437,7 +437,7 @@ export const shoppingListsRouter = {
       }),
     )
     .mutation(async ({ ctx, input }) => {
-        const [created] = await ctx.db
+      const [created] = await ctx.db
         .insert(shoppingLists)
         .values({
           ownerUserId: ctx.session.user.id,
