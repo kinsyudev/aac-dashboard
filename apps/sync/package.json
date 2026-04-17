@@ -9,6 +9,7 @@
     "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
     "sync-prices:backfill": "pnpm with-env tsx src/sync-prices-backfill.ts",
     "classify-proficiencies": "pnpm with-env tsx src/classify-proficiencies.ts",
+    "fix-handicraft-lunagems": "pnpm with-env tsx src/fix-handicraft-lunagems.ts",
     "regenerate-shopping-lists": "pnpm with-env tsx src/regenerate-shopping-lists.ts",
     "with-env": "dotenv -e ../../.env --",
     "typecheck": "tsc --noEmit",

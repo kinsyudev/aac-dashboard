@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { useMemo, useState } from "react";
 import {
   useMutation,
@@ -50,10 +50,15 @@ function parseFinitePrice(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getMarketPrice(price: {
-  avg24h: string | null;
-  avg7d: string | null;
-} | null | undefined) {
+function getMarketPrice(
+  price:
+    | {
+        avg24h: string | null;
+        avg7d: string | null;
+      }
+    | null
+    | undefined,
+) {
   return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
 }
 
@@ -118,6 +123,30 @@ function formatSourceSummary(list: {
     quantityLabel,
     modeLabel,
   };
+}
+
+function RowLinkOrContent({
+  children,
+  itemId,
+  to,
+}: {
+  children: ReactNode;
+  itemId?: number | null;
+  to: "/item/$itemId" | "/craft/$itemId";
+}) {
+  if (!itemId) {
+    return <div className="flex min-w-0 items-center gap-3">{children}</div>;
+  }
+
+  return (
+    <Link
+      to={to}
+      params={{ itemId }}
+      className="flex min-w-0 items-center gap-3 rounded-md transition outline-none hover:opacity-80 focus-visible:ring-2"
+    >
+      {children}
+    </Link>
+  );
 }
 
 function ShoppingListDetailPage() {
@@ -653,14 +682,14 @@ function ShoppingListDetailPage() {
                     itemRow.remainingQuantity === 0 ? "opacity-45" : ""
                   }`}
                 >
-                  <div className="flex min-w-0 items-center gap-3">
+                  <RowLinkOrContent to="/item/$itemId" itemId={itemRow.itemId}>
                     <ItemIcon
                       icon={itemRow.item.icon}
                       name={itemRow.item.name}
                       size="md"
                     />
                     <div className="min-w-0">
-                      <p className="truncate font-medium">
+                      <p className="truncate font-medium hover:underline">
                         {itemRow.item.name}
                       </p>
                       <p className="text-muted-foreground text-sm">
@@ -676,7 +705,7 @@ function ShoppingListDetailPage() {
                         priceMap={priceMap}
                       />
                     </div>
-                  </div>
+                  </RowLinkOrContent>
                   <div className="flex items-center gap-2">
                     <Input
                       type="number"
@@ -758,14 +787,17 @@ function ShoppingListDetailPage() {
                       craftRow.remainingCount === 0 ? "opacity-45" : ""
                     }`}
                   >
-                    <div className="flex min-w-0 items-center gap-3">
+                    <RowLinkOrContent
+                      to="/craft/$itemId"
+                      itemId={craftRow.product?.id}
+                    >
                       <ItemIcon
                         icon={craftRow.product?.icon ?? null}
                         name={craftRow.product?.name ?? craftRow.craft.name}
                         size="md"
                       />
                       <div className="min-w-0">
-                        <p className="truncate font-medium">
+                        <p className="truncate font-medium hover:underline">
                           {craftRow.craft.name}
                         </p>
                         <p className="text-muted-foreground text-sm tabular-nums">
@@ -780,7 +812,7 @@ function ShoppingListDetailPage() {
                           </p>
                         ) : null}
                       </div>
-                    </div>
+                    </RowLinkOrContent>
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
@@ -1100,9 +1132,7 @@ function ItemCost({
   const override = overrideMap.get(itemId);
   const market = priceMap.get(itemId);
   const unitPrice =
-    override != null
-      ? coerceFiniteNumber(override)
-      : getMarketPrice(market);
+    override != null ? coerceFiniteNumber(override) : getMarketPrice(market);
 
   if (unitPrice <= 0) {
     return (

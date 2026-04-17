@@ -6,9 +6,19 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
+import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 
-import type { ProficiencyMap } from "~/lib/proficiency";
+import type {
+  CraftMode,
+  ModesMap,
+  OptimizationObjective,
+  OverrideMap,
+  PriceMap,
+  ProficiencyMap,
+  SelectedCraftMap,
+  SubcraftMap,
+} from "~/lib/craft-optimizer";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
 import {
@@ -20,8 +30,14 @@ import {
   RecipeLegend,
 } from "~/component/recipe-breakdown";
 import { StatCard } from "~/component/stat-card";
-import { pickPreferredCraft } from "~/lib/craft-helpers";
-import { getDiscountedLabor } from "~/lib/proficiency";
+import {
+  buildAutoPlan,
+  computeManualCraftMetrics,
+  getItemPrice,
+  getSelectedEntry,
+  hasItemPrice,
+  parseFinitePrice,
+} from "~/lib/craft-optimizer";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
@@ -63,11 +79,35 @@ type PageData = NonNullable<
 >;
 type CraftEntry = PageData["crafts"][number];
 type SubcraftEntry = PageData["subcraftsByItemId"][number][number];
-type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
-type OverrideMap = Map<number, number>;
-type SubcraftMap = Record<number, SubcraftEntry[]>;
-type CraftMode = "buy" | "craft";
-type ModesMap = Record<number, CraftMode>;
+type AnyCraftEntry = CraftEntry | SubcraftEntry;
+type PageSubcraftMap = SubcraftMap<AnyCraftEntry>;
+
+function serializeCraftModeSearch(modes: ModesMap): string | undefined {
+  const craftedItemIds = Object.entries(modes)
+    .filter(([, mode]) => mode === "craft")
+    .map(([itemId]) => Number(itemId))
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
+
+  if (!craftedItemIds.length) return undefined;
+  return craftedItemIds.join(",");
+}
+
+function serializeSelectedCraftsSearch(
+  selectedCrafts: SelectedCraftMap,
+): string | undefined {
+  const entries = Object.entries(selectedCrafts)
+    .map(([itemId, craftId]) => [Number(itemId), craftId] as const)
+    .filter(
+      ([itemId, craftId]) =>
+        Number.isInteger(itemId) && Number.isInteger(craftId),
+    )
+    .sort(([left], [right]) => left - right)
+    .map(([itemId, craftId]) => `${itemId}:${craftId}`);
+
+  if (!entries.length) return undefined;
+  return entries.join(",");
+}
 
 function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
@@ -77,131 +117,33 @@ function formatSilverPerLabor(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} s/L`;
 }
 
-function parseFinitePrice(value: string | null | undefined): number | null {
-  if (value == null || value === "") return null;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function getMarketPrice(
-  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
-): number {
-  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
-}
-
-function getItemPrice(
-  itemId: number,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-): number {
-  return overrideMap.get(itemId) ?? getMarketPrice(priceMap.get(itemId));
-}
-
-function getProducedAmount(
-  entry: CraftEntry | SubcraftEntry,
-  itemId: number,
-): number {
-  return (
-    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1
-  );
-}
-
-function getPreferredSubcraft(
-  itemId: number,
-  subcraftMap: SubcraftMap,
-): SubcraftEntry | null {
-  const entries = subcraftMap[itemId];
-  return entries?.length ? pickPreferredCraft(entries, itemId) : null;
-}
-
-function getCraftCostPerUnit(
-  itemId: number,
-  subcraftMap: SubcraftMap,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-  modes: ModesMap,
-  maxDepth = 4,
-  visited = new Set<number>(),
-): number {
-  if (visited.has(itemId) || maxDepth <= 0) {
-    return getItemPrice(itemId, priceMap, overrideMap);
-  }
-
-  const subEntry = getPreferredSubcraft(itemId, subcraftMap);
-  if (!subEntry) return getItemPrice(itemId, priceMap, overrideMap);
-
-  const nextVisited = new Set(visited);
-  nextVisited.add(itemId);
-
-  const batchCost = subEntry.materials.reduce((sum, { item, amount }) => {
-    const shouldCraft =
-      !!subcraftMap[item.id]?.length && (modes[item.id] ?? "buy") === "craft";
-    const unitCost = shouldCraft
-      ? getCraftCostPerUnit(
-          item.id,
-          subcraftMap,
-          priceMap,
-          overrideMap,
-          modes,
-          maxDepth - 1,
-          nextVisited,
-        )
-      : getItemPrice(item.id, priceMap, overrideMap);
-    return sum + unitCost * amount;
-  }, 0);
-
-  return batchCost / getProducedAmount(subEntry, itemId);
-}
-
-function getCraftLaborPerUnit(
-  itemId: number,
-  subcraftMap: SubcraftMap,
-  proficiencyMap: ProficiencyMap,
-  modes: ModesMap,
-  maxDepth = 4,
-  visited = new Set<number>(),
-): number {
-  if (visited.has(itemId) || maxDepth <= 0) return 0;
-
-  const subEntry = getPreferredSubcraft(itemId, subcraftMap);
-  if (!subEntry) return 0;
-
-  const nextVisited = new Set(visited);
-  nextVisited.add(itemId);
-
-  let labor = getDiscountedLabor(
-    subEntry.craft.labor,
-    subEntry.craft.proficiency,
-    proficiencyMap,
-  );
-
-  for (const { item, amount } of subEntry.materials) {
-    const shouldCraft =
-      !!subcraftMap[item.id]?.length && (modes[item.id] ?? "buy") === "craft";
-    if (!shouldCraft) continue;
-    labor +=
-      getCraftLaborPerUnit(
-        item.id,
-        subcraftMap,
-        proficiencyMap,
-        modes,
-        maxDepth - 1,
-        nextVisited,
-      ) * amount;
-  }
-
-  return labor / getProducedAmount(subEntry, itemId);
-}
-
 function getVariant(value: number): "positive" | "negative" | "neutral" {
   if (value > 0) return "positive";
   if (value < 0) return "negative";
   return "neutral";
 }
 
+function formatSilverPerLaborValue(
+  state: "finite" | "infinite" | "none",
+  value: number | null,
+): string {
+  if (state === "infinite") return "∞ s/L";
+  if (state === "finite" && value != null) return formatSilverPerLabor(value);
+  return "—";
+}
+
+function getSilverPerLaborVariant(
+  state: "finite" | "infinite" | "none",
+  value: number | null,
+): "positive" | "negative" | "neutral" {
+  if (state === "infinite") return "positive";
+  if (state === "finite" && value != null) return getVariant(value);
+  return "neutral";
+}
+
 function CraftRecipe({
   entry,
-  itemId,
+  producedItemId,
   priceMap,
   overrideMap,
   proficiencyMap,
@@ -209,18 +151,22 @@ function CraftRecipe({
   depth = 0,
   modes,
   setModes,
+  selectedCrafts,
+  setSelectedCrafts,
   collapsedCraftIds,
   toggleCollapsed,
 }: {
-  entry: CraftEntry | SubcraftEntry;
-  itemId: number;
+  entry: AnyCraftEntry;
+  producedItemId: number;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   proficiencyMap: ProficiencyMap;
-  subcraftMap?: SubcraftMap;
+  subcraftMap?: PageSubcraftMap;
   depth?: number;
   modes?: ModesMap;
   setModes?: Dispatch<SetStateAction<ModesMap>>;
+  selectedCrafts?: SelectedCraftMap;
+  setSelectedCrafts?: Dispatch<SetStateAction<SelectedCraftMap>>;
   collapsedCraftIds?: Set<number>;
   toggleCollapsed?: (craftId: number) => void;
 }) {
@@ -228,6 +174,10 @@ function CraftRecipe({
   const [localModes, setLocalModes] = useState<ModesMap>({});
   const resolvedModes = modes ?? localModes;
   const updateModes = setModes ?? setLocalModes;
+  const [localSelectedCrafts, setLocalSelectedCrafts] =
+    useState<SelectedCraftMap>({});
+  const resolvedSelectedCrafts = selectedCrafts ?? localSelectedCrafts;
+  const updateSelectedCrafts = setSelectedCrafts ?? setLocalSelectedCrafts;
   const [localSalePrice, setLocalSalePrice] = useState("");
   const [localCollapsedCraftIds, setLocalCollapsedCraftIds] = useState<
     Set<number>
@@ -247,51 +197,7 @@ function CraftRecipe({
   const getMode = (materialItemId: number): CraftMode =>
     resolvedModes[materialItemId] ?? "buy";
 
-  const producedAmount = getProducedAmount(entry, itemId);
-  const directLabor = getDiscountedLabor(
-    craft.labor,
-    craft.proficiency,
-    proficiencyMap,
-  );
-
-  const materialsCost = materials.reduce((sum, { item, amount }) => {
-    const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
-    const unit =
-      getMode(item.id) === "craft" && isCraftable
-        ? getCraftCostPerUnit(
-            item.id,
-            subcraftMap,
-            priceMap,
-            overrideMap,
-            resolvedModes,
-            4 - depth,
-          )
-        : getItemPrice(item.id, priceMap, overrideMap);
-    return sum + unit * amount;
-  }, 0);
-
-  const subcraftLabor = materials.reduce((sum, { item, amount }) => {
-    const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
-    if (getMode(item.id) !== "craft" || !isCraftable) return sum;
-    return (
-      sum +
-      getCraftLaborPerUnit(
-        item.id,
-        subcraftMap,
-        proficiencyMap,
-        resolvedModes,
-        4 - depth,
-      ) *
-        amount
-    );
-  }, 0);
-
-  const totalLaborPerBatch = directLabor + subcraftLabor;
-  const costPerUnit = producedAmount > 0 ? materialsCost / producedAmount : 0;
-  const laborPerUnit =
-    producedAmount > 0 ? totalLaborPerBatch / producedAmount : 0;
-
-  const defaultSalePrice = getItemPrice(itemId, priceMap, overrideMap);
+  const defaultSalePrice = getItemPrice(producedItemId, priceMap, overrideMap);
   const localSaleOverride = parseFinitePrice(localSalePrice);
   const effectiveSalePrice =
     localSalePrice.trim() !== "" &&
@@ -299,9 +205,66 @@ function CraftRecipe({
     localSaleOverride >= 0
       ? localSaleOverride
       : defaultSalePrice;
-  const profitPerUnit = effectiveSalePrice - costPerUnit;
-  const silverPerLabor =
-    laborPerUnit > 0 ? (profitPerUnit * 100) / laborPerUnit : null;
+
+  const metrics = useMemo(
+    () =>
+      computeManualCraftMetrics(
+        entry,
+        producedItemId,
+        effectiveSalePrice,
+        {
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          maxDepth: 4,
+        },
+        resolvedModes,
+        resolvedSelectedCrafts,
+        depth,
+      ),
+    [
+      depth,
+      effectiveSalePrice,
+      entry,
+      overrideMap,
+      priceMap,
+      producedItemId,
+      proficiencyMap,
+      resolvedModes,
+      resolvedSelectedCrafts,
+      subcraftMap,
+    ],
+  );
+
+  const applyAutoPlan = (objective: OptimizationObjective) => {
+    const candidateEntries: AnyCraftEntry[] =
+      depth === 0 ? [entry] : (subcraftMap[producedItemId] ?? [entry]);
+    const plan = buildAutoPlan(
+      candidateEntries,
+      producedItemId,
+      effectiveSalePrice,
+      {
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        proficiencyMap,
+        maxDepth: 4,
+      },
+      objective,
+    );
+    if (!plan) return;
+
+    updateModes((prev) => ({
+      ...prev,
+      ...plan.modes,
+    }));
+    updateSelectedCrafts((prev) => ({
+      ...prev,
+      ...(depth > 0 ? { [producedItemId]: plan.entry.craft.id } : {}),
+      ...plan.selectedCrafts,
+    }));
+  };
 
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
   const hasCraftable = materials.some(
@@ -313,8 +276,8 @@ function CraftRecipe({
       <RecipeHeader
         depth={depth}
         title={craft.name}
-        laborLabel={craft.labor > 0 ? `${directLabor} labor` : null}
-        materialsLabel={hasPrices ? formatGold(materialsCost) : null}
+        laborLabel={craft.labor > 0 ? `${metrics.directLabor} labor` : null}
+        materialsLabel={hasPrices ? formatGold(metrics.materialsCost) : null}
         collapseToggle={
           <RecipeCollapseToggle
             collapsed={isCollapsed}
@@ -325,7 +288,12 @@ function CraftRecipe({
           depth === 0 ? (
             <Link
               to="/shoplist"
-              search={{ craft: craft.id, qty: 1 }}
+              search={{
+                craft: craft.id,
+                qty: 1,
+                sub: serializeCraftModeSearch(resolvedModes),
+                sel: serializeSelectedCraftsSearch(resolvedSelectedCrafts),
+              }}
               className="text-muted-foreground text-xs hover:underline"
             >
               Shoplist →
@@ -336,6 +304,27 @@ function CraftRecipe({
 
       {!isCollapsed && (
         <>
+          {hasCraftable ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => applyAutoPlan("profit")}
+              >
+                Most profitable
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => applyAutoPlan("silverPerLabor")}
+              >
+                Best silver / labor
+              </Button>
+            </div>
+          ) : null}
+
           {depth === 0 && (
             <div className="mb-4 flex flex-col gap-3 rounded-md border p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -368,45 +357,46 @@ function CraftRecipe({
                   label="Sale price"
                   value={formatGold(effectiveSalePrice)}
                 />
-                <StatCard label="Cost / unit" value={formatGold(costPerUnit)} />
+                <StatCard
+                  label="Cost / unit"
+                  value={formatGold(metrics.costPerUnit)}
+                />
                 <StatCard
                   label="Profit / unit"
-                  value={formatGold(profitPerUnit)}
-                  variant={getVariant(profitPerUnit)}
+                  value={formatGold(metrics.profitPerUnit)}
+                  variant={getVariant(metrics.profitPerUnit)}
                 />
                 <StatCard
                   label="Silver / labor"
-                  value={
-                    silverPerLabor == null
-                      ? "—"
-                      : formatSilverPerLabor(silverPerLabor)
-                  }
-                  variant={
-                    silverPerLabor == null
-                      ? "neutral"
-                      : getVariant(silverPerLabor)
-                  }
+                  value={formatSilverPerLaborValue(
+                    metrics.silverPerLaborState,
+                    metrics.silverPerLabor,
+                  )}
+                  variant={getSilverPerLaborVariant(
+                    metrics.silverPerLaborState,
+                    metrics.silverPerLabor,
+                  )}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard
                   label="Batch cost"
-                  value={formatGold(materialsCost)}
+                  value={formatGold(metrics.materialsCost)}
                 />
                 <StatCard
                   label="Items / batch"
-                  value={producedAmount.toLocaleString()}
+                  value={metrics.producedAmount.toLocaleString()}
                 />
                 <StatCard
                   label="Labor / batch"
-                  value={totalLaborPerBatch.toLocaleString(undefined, {
+                  value={metrics.totalLaborPerBatch.toLocaleString(undefined, {
                     maximumFractionDigits: 2,
                   })}
                 />
                 <StatCard
                   label="Labor / unit"
-                  value={laborPerUnit.toLocaleString(undefined, {
+                  value={metrics.laborPerUnit.toLocaleString(undefined, {
                     maximumFractionDigits: 2,
                   })}
                 />
@@ -422,34 +412,34 @@ function CraftRecipe({
               const customPrice = overrideMap.get(item.id);
               const isCustom = customPrice != null;
               const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-              const craftUnit = isCraftable
-                ? getCraftCostPerUnit(
+              const selectedSubEntry = isCraftable
+                ? getSelectedEntry(item.id, subcraftMap, resolvedSelectedCrafts)
+                : null;
+              const craftedMetrics = selectedSubEntry
+                ? computeManualCraftMetrics(
+                    selectedSubEntry,
                     item.id,
-                    subcraftMap,
-                    priceMap,
-                    overrideMap,
+                    getItemPrice(item.id, priceMap, overrideMap),
+                    {
+                      subcraftMap,
+                      priceMap,
+                      overrideMap,
+                      proficiencyMap,
+                      maxDepth: 4,
+                    },
                     resolvedModes,
-                    4 - depth,
+                    resolvedSelectedCrafts,
+                    depth + 1,
                   )
-                : 0;
+                : null;
+              const craftUnit = craftedMetrics?.costPerUnit ?? 0;
               const unit =
                 mode === "craft" && isCraftable ? craftUnit : buyUnit;
               const lineTotal = unit * amount;
-              const hasPrice = isCustom || priceMap.has(item.id);
+              const hasPrice = hasItemPrice(item.id, priceMap, overrideMap);
               const totalDiff =
                 isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-              const subEntry = isCraftable
-                ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
-                : null;
-              const subLabor = subEntry
-                ? getCraftLaborPerUnit(
-                    item.id,
-                    subcraftMap,
-                    proficiencyMap,
-                    resolvedModes,
-                    4 - depth,
-                  )
-                : 0;
+              const subLabor = craftedMetrics?.laborPerUnit ?? 0;
 
               return (
                 <Fragment key={item.id}>
@@ -518,11 +508,11 @@ function CraftRecipe({
                     }
                   />
 
-                  {mode === "craft" && isCraftable && subEntry && (
+                  {mode === "craft" && isCraftable && selectedSubEntry && (
                     <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
                       <CraftRecipe
-                        entry={subEntry}
-                        itemId={itemId}
+                        entry={selectedSubEntry}
+                        producedItemId={item.id}
                         priceMap={priceMap}
                         overrideMap={overrideMap}
                         proficiencyMap={proficiencyMap}
@@ -530,6 +520,8 @@ function CraftRecipe({
                         depth={depth + 1}
                         modes={resolvedModes}
                         setModes={updateModes}
+                        selectedCrafts={resolvedSelectedCrafts}
+                        setSelectedCrafts={updateSelectedCrafts}
                         collapsedCraftIds={resolvedCollapsedCraftIds}
                         toggleCollapsed={updateCollapsed}
                       />
@@ -590,7 +582,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
             <CraftRecipe
               key={entry.craft.id}
               entry={entry}
-              itemId={item.id}
+              producedItemId={item.id}
               priceMap={priceMap}
               overrideMap={overrideMap}
               proficiencyMap={proficiencyMap}

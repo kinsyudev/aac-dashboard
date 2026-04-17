@@ -21,7 +21,10 @@ import {
   RecipeItemRow,
   RecipeLegend,
 } from "~/component/recipe-breakdown";
-import { pickPreferredCraft } from "~/lib/craft-helpers";
+import {
+  computeManualCraftMetrics,
+  getSelectedEntry,
+} from "~/lib/craft-optimizer";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
   getItemPrice,
@@ -39,6 +42,7 @@ const searchSchema = z
     qty: z.coerce.number().int().min(1).default(1),
     attempts: z.coerce.number().int().min(1).optional(),
     sub: z.string().optional(),
+    sel: z.string().optional(),
     listId: z.string().uuid().optional(),
   })
   .refine((value) => value.craft != null || value.simItem != null, {
@@ -121,6 +125,30 @@ interface ShoppingListItem {
   totalAmount: number;
 }
 
+type SelectedCraftMap = Record<number, number>;
+
+function parseSelectedCrafts(value: string | undefined): SelectedCraftMap {
+  if (!value) return {};
+
+  return value.split(",").reduce<SelectedCraftMap>((acc, part) => {
+    const [itemIdRaw, craftIdRaw] = part.split(":");
+    const itemId = Number(itemIdRaw);
+    const craftId = Number(craftIdRaw);
+    if (Number.isInteger(itemId) && Number.isInteger(craftId)) {
+      acc[itemId] = craftId;
+    }
+    return acc;
+  }, {});
+}
+
+function getChosenSubcraft(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  selectedCrafts: SelectedCraftMap,
+): SubcraftEntry | null {
+  return getSelectedEntry(itemId, subcraftMap, selectedCrafts);
+}
+
 function buildShoppingList(
   materials: {
     item: { id: number; name: string; icon: string | null };
@@ -128,6 +156,7 @@ function buildShoppingList(
   }[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
+  selectedCrafts: SelectedCraftMap,
   depth: number,
   acc: Map<number, ShoppingListItem>,
   scaleFactor: number,
@@ -136,15 +165,15 @@ function buildShoppingList(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const subEntries = subcraftMap[item.id];
-      if (!subEntries?.length) continue;
-      const sub = pickPreferredCraft(subEntries, item.id);
+      const sub = getChosenSubcraft(item.id, subcraftMap, selectedCrafts);
+      if (!sub) continue;
       const produced =
         sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildShoppingList(
         sub.materials,
         craftModeSet,
         subcraftMap,
+        selectedCrafts,
         depth + 1,
         acc,
         scaled / produced,
@@ -165,6 +194,7 @@ function buildLaborByProficiency(
   materials: { item: { id: number }; amount: number }[],
   craftModeSet: Set<number>,
   subcraftMap: SubcraftMap,
+  selectedCrafts: SelectedCraftMap,
   depth: number,
   scaleFactor: number,
   acc: Map<string, number>,
@@ -184,9 +214,8 @@ function buildLaborByProficiency(
     const scaled = amount * scaleFactor;
     const isCraftable = depth < 4 && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
-      const subEntries = subcraftMap[item.id];
-      if (!subEntries?.length) continue;
-      const sub = pickPreferredCraft(subEntries, item.id);
+      const sub = getChosenSubcraft(item.id, subcraftMap, selectedCrafts);
+      if (!sub) continue;
       const produced =
         sub.products.find((p) => p.item.id === item.id)?.amount ?? 1;
       buildLaborByProficiency(
@@ -194,6 +223,7 @@ function buildLaborByProficiency(
         sub.materials,
         craftModeSet,
         subcraftMap,
+        selectedCrafts,
         depth + 1,
         scaled / produced,
         acc,
@@ -226,22 +256,26 @@ function ShareButton() {
 
 function RecipeTree({
   entry,
+  producedItemId,
   priceMap,
   overrideMap,
   proficiencyMap,
   subcraftMap,
   craftModeSet,
+  selectedCrafts,
   toggleMode,
   collapsedCraftIds,
   toggleCollapsed,
   depth = 0,
 }: {
   entry: RecipeEntry | SubcraftEntry;
+  producedItemId: number;
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   proficiencyMap: ProficiencyMap;
   subcraftMap: SubcraftMap;
   craftModeSet: Set<number>;
+  selectedCrafts: SelectedCraftMap;
   toggleMode: (itemId: number) => void;
   collapsedCraftIds: Set<number>;
   toggleCollapsed: (craftId: number) => void;
@@ -249,28 +283,42 @@ function RecipeTree({
 }) {
   const { craft, materials } = entry;
   const isCollapsed = collapsedCraftIds.has(craft.id);
-
-  const getCraftCostPerUnit = (itemId: number): number => {
-    const subEntries = subcraftMap[itemId];
-    if (!subEntries) return 0;
-    const sub = pickPreferredCraft(subEntries, itemId);
-    const batchCost = sub.materials.reduce((sum, { item, amount }) => {
-      return sum + getItemPrice(item.id, priceMap, overrideMap) * amount;
-    }, 0);
-    const produced =
-      sub.products.find((p) => p.item.id === itemId)?.amount ?? 1;
-    return batchCost / produced;
-  };
-
-  const total = materials.reduce((sum, { item, amount }) => {
-    const isCraftable = depth < 4 && !!subcraftMap[item.id];
-    const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-    const unit =
-      craftModeSet.has(item.id) && isCraftable
-        ? getCraftCostPerUnit(item.id)
-        : buyUnit;
-    return sum + unit * amount;
-  }, 0);
+  const modes = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(craftModeSet).map((itemId) => [itemId, "craft" as const]),
+      ),
+    [craftModeSet],
+  );
+  const metrics = useMemo(
+    () =>
+      computeManualCraftMetrics(
+        entry,
+        producedItemId,
+        0,
+        {
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          maxDepth: 4,
+        },
+        modes,
+        selectedCrafts,
+        depth,
+      ),
+    [
+      depth,
+      entry,
+      modes,
+      overrideMap,
+      priceMap,
+      producedItemId,
+      proficiencyMap,
+      selectedCrafts,
+      subcraftMap,
+    ],
+  );
 
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
   const hasCraftable = materials.some(
@@ -290,7 +338,7 @@ function RecipeTree({
         }
         materialsLabel={
           hasPrices
-            ? `${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
+            ? `${metrics.materialsCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}g`
             : null
         }
         collapseToggle={
@@ -312,16 +360,33 @@ function RecipeTree({
               const buyUnit = isCustom
                 ? customPrice
                 : getItemPrice(item.id, priceMap, overrideMap);
-              const craftUnit = isCraftable ? getCraftCostPerUnit(item.id) : 0;
+              const subEntry = isCraftable
+                ? getChosenSubcraft(item.id, subcraftMap, selectedCrafts)
+                : null;
+              const craftedMetrics = subEntry
+                ? computeManualCraftMetrics(
+                    subEntry,
+                    item.id,
+                    getItemPrice(item.id, priceMap, overrideMap),
+                    {
+                      subcraftMap,
+                      priceMap,
+                      overrideMap,
+                      proficiencyMap,
+                      maxDepth: 4,
+                    },
+                    modes,
+                    selectedCrafts,
+                    depth + 1,
+                  )
+                : null;
+              const craftUnit = craftedMetrics?.costPerUnit ?? 0;
               const unit =
                 mode === "craft" && isCraftable ? craftUnit : buyUnit;
               const lineTotal = unit * amount;
               const hasPrice = buyUnit > 0;
               const totalDiff =
                 isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-              const subEntry = isCraftable
-                ? pickPreferredCraft(subcraftMap[item.id] ?? [], item.id)
-                : null;
               const subLabor = subEntry
                 ? getDiscountedLabor(
                     subEntry.craft.labor,
@@ -401,11 +466,13 @@ function RecipeTree({
                     <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
                       <RecipeTree
                         entry={subEntry}
+                        producedItemId={item.id}
                         priceMap={priceMap}
                         overrideMap={overrideMap}
                         proficiencyMap={proficiencyMap}
                         subcraftMap={subcraftMap}
                         craftModeSet={craftModeSet}
+                        selectedCrafts={selectedCrafts}
                         toggleMode={toggleMode}
                         collapsedCraftIds={collapsedCraftIds}
                         toggleCollapsed={toggleCollapsed}
@@ -437,7 +504,7 @@ function ShoplistDetail({
   const trpc = useTRPC();
   const navigate = useNavigate({ from: "/shoplist" });
   const queryClient = useQueryClient();
-  const { qty, sub, attempts, listId } = Route.useSearch();
+  const { qty, sub, sel, attempts, listId } = Route.useSearch();
   const isSimulator = simItemId != null;
 
   const craftQuery = useQuery({
@@ -502,6 +569,7 @@ function ShoplistDetail({
       ),
     [craftModeSet],
   );
+  const selectedCrafts = useMemo(() => parseSelectedCrafts(sel), [sel]);
   const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -670,6 +738,7 @@ function ShoplistDetail({
         data.materials,
         craftModeSet,
         craftSubcraftMap,
+        selectedCrafts,
         0,
         acc,
         qty,
@@ -685,6 +754,7 @@ function ShoplistDetail({
         data.materials,
         craftModeSet,
         craftSubcraftMap,
+        selectedCrafts,
         0,
         qty,
         acc,
@@ -717,6 +787,8 @@ function ShoplistDetail({
           {
             title: "Recipe",
             entry: scaledEntry,
+            producedItemId:
+              data.item?.id ?? data.products[0]?.item.id ?? data.craft.id,
             note: null,
             subcraftMap: craftSubcraftMap,
           },
@@ -726,6 +798,7 @@ function ShoplistDetail({
         priceMap={priceMap}
         overrideMap={overrideMap}
         craftModeSet={craftModeSet}
+        selectedCrafts={selectedCrafts}
         proficiencyMap={proficiencyMap}
         toggleMode={toggleMode}
         collapsedCraftIds={collapsedCraftIds}
@@ -775,6 +848,7 @@ function ShoplistDetail({
       simulatorCraft.materials,
       craftModeSet,
       simulatorSubcraftMap,
+      selectedCrafts,
       0,
       acc,
       effectiveQty,
@@ -784,6 +858,7 @@ function ShoplistDetail({
         finalUpgradeEntry.materials,
         craftModeSet,
         finalUpgradeSubcraftMap,
+        selectedCrafts,
         0,
         acc,
         1,
@@ -800,6 +875,7 @@ function ShoplistDetail({
       simulatorCraft.materials,
       craftModeSet,
       simulatorSubcraftMap,
+      selectedCrafts,
       0,
       effectiveQty,
       acc,
@@ -811,6 +887,7 @@ function ShoplistDetail({
         finalUpgradeEntry.materials,
         craftModeSet,
         finalUpgradeSubcraftMap,
+        selectedCrafts,
         0,
         1,
         acc,
@@ -842,6 +919,7 @@ function ShoplistDetail({
         {
           title: "Attempt chain",
           entry: scaledAttemptEntry,
+          producedItemId: simulatorSource.item.id,
           note: null,
           subcraftMap: simulatorSubcraftMap,
         },
@@ -850,6 +928,10 @@ function ShoplistDetail({
               {
                 title: "Final upgrade",
                 entry: finalUpgradeEntry,
+                producedItemId:
+                  ayanadItem?.id ??
+                  finalUpgradeEntry.products[0]?.item.id ??
+                  finalUpgradeEntry.craft.id,
                 note: simulatorChain.keyMaterialName
                   ? `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
                   : null,
@@ -863,6 +945,7 @@ function ShoplistDetail({
       priceMap={priceMap}
       overrideMap={overrideMap}
       craftModeSet={craftModeSet}
+      selectedCrafts={selectedCrafts}
       proficiencyMap={proficiencyMap}
       toggleMode={toggleMode}
       collapsedCraftIds={collapsedCraftIds}
@@ -891,6 +974,7 @@ function ShoplistLayout({
   priceMap,
   overrideMap,
   craftModeSet,
+  selectedCrafts,
   proficiencyMap,
   toggleMode,
   collapsedCraftIds,
@@ -912,6 +996,7 @@ function ShoplistLayout({
   recipeSections: {
     title: string;
     entry: RecipeEntry;
+    producedItemId: number;
     note: string | null;
     subcraftMap: SubcraftMap;
   }[];
@@ -920,6 +1005,7 @@ function ShoplistLayout({
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   craftModeSet: Set<number>;
+  selectedCrafts: SelectedCraftMap;
   proficiencyMap: ProficiencyMap;
   toggleMode: (itemId: number) => void;
   collapsedCraftIds: Set<number>;
@@ -1017,11 +1103,13 @@ function ShoplistLayout({
           ) : null}
           <RecipeTree
             entry={section.entry}
+            producedItemId={section.producedItemId}
             priceMap={priceMap}
             overrideMap={overrideMap}
             proficiencyMap={proficiencyMap}
             subcraftMap={section.subcraftMap}
             craftModeSet={craftModeSet}
+            selectedCrafts={selectedCrafts}
             toggleMode={toggleMode}
             collapsedCraftIds={collapsedCraftIds}
             toggleCollapsed={toggleCollapsed}
