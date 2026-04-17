@@ -10,10 +10,7 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
-import type {
-  ModesMap,
-  OptimizationObjective,
-} from "~/lib/craft-optimizer";
+import type { ModesMap, OptimizationObjective } from "~/lib/craft-optimizer";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
@@ -980,7 +977,6 @@ function ShoplistDetail({
         listName={listName}
         setListName={setListName}
         listId={listId}
-        sourceId={sourceId}
         persistListLabel={
           editingCraftSource
             ? "Update multiplayer recipe"
@@ -1144,7 +1140,6 @@ function ShoplistDetail({
       listName={listName}
       setListName={setListName}
       listId={listId}
-      sourceId={sourceId}
       persistListLabel={
         editingSimulatorList
           ? "Update multiplayer list"
