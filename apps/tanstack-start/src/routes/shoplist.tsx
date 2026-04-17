@@ -2,7 +2,12 @@ import type { inferProcedureOutput } from "@trpc/server";
 import type React from "react";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  notFound,
+  useNavigate,
+} from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -22,6 +27,7 @@ import {
   RecipeItemRow,
   RecipeLegend,
 } from "~/component/recipe-breakdown";
+import { StatusPage } from "~/component/status-page";
 import {
   buildAutoPlan,
   computeManualCraftMetrics,
@@ -29,6 +35,7 @@ import {
   MAX_CRAFT_DEPTH,
   parseFinitePrice,
 } from "~/lib/craft-optimizer";
+import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
   getItemPrice,
@@ -63,28 +70,58 @@ export const Route = createFileRoute("/shoplist")({
   loader: async ({ context, deps }) => {
     const { trpc, queryClient } = context;
     if (deps.simItemId != null) {
-      await queryClient.fetchQuery(
+      const data = await queryClient.fetchQuery(
         trpc.crafts.forItem.queryOptions(deps.simItemId),
       );
-      return;
+      if (!data) {
+        notFound({ throw: true });
+        throw new Error(
+          "Shoplist simulator loader reached an impossible state.",
+        );
+      }
+      const resolvedData = data;
+      return {
+        icon: resolvedData.item.icon,
+        kind: "simulator" as const,
+        title: resolvedData.item.name,
+      };
     }
-    if (deps.craftId == null) return;
-    await queryClient.fetchQuery(
-      trpc.crafts.forCraft.queryOptions(deps.craftId),
+    if (deps.craftId == null) {
+      notFound({ throw: true });
+      throw new Error("Shoplist craft loader reached an impossible state.");
+    }
+    const craftId = deps.craftId;
+    const data = await queryClient.fetchQuery(
+      trpc.crafts.forCraft.queryOptions(craftId),
     );
+    if (!data) {
+      notFound({ throw: true });
+      throw new Error("Shoplist craft loader reached an impossible state.");
+    }
+    const resolvedData = data;
+    return {
+      icon: resolvedData.item?.icon ?? null,
+      kind: "craft" as const,
+      title: resolvedData.item?.name ?? resolvedData.craft.name,
+    };
   },
+  head: ({ loaderData }) => ({
+    meta: buildMetaTags({
+      title: buildPageTitle(loaderData?.title, "Shoplist"),
+      description:
+        loaderData?.kind === "simulator"
+          ? `Plan required materials and attempt counts for ${loaderData.title}.`
+          : `Plan required materials and crafting inputs for ${loaderData?.title ?? "this craft"}.`,
+      image: getItemIconUrl(loaderData?.icon),
+    }),
+  }),
   component: ShoplistPage,
-  errorComponent: () => <p>Craft not found.</p>,
 });
 
 function ShoplistPage() {
   const { craft: craftId, simItem: simItemId } = Route.useSearch();
   if (craftId == null && simItemId == null) {
-    return (
-      <main className="container py-16">
-        <p>Craft not found.</p>
-      </main>
-    );
+    return <StatusPage variant="not-found" />;
   }
   return (
     <main className="container py-16">
@@ -883,14 +920,14 @@ function ShoplistDetail({
     },
   });
 
-  if (!isSimulator && !craftData) return <p>Craft not found.</p>;
+  if (!isSimulator && !craftData) return <StatusPage variant="not-found" />;
   if (isSimulator && (!simulatorData || !simulatorMainCraft)) {
-    return <p>Craft not found.</p>;
+    return <StatusPage variant="not-found" />;
   }
 
   if (!isSimulator) {
     if (!craftData) {
-      return <p>Craft not found.</p>;
+      return <StatusPage variant="not-found" />;
     }
     const data = craftData;
     const scaledEntry: RecipeEntry = {
@@ -1000,7 +1037,7 @@ function ShoplistDetail({
   const simulatorSource = simulatorData;
   const simulatorCraft = simulatorMainCraft;
   if (!simulatorSource || !simulatorCraft) {
-    return <p>Craft not found.</p>;
+    return <StatusPage variant="not-found" />;
   }
 
   const simulatorChain = getSimulationChain(

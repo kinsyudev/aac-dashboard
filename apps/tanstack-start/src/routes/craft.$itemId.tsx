@@ -1,8 +1,7 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import type { Dispatch, SetStateAction } from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -39,7 +38,7 @@ import {
   MAX_CRAFT_DEPTH,
   parseFinitePrice,
 } from "~/lib/craft-optimizer";
-import { useTRPC } from "~/lib/trpc";
+import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/craft/$itemId")({
@@ -55,14 +54,27 @@ export const Route = createFileRoute("/craft/$itemId")({
     const data = await queryClient.fetchQuery(
       trpc.crafts.forItem.queryOptions(params.itemId),
     );
-    if (!data) return;
+    if (!data) {
+      notFound({ throw: true });
+      throw new Error("Craft detail loader reached an impossible state.");
+    }
+    return data;
+  },
+  head: ({ loaderData }) => {
+    if (!loaderData) return {};
+    const item = loaderData.item;
+    return {
+      meta: buildMetaTags({
+        title: buildPageTitle(item.name, "Craft"),
+        description: `Inspect recipe costs, materials, and craft-path choices for ${item.name}.`,
+        image: getItemIconUrl(item.icon),
+      }),
+    };
   },
   component: RouteComponent,
-  notFoundComponent: () => <p>Item not found.</p>,
 });
 
 function RouteComponent() {
-  const { itemId } = Route.useParams();
   const { listId } = Route.useSearch();
   return (
     <main className="container py-16">
@@ -74,7 +86,7 @@ function RouteComponent() {
         ← Back to list
       </Link>
       <Suspense fallback={<p>Loading...</p>}>
-        <ItemDetail itemId={itemId} listId={listId} />
+        <ItemDetail listId={listId} />
       </Suspense>
     </main>
   );
@@ -551,17 +563,14 @@ function CraftRecipe({
   );
 }
 
-function ItemDetail({ itemId, listId }: { itemId: number; listId?: string }) {
-  const trpc = useTRPC();
-  const { data } = useSuspenseQuery(trpc.crafts.forItem.queryOptions(itemId));
+function ItemDetail({ listId }: { listId?: string }) {
+  const data = Route.useLoaderData();
   const { proficiencyMap, overrideMap } = useUserData();
 
   const priceMap: PriceMap = useMemo(
-    () => new Map(data?.prices.map((p) => [p.itemId, p])),
+    () => new Map(data.prices.map((p) => [p.itemId, p])),
     [data],
   );
-
-  if (!data) return <p>Item not found.</p>;
 
   const { item, crafts } = data;
 

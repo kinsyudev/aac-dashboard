@@ -1,7 +1,7 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import { Fragment, Suspense, useMemo, useState } from "react";
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -19,6 +19,7 @@ import {
 } from "~/component/recipe-breakdown";
 import { StatCard } from "~/component/stat-card";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
+import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
 import {
@@ -43,14 +44,27 @@ export const Route = createFileRoute("/simulator/$itemId")({
     const data = await queryClient.fetchQuery(
       trpc.crafts.forItem.queryOptions(params.itemId),
     );
-    if (!data) return;
+    if (!data) {
+      notFound({ throw: true });
+      throw new Error("Simulator detail loader reached an impossible state.");
+    }
+    return data;
+  },
+  head: ({ loaderData }) => {
+    if (!loaderData) return {};
+    const item = loaderData.item;
+    return {
+      meta: buildMetaTags({
+        title: buildPageTitle(item.name, "Simulator"),
+        description: `Simulate the crafting chain, costs, and profitability for ${item.name}.`,
+        image: getItemIconUrl(item.icon),
+      }),
+    };
   },
   component: SimulatorItemPage,
-  notFoundComponent: () => <p>Item not found.</p>,
 });
 
 function SimulatorItemPage() {
-  const { itemId } = Route.useParams();
   return (
     <main className="container py-16">
       <Link
@@ -60,7 +74,7 @@ function SimulatorItemPage() {
         ← Back to search
       </Link>
       <Suspense fallback={<p>Loading...</p>}>
-        <SimulatorDetail itemId={itemId} />
+        <SimulatorDetail />
       </Suspense>
     </main>
   );
@@ -391,9 +405,9 @@ function collectCraftExecutionsForItem(
   }
 }
 
-function SimulatorDetail({ itemId }: { itemId: number }) {
+function SimulatorDetail() {
   const trpc = useTRPC();
-  const { data } = useSuspenseQuery(trpc.crafts.forItem.queryOptions(itemId));
+  const data = Route.useLoaderData();
   const { proficiencyMap, overrideMap } = useUserData();
   const [modes, setModes] = useState<Record<number, CraftMode>>({});
   const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
@@ -402,22 +416,17 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   const [localSalePrice, setLocalSalePrice] = useState("");
 
   const priceMap: PriceMap = useMemo(
-    () => new Map(data?.prices.map((p) => [p.itemId, p])),
+    () => new Map(data.prices.map((p) => [p.itemId, p])),
     [data],
   );
 
-  const equip = useMemo(
-    () => (data ? detectPieceAndTier(data.item.name) : null),
-    [data],
-  );
+  const equip = useMemo(() => detectPieceAndTier(data.item.name), [data]);
 
   const wisp = useMemo(
-    () => (data ? findWispInChain(data, priceMap, overrideMap) : null),
+    () => findWispInChain(data, priceMap, overrideMap),
     [data, priceMap, overrideMap],
   );
-  const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(
-    data?.item.name ?? null,
-  );
+  const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(data.item.name);
   const ayanadPriceQuery = useQuery({
     ...trpc.items.price.queryOptions(ayanadItem?.id ?? -1),
     enabled: ayanadItem?.id != null,
@@ -436,7 +445,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   }, [defaultSalePrice, localSalePrice]);
 
   const mainCraft = useMemo(() => {
-    if (!data?.crafts.length) return null;
+    if (!data.crafts.length) return null;
     const subcraftMap = data.subcraftsByItemId;
     return pickCheapestCraftForItem(
       data.crafts,
@@ -463,7 +472,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;
 
   const recommendedModes = useMemo(() => {
-    if (!data || !mainCraft) return {};
+    if (!mainCraft) return {};
     return buildRecommendedModes(
       mainCraft.materials,
       data.subcraftsByItemId,
@@ -477,7 +486,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   );
 
   const simulationData = useMemo(() => {
-    if (!data || !equip || !mainCraft || !wisp) return null;
+    if (!equip || !mainCraft || !wisp) return null;
 
     const subcraftMap = data.subcraftsByItemId;
     const itemName = data.item.name.toLowerCase();
@@ -620,7 +629,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
   ]);
 
   const craftExecutions = useMemo(() => {
-    if (!data || !simulationData) return [];
+    if (!simulationData) return [];
 
     const acc = new Map<number, CraftExecution>();
     const subcraftMap = data.subcraftsByItemId;
@@ -748,7 +757,7 @@ function SimulatorDetail({ itemId }: { itemId: number }) {
     return [...acc.entries()].sort((a, b) => b[1] - a[1]);
   }, [craftExecutions]);
 
-  if (!data || !equip) {
+  if (!equip) {
     return (
       <p className="text-muted-foreground text-sm">
         Could not detect tier/piece for this item.

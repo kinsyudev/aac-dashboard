@@ -8,6 +8,7 @@ import { Button } from "@acme/ui/button";
 import { toast } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
+import { StatusPage } from "~/component/status-page";
 import { useTRPC } from "~/lib/trpc";
 
 type AcceptInviteResult = inferProcedureOutput<
@@ -50,6 +51,10 @@ function InviteAcceptancePage() {
     }),
   );
 
+  if (!isLoading && !data) {
+    return <StatusPage variant="not-found" />;
+  }
+
   return (
     <main className="container py-16">
       <div className="mx-auto flex max-w-xl flex-col gap-6 rounded-xl border p-8">
@@ -61,11 +66,6 @@ function InviteAcceptancePage() {
         </div>
 
         {isLoading ? <p>Loading invite...</p> : null}
-
-        {!isLoading && !data ? (
-          <p className="text-sm">Invite not found.</p>
-        ) : null}
-
         {data ? (
           <>
             <div className="rounded-lg border p-4">

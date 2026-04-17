@@ -1,7 +1,6 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import { Suspense, useDeferredValue, useMemo, useState } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -26,8 +25,13 @@ import { Input } from "@acme/ui/input";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
+import {
+  buildMetaTags,
+  buildPageTitle,
+  getItemIconUrl,
+  normalizeMetaDescription,
+} from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
-import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/item/$itemId")({
@@ -42,10 +46,29 @@ export const Route = createFileRoute("/item/$itemId")({
     const data = await queryClient.fetchQuery(
       trpc.items.detail.queryOptions(params.itemId),
     );
-    if (!data) return;
+    if (!data) {
+      notFound({ throw: true });
+      throw new Error("Item detail loader reached an impossible state.");
+    }
+    return data;
+  },
+  head: ({ loaderData }) => {
+    if (!loaderData) return {};
+    const item = loaderData.item;
+    const title = buildPageTitle(item.name, "Items");
+    const description =
+      normalizeMetaDescription(item.description) ??
+      `Inspect ${item.name} price history, volume, and related ArcheAge Classic recipes.`;
+
+    return {
+      meta: buildMetaTags({
+        title,
+        description,
+        image: getItemIconUrl(item.icon),
+      }),
+    };
   },
   component: RouteComponent,
-  notFoundComponent: () => <p>Item not found.</p>,
 });
 
 type ItemDetailData = NonNullable<
@@ -756,19 +779,16 @@ function RecipeSection({
 }
 
 function ItemDetail({ itemId }: { itemId: number }) {
-  const trpc = useTRPC();
-  const { data } = useSuspenseQuery(trpc.items.detail.queryOptions(itemId));
+  const data = Route.useLoaderData();
 
   const priceMap = useMemo(
-    () => new Map(data?.latestPrices.map((price) => [price.itemId, price])),
+    () => new Map(data.latestPrices.map((price) => [price.itemId, price])),
     [data],
   );
   const craftableItemIds = useMemo(
-    () => new Set(data?.craftableItemIds ?? []),
+    () => new Set(data.craftableItemIds),
     [data],
   );
-
-  if (!data) return <p>Item not found.</p>;
 
   const dailyHistory = collapseHistoryByDay(data.priceHistory);
   const latestSnapshot = dailyHistory.at(-1);

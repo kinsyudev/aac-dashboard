@@ -4,6 +4,8 @@ import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import SuperJSON from "superjson";
 
+import { StatusPage } from "~/component/status-page";
+import { RouteErrorBoundary } from "~/lib/route-error";
 import { makeTRPCClient, TRPCProvider } from "~/lib/trpc";
 import { routeTree } from "./routeTree.gen";
 
@@ -24,6 +26,9 @@ export function getRouter() {
     routeTree,
     context: { queryClient, trpc },
     defaultPreload: "intent",
+    defaultErrorComponent: RouteErrorBoundary,
+    defaultNotFoundComponent: () => <StatusPage variant="not-found" />,
+    notFoundMode: "root",
     Wrap: (props) => (
       <TRPCProvider
         trpcClient={trpcClient}

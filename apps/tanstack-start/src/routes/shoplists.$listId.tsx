@@ -20,15 +20,25 @@ import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
 import { ItemIcon } from "~/component/item-icon";
+import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/shoplists/$listId")({
   loader: ({ context, params }) => {
-    void context.queryClient.prefetchQuery(
+    return context.queryClient.fetchQuery(
       context.trpc.shoppingLists.getById.queryOptions(params.listId),
     );
   },
+  head: ({ loaderData }) => ({
+    meta: buildMetaTags({
+      title: buildPageTitle(loaderData?.list.name, "Shopping Lists"),
+      description: loaderData?.list.primarySourceItem?.name
+        ? `Track remaining materials and shared progress for ${loaderData.list.name} built around ${loaderData.list.primarySourceItem.name}.`
+        : `Track remaining materials and shared progress for ${loaderData?.list.name}.`,
+      image: getItemIconUrl(loaderData?.list.primarySourceItem?.icon),
+    }),
+  }),
   component: ShoppingListDetailPage,
 });
 

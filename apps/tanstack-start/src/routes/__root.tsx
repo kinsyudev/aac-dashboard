@@ -20,11 +20,16 @@ import { ThemeProvider, ThemeScript, ThemeToggle } from "@acme/ui/theme";
 import { Toaster } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
+import { StatusPage } from "~/component/status-page";
+import {
+  buildMetaTags,
+  getAppName,
+  getDefaultDescription,
+} from "~/lib/metadata";
 import appCss from "~/styles.css?url";
 
-const APP_NAME = "AAC Dashboard";
-const APP_DESCRIPTION =
-  "ArcheAge Classic crafting, simulation, shared shopping lists, and profile tools.";
+const APP_NAME = getAppName();
+const APP_DESCRIPTION = getDefaultDescription();
 const NAV_ITEMS = [
   { to: "/craft", label: "Craft" },
   { to: "/item", label: "Items" },
@@ -41,11 +46,12 @@ export const Route = createRootRouteWithContext<{
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: APP_NAME },
-      { name: "description", content: APP_DESCRIPTION },
       { property: "og:site_name", content: APP_NAME },
-      { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+      ...buildMetaTags({
+        title: APP_NAME,
+        description: APP_DESCRIPTION,
+      }),
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -59,6 +65,7 @@ export const Route = createRootRouteWithContext<{
     );
   },
   component: RootComponent,
+  notFoundComponent: () => <StatusPage variant="not-found" />,
 });
 
 function RootComponent() {

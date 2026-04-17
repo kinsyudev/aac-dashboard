@@ -1,21 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { authClient } from "~/auth/client";
+import { buildMetaTags, getAppName } from "~/lib/metadata";
 
-const APP_NAME = "AAC Dashboard";
+const APP_NAME = getAppName();
 const HOME_DESCRIPTION =
   "ArcheAge Classic crafting, simulator, profile, and shopping list tools in one place.";
 
 export const Route = createFileRoute("/")({
   head: () => ({
-    meta: [
-      { title: APP_NAME },
-      { name: "description", content: HOME_DESCRIPTION },
-      { property: "og:title", content: APP_NAME },
-      { property: "og:description", content: HOME_DESCRIPTION },
-      { name: "twitter:title", content: APP_NAME },
-      { name: "twitter:description", content: HOME_DESCRIPTION },
-    ],
+    meta: buildMetaTags({ title: APP_NAME, description: HOME_DESCRIPTION }),
   }),
   component: HomePage,
 });
@@ -48,12 +42,18 @@ function HomePage() {
           </p>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           <DashboardCard
             title="Craft"
             description="Search recipes, inspect materials, and move straight into an item breakdown."
             to="/craft"
             cta="Open craft search"
+          />
+          <DashboardCard
+            title="Items"
+            description="Browse item data, inspect price history, and trace the recipes that make or consume each item."
+            to="/item"
+            cta="Browse items"
           />
           <DashboardCard
             title="Simulator"
@@ -88,7 +88,7 @@ function DashboardCard({
   cta: string;
   description: string;
   title: string;
-  to: "/craft" | "/simulator" | "/shoplists" | "/profile";
+  to: "/craft" | "/item" | "/simulator" | "/shoplists" | "/profile";
 }) {
   return (
     <Link
