@@ -10,9 +10,10 @@ import {
   items,
   shoppingListCrafts,
   shoppingListItems,
+  shoppingListSources,
 } from "@acme/db/schema";
 
-const MAX_DEPTH = 4;
+const MAX_DEPTH = 8;
 type DbClient = typeof db;
 export type DbTx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
@@ -58,6 +59,8 @@ interface CraftBlueprint {
   products: ProductRow[];
   subcraftsByItemId: SubcraftMap;
 }
+type ShoppingListRow = typeof shoppingLists.$inferSelect;
+type ShoppingListSourceRow = typeof shoppingListSources.$inferSelect;
 
 function pickPreferredCraft<
   T extends { products: { item: { id: number }; amount: number }[] },
@@ -373,6 +376,147 @@ async function replaceListSnapshot(
   }
 }
 
+export async function getListSources(
+  dbClient: DbTx | DbClient,
+  shoppingListId: string,
+): Promise<ShoppingListSourceRow[]> {
+  return dbClient
+    .select()
+    .from(shoppingListSources)
+    .where(eq(shoppingListSources.shoppingListId, shoppingListId));
+}
+
+function mergeSnapshots(snapshots: Snapshot[]): Snapshot {
+  const mergedItems = new Map<number, SnapshotItemRow>();
+  const mergedCrafts = new Map<number, SnapshotCraftRow>();
+
+  for (const snapshot of snapshots) {
+    for (const row of snapshot.items) {
+      const existing = mergedItems.get(row.item.id);
+      if (existing) existing.requiredQuantity += row.requiredQuantity;
+      else mergedItems.set(row.item.id, { ...row });
+    }
+
+    for (const row of snapshot.crafts) {
+      const existing = mergedCrafts.get(row.craft.id);
+      if (existing) existing.requiredCount += row.requiredCount;
+      else mergedCrafts.set(row.craft.id, { ...row });
+    }
+  }
+
+  return {
+    items: Array.from(mergedItems.values()).sort((a, b) =>
+      a.item.name.localeCompare(b.item.name),
+    ),
+    crafts: Array.from(mergedCrafts.values()).sort((a, b) =>
+      a.craft.name.localeCompare(b.craft.name),
+    ),
+  };
+}
+
+function buildSnapshotForSimulatorSource(
+  blueprint: CraftBlueprint,
+  ayanadBlueprint: CraftBlueprint | null,
+  craftModeSet: Set<number>,
+  quantity: number,
+): Snapshot {
+  const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
+    ? {
+        craft: ayanadBlueprint.craft,
+        materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
+          const lower = material.item.name.toLowerCase();
+          return !(lower.includes("delphinad") || lower.includes("ayanad"));
+        }),
+        products: ayanadBlueprint.products,
+      }
+    : null;
+
+  return mergeSnapshots([
+    buildSnapshot(
+      {
+        craft: blueprint.craft,
+        materials: blueprint.materials,
+        products: blueprint.products,
+      },
+      craftModeSet,
+      blueprint.subcraftsByItemId,
+      quantity,
+    ),
+    finalUpgradeEntry
+      ? buildSnapshot(
+          finalUpgradeEntry,
+          craftModeSet,
+          ayanadBlueprint?.subcraftsByItemId ?? blueprint.subcraftsByItemId,
+          1,
+        )
+      : { items: [], crafts: [] },
+  ]);
+}
+
+async function buildSourceSnapshot(
+  tx: DbTx,
+  source: ShoppingListSourceRow,
+  craftModeSet: Set<number>,
+): Promise<Snapshot> {
+  const blueprint = await fetchCraftBlueprint(tx, source.craftId);
+
+  if (source.sourceType === "simulator") {
+    const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
+      tx,
+      blueprint.item,
+    );
+    return buildSnapshotForSimulatorSource(
+      blueprint,
+      ayanadBlueprint,
+      craftModeSet,
+      source.quantity,
+    );
+  }
+
+  return buildSnapshot(
+    {
+      craft: blueprint.craft,
+      materials: blueprint.materials,
+      products: blueprint.products,
+    },
+    craftModeSet,
+    blueprint.subcraftsByItemId,
+    source.quantity,
+  );
+}
+
+export function getSourceKind(
+  sources: Pick<ShoppingListSourceRow, "sourceType">[],
+): "empty" | "craft" | "simulator" {
+  if (sources.length === 0) return "empty";
+  return sources[0]?.sourceType === "simulator" ? "simulator" : "craft";
+}
+
+export function assertValidListSources(
+  sources: Pick<ShoppingListSourceRow, "sourceType">[],
+) {
+  if (sources.length === 0) return;
+
+  const hasCraft = sources.some((source) => source.sourceType === "craft");
+  const hasSimulator = sources.some(
+    (source) => source.sourceType === "simulator",
+  );
+
+  if (hasCraft && hasSimulator) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Shopping lists cannot mix craft and simulator sources.",
+    });
+  }
+
+  if (hasSimulator && sources.length > 1) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Simulator shopping lists can only have one source.",
+    });
+  }
+}
+
 export async function getExistingProgress(
   tx: DbTx,
   shoppingListId: string,
@@ -417,96 +561,26 @@ export async function getExistingProgress(
 
 export async function regenerateListState(
   tx: DbTx,
-  list: typeof shoppingLists.$inferSelect,
+  list: ShoppingListRow,
   progress?: {
     itemProgress?: Map<number, number>;
     craftProgress?: Map<number, number>;
   },
 ) {
   const craftModeSet = new Set(list.craftModeItemIds);
-  let snapshot: ReturnType<typeof buildSnapshot>;
-
-  if (list.sourceType === "simulator") {
-    const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
-      tx,
-      blueprint.item,
-    );
-    const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
-      ? {
-          craft: ayanadBlueprint.craft,
-          materials: ayanadBlueprint.materials.filter(
-            (material: MaterialRow) => {
-              const lower = material.item.name.toLowerCase();
-              return !(lower.includes("delphinad") || lower.includes("ayanad"));
-            },
-          ),
-          products: ayanadBlueprint.products,
-        }
-      : null;
-
-    const attemptSnapshot = buildSnapshot(
-      {
-        craft: blueprint.craft,
-        materials: blueprint.materials,
-        products: blueprint.products,
-      },
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      list.sourceQuantity,
-    );
-    const upgradeSnapshot = finalUpgradeEntry
-      ? buildSnapshot(
-          finalUpgradeEntry,
-          craftModeSet,
-          ayanadBlueprint?.subcraftsByItemId ?? blueprint.subcraftsByItemId,
-          1,
+  const sources = await getListSources(tx, list.id);
+  assertValidListSources(sources);
+  const snapshot = mergeSnapshots(
+    await Promise.all(
+      sources
+        .sort(
+          (a, b) =>
+            a.position - b.position ||
+            a.createdAt.getTime() - b.createdAt.getTime(),
         )
-      : { items: [], crafts: [] };
-
-    const mergedItems = new Map<
-      number,
-      { item: ItemRow; requiredQuantity: number }
-    >();
-    const mergedCrafts = new Map<
-      number,
-      { craft: CraftRow; requiredCount: number }
-    >();
-
-    for (const row of [...attemptSnapshot.items, ...upgradeSnapshot.items]) {
-      const existing = mergedItems.get(row.item.id);
-      if (existing) existing.requiredQuantity += row.requiredQuantity;
-      else mergedItems.set(row.item.id, { ...row });
-    }
-
-    for (const row of [...attemptSnapshot.crafts, ...upgradeSnapshot.crafts]) {
-      const existing = mergedCrafts.get(row.craft.id);
-      if (existing) existing.requiredCount += row.requiredCount;
-      else mergedCrafts.set(row.craft.id, { ...row });
-    }
-
-    snapshot = {
-      items: Array.from(mergedItems.values()).sort((a, b) =>
-        a.item.name.localeCompare(b.item.name),
-      ),
-      crafts: Array.from(mergedCrafts.values()).sort((a, b) =>
-        a.craft.name.localeCompare(b.craft.name),
-      ),
-    };
-  } else {
-    const blueprint = await fetchCraftBlueprint(tx, list.sourceCraftId);
-    const rootEntry: CraftEntry = {
-      craft: blueprint.craft,
-      materials: blueprint.materials,
-      products: blueprint.products,
-    };
-    snapshot = buildSnapshot(
-      rootEntry,
-      craftModeSet,
-      blueprint.subcraftsByItemId,
-      list.sourceQuantity,
-    );
-  }
+        .map((source) => buildSourceSnapshot(tx, source, craftModeSet)),
+    ),
+  );
 
   await replaceListSnapshot(tx, list.id, snapshot, progress);
 }

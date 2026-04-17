@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod/v4";
 
 import type { db } from "@acme/db/client";
-import { and, asc, desc, eq } from "@acme/db";
+import { and, asc, desc, eq, sql } from "@acme/db";
 import {
   crafts,
   items,
@@ -13,15 +13,19 @@ import {
   shoppingListMembers,
   shoppingListRoleEnum,
   shoppingLists,
+  shoppingListSources,
   shoppingListSourceTypeEnum,
   user,
 } from "@acme/db/schema";
 
 import type { DbTx } from "../lib/shopping-list-state";
 import {
+  assertValidListSources,
   fetchCraftBlueprint,
   getComputedUsage,
   getExistingProgress,
+  getListSources,
+  getSourceKind,
   regenerateListState,
 } from "../lib/shopping-list-state";
 import { protectedProcedure, publicProcedure } from "../trpc";
@@ -83,23 +87,121 @@ function buildInviteUrl(token: string) {
 const roleSchema = z.enum(shoppingListRoleEnum.enumValues);
 const sourceTypeSchema = z.enum(shoppingListSourceTypeEnum.enumValues);
 
+async function insertSource(
+  tx: DbTx,
+  input: {
+    shoppingListId: string;
+    sourceType: "craft" | "simulator";
+    craftId: number;
+    itemId: number | null;
+    quantity: number;
+  },
+) {
+  const [maxPositionRow] = await tx
+    .select({
+      value: sql<number>`coalesce(max(${shoppingListSources.position}), -1)`,
+    })
+    .from(shoppingListSources)
+    .where(eq(shoppingListSources.shoppingListId, input.shoppingListId));
+
+  const [created] = await tx
+    .insert(shoppingListSources)
+    .values({
+      shoppingListId: input.shoppingListId,
+      sourceType: input.sourceType,
+      craftId: input.craftId,
+      itemId: input.itemId,
+      quantity: input.quantity,
+      position: (maxPositionRow?.value ?? -1) + 1,
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  if (!created) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Shopping list source creation failed.",
+    });
+  }
+
+  return created;
+}
+
+async function getResolvedSources(dbClient: typeof db | DbTx, listId: string) {
+  return dbClient
+    .select({
+      id: shoppingListSources.id,
+      sourceType: shoppingListSources.sourceType,
+      craftId: shoppingListSources.craftId,
+      itemId: shoppingListSources.itemId,
+      quantity: shoppingListSources.quantity,
+      position: shoppingListSources.position,
+      createdAt: shoppingListSources.createdAt,
+      craft: {
+        id: crafts.id,
+        name: crafts.name,
+        proficiency: crafts.proficiency,
+        labor: crafts.labor,
+      },
+      item: {
+        id: items.id,
+        name: items.name,
+        icon: items.icon,
+      },
+    })
+    .from(shoppingListSources)
+    .innerJoin(crafts, eq(crafts.id, shoppingListSources.craftId))
+    .leftJoin(items, eq(items.id, shoppingListSources.itemId))
+    .where(eq(shoppingListSources.shoppingListId, listId))
+    .orderBy(
+      asc(shoppingListSources.position),
+      asc(shoppingListSources.createdAt),
+    );
+}
+
+function buildListSummary<
+  T extends {
+    sourceType: "craft" | "simulator";
+    quantity: number;
+    item: {
+      id: number | null;
+      name: string | null;
+      icon: string | null;
+    } | null;
+  },
+>(sources: T[]) {
+  const sourceKind = getSourceKind(sources);
+  const rootCount = sources.length;
+  const primarySourceItem = sources[0]?.item ?? null;
+  const totalQuantity = sources.reduce(
+    (sum, source) => sum + source.quantity,
+    0,
+  );
+
+  return {
+    sourceKind,
+    rootCount,
+    totalQuantity,
+    primarySourceItem,
+  };
+}
+
+function mergeCraftModeItemIds(current: number[], incoming?: number[]) {
+  return Array.from(new Set([...current, ...(incoming ?? [])])).sort(
+    (a, b) => a - b,
+  );
+}
+
 export const shoppingListsRouter = {
   listMineAndShared: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
 
-    const [owned, shared] = await Promise.all([
+    const [ownedLists, sharedLists] = await Promise.all([
       ctx.db
         .select({
           id: shoppingLists.id,
           name: shoppingLists.name,
-          sourceType: shoppingLists.sourceType,
-          sourceQuantity: shoppingLists.sourceQuantity,
           updatedAt: shoppingLists.updatedAt,
-          sourceItem: {
-            id: items.id,
-            name: items.name,
-            icon: items.icon,
-          },
           owner: {
             id: user.id,
             name: user.name,
@@ -108,22 +210,14 @@ export const shoppingListsRouter = {
         })
         .from(shoppingLists)
         .innerJoin(user, eq(user.id, shoppingLists.ownerUserId))
-        .leftJoin(items, eq(items.id, shoppingLists.sourceItemId))
         .where(eq(shoppingLists.ownerUserId, userId))
         .orderBy(desc(shoppingLists.updatedAt)),
       ctx.db
         .select({
           id: shoppingLists.id,
           name: shoppingLists.name,
-          sourceType: shoppingLists.sourceType,
-          sourceQuantity: shoppingLists.sourceQuantity,
           updatedAt: shoppingLists.updatedAt,
           role: shoppingListMembers.role,
-          sourceItem: {
-            id: items.id,
-            name: items.name,
-            icon: items.icon,
-          },
           owner: {
             id: user.id,
             name: user.name,
@@ -136,12 +230,77 @@ export const shoppingListsRouter = {
           eq(shoppingLists.id, shoppingListMembers.shoppingListId),
         )
         .innerJoin(user, eq(user.id, shoppingLists.ownerUserId))
-        .leftJoin(items, eq(items.id, shoppingLists.sourceItemId))
         .where(eq(shoppingListMembers.userId, userId))
         .orderBy(desc(shoppingLists.updatedAt)),
     ]);
 
-    return { owned, shared };
+    const sourceRows = await ctx.db
+      .select({
+        shoppingListId: shoppingListSources.shoppingListId,
+        sourceType: shoppingListSources.sourceType,
+        quantity: shoppingListSources.quantity,
+        position: shoppingListSources.position,
+        createdAt: shoppingListSources.createdAt,
+        item: {
+          id: items.id,
+          name: items.name,
+          icon: items.icon,
+        },
+      })
+      .from(shoppingListSources)
+      .leftJoin(items, eq(items.id, shoppingListSources.itemId));
+
+    const sourcesByListId = sourceRows.reduce<
+      Map<
+        string,
+        {
+          sourceType: "craft" | "simulator";
+          quantity: number;
+          position: number;
+          createdAt: Date;
+          item: {
+            id: number | null;
+            name: string | null;
+            icon: string | null;
+          } | null;
+        }[]
+      >
+    >((acc, row) => {
+      const existing = acc.get(row.shoppingListId) ?? [];
+      existing.push(row);
+      acc.set(row.shoppingListId, existing);
+      return acc;
+    }, new Map());
+
+    const mapList = <
+      T extends {
+        id: string;
+        name: string;
+        updatedAt: Date;
+        owner: { id: string; name: string; image: string | null };
+      },
+    >(
+      list: T,
+    ) => {
+      const sources =
+        sourcesByListId
+          .get(list.id)
+          ?.sort(
+            (a, b) =>
+              a.position - b.position ||
+              a.createdAt.getTime() - b.createdAt.getTime(),
+          ) ?? [];
+
+      return {
+        ...list,
+        ...buildListSummary(sources),
+      };
+    };
+
+    return {
+      owned: ownedLists.map(mapList),
+      shared: sharedLists.map(mapList),
+    };
   }),
 
   getById: protectedProcedure
@@ -150,74 +309,76 @@ export const shoppingListsRouter = {
       const access = await getListAccess(ctx.db, input, ctx.session.user.id);
       const shoppingListId = access.list.id;
 
-      const [itemRows, craftRows, memberRows, inviteRows] = await Promise.all([
-        ctx.db
-          .select({
-            itemId: shoppingListItems.itemId,
-            requiredQuantity: shoppingListItems.requiredQuantity,
-            stockQuantity: shoppingListItems.obtainedQuantity,
-            item: {
-              id: items.id,
-              name: items.name,
-              icon: items.icon,
-            },
-          })
-          .from(shoppingListItems)
-          .innerJoin(items, eq(items.id, shoppingListItems.itemId))
-          .where(eq(shoppingListItems.shoppingListId, shoppingListId))
-          .orderBy(asc(items.name)),
-        ctx.db
-          .select({
-            craftId: shoppingListCrafts.craftId,
-            requiredCount: shoppingListCrafts.requiredCount,
-            stockCount: shoppingListCrafts.completedCount,
-            craft: {
-              id: crafts.id,
-              name: crafts.name,
-              proficiency: crafts.proficiency,
-              labor: crafts.labor,
-            },
-            product: {
-              id: items.id,
-              name: items.name,
-              icon: items.icon,
-            },
-          })
-          .from(shoppingListCrafts)
-          .innerJoin(crafts, eq(crafts.id, shoppingListCrafts.craftId))
-          .leftJoin(items, eq(items.id, crafts.primaryProductId))
-          .where(eq(shoppingListCrafts.shoppingListId, shoppingListId))
-          .orderBy(asc(crafts.name)),
-        ctx.db
-          .select({
-            userId: shoppingListMembers.userId,
-            role: shoppingListMembers.role,
-            acceptedAt: shoppingListMembers.acceptedAt,
-            user: {
-              name: user.name,
-              image: user.image,
-            },
-          })
-          .from(shoppingListMembers)
-          .innerJoin(user, eq(user.id, shoppingListMembers.userId))
-          .where(eq(shoppingListMembers.shoppingListId, shoppingListId))
-          .orderBy(asc(user.name)),
-        access.isOwner
-          ? ctx.db
-              .select({
-                id: shoppingListInvites.id,
-                role: shoppingListInvites.role,
-                createdAt: shoppingListInvites.createdAt,
-                expiresAt: shoppingListInvites.expiresAt,
-                revokedAt: shoppingListInvites.revokedAt,
-                consumedAt: shoppingListInvites.consumedAt,
-                inviteUrl: shoppingListInvites.token,
-              })
-              .from(shoppingListInvites)
-              .where(eq(shoppingListInvites.shoppingListId, shoppingListId))
-              .orderBy(desc(shoppingListInvites.createdAt))
-          : Promise.resolve([]),
-      ]);
+      const [sourceRows, itemRows, craftRows, memberRows, inviteRows] =
+        await Promise.all([
+          getResolvedSources(ctx.db, shoppingListId),
+          ctx.db
+            .select({
+              itemId: shoppingListItems.itemId,
+              requiredQuantity: shoppingListItems.requiredQuantity,
+              stockQuantity: shoppingListItems.obtainedQuantity,
+              item: {
+                id: items.id,
+                name: items.name,
+                icon: items.icon,
+              },
+            })
+            .from(shoppingListItems)
+            .innerJoin(items, eq(items.id, shoppingListItems.itemId))
+            .where(eq(shoppingListItems.shoppingListId, shoppingListId))
+            .orderBy(asc(items.name)),
+          ctx.db
+            .select({
+              craftId: shoppingListCrafts.craftId,
+              requiredCount: shoppingListCrafts.requiredCount,
+              stockCount: shoppingListCrafts.completedCount,
+              craft: {
+                id: crafts.id,
+                name: crafts.name,
+                proficiency: crafts.proficiency,
+                labor: crafts.labor,
+              },
+              product: {
+                id: items.id,
+                name: items.name,
+                icon: items.icon,
+              },
+            })
+            .from(shoppingListCrafts)
+            .innerJoin(crafts, eq(crafts.id, shoppingListCrafts.craftId))
+            .leftJoin(items, eq(items.id, crafts.primaryProductId))
+            .where(eq(shoppingListCrafts.shoppingListId, shoppingListId))
+            .orderBy(asc(crafts.name)),
+          ctx.db
+            .select({
+              userId: shoppingListMembers.userId,
+              role: shoppingListMembers.role,
+              acceptedAt: shoppingListMembers.acceptedAt,
+              user: {
+                name: user.name,
+                image: user.image,
+              },
+            })
+            .from(shoppingListMembers)
+            .innerJoin(user, eq(user.id, shoppingListMembers.userId))
+            .where(eq(shoppingListMembers.shoppingListId, shoppingListId))
+            .orderBy(asc(user.name)),
+          access.isOwner
+            ? ctx.db
+                .select({
+                  id: shoppingListInvites.id,
+                  role: shoppingListInvites.role,
+                  createdAt: shoppingListInvites.createdAt,
+                  expiresAt: shoppingListInvites.expiresAt,
+                  revokedAt: shoppingListInvites.revokedAt,
+                  consumedAt: shoppingListInvites.consumedAt,
+                  inviteUrl: shoppingListInvites.token,
+                })
+                .from(shoppingListInvites)
+                .where(eq(shoppingListInvites.shoppingListId, shoppingListId))
+                .orderBy(desc(shoppingListInvites.createdAt))
+            : Promise.resolve([]),
+        ]);
       const computedUsage = await getComputedUsage(ctx.db, access.list, {
         itemRows: itemRows.map((row) => ({
           itemId: row.itemId,
@@ -236,7 +397,9 @@ export const shoppingListsRouter = {
         list: {
           ...access.list,
           craftModeItemIds: access.list.craftModeItemIds,
+          ...buildListSummary(sourceRows),
         },
+        sources: sourceRows,
         items: itemRows.map((row) => {
           const derived = computedUsage.items.get(row.itemId);
           return {
@@ -267,6 +430,32 @@ export const shoppingListsRouter = {
       };
     }),
 
+  createEmpty: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(120).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+        const [created] = await ctx.db
+        .insert(shoppingLists)
+        .values({
+          ownerUserId: ctx.session.user.id,
+          name: input.name?.trim() ?? "New shopping list",
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      if (!created) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Shopping list creation failed.",
+        });
+      }
+
+      return { id: created.id };
+    }),
+
   createFromCraft: protectedProcedure
     .input(
       z.object({
@@ -288,10 +477,6 @@ export const shoppingListsRouter = {
           .values({
             ownerUserId: ctx.session.user.id,
             name,
-            sourceType: "craft",
-            sourceCraftId: input.craftId,
-            sourceItemId: blueprint.item?.id ?? null,
-            sourceQuantity: input.quantity,
             craftModeItemIds: input.craftModeItemIds,
             updatedAt: new Date(),
           })
@@ -304,6 +489,13 @@ export const shoppingListsRouter = {
           });
         }
 
+        await insertSource(tx, {
+          shoppingListId: created.id,
+          sourceType: "craft",
+          craftId: input.craftId,
+          itemId: blueprint.item?.id ?? null,
+          quantity: input.quantity,
+        });
         await regenerateListState(tx, created);
 
         return { id: created.id };
@@ -341,10 +533,6 @@ export const shoppingListsRouter = {
           .values({
             ownerUserId: ctx.session.user.id,
             name,
-            sourceType: "simulator",
-            sourceCraftId: input.craftId,
-            sourceItemId: targetItem.id,
-            sourceQuantity: input.attempts,
             craftModeItemIds: input.craftModeItemIds,
             updatedAt: new Date(),
           })
@@ -357,9 +545,178 @@ export const shoppingListsRouter = {
           });
         }
 
+        await insertSource(tx, {
+          shoppingListId: created.id,
+          sourceType: "simulator",
+          craftId: input.craftId,
+          itemId: targetItem.id,
+          quantity: input.attempts,
+        });
         await regenerateListState(tx, created);
 
         return { id: created.id };
+      });
+    }),
+
+  addCraftSource: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+        craftId: z.number().int(),
+        quantity: z.number().int().min(1).default(1),
+        name: z.string().trim().min(1).max(120).optional(),
+        craftModeItemIds: z.array(z.number().int()).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const blueprint = await fetchCraftBlueprint(ctx.db, input.craftId);
+
+      return ctx.db.transaction(async (tx: DbTx) => {
+        const existingSources = await getListSources(tx, input.listId);
+        assertValidListSources(existingSources);
+
+        if (getSourceKind(existingSources) === "simulator") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Cannot add craft sources to a simulator list.",
+          });
+        }
+
+        const progress = await getExistingProgress(tx, input.listId);
+        const [updated] = await tx
+          .update(shoppingLists)
+          .set({
+            name: input.name?.trim() ?? access.list.name,
+            craftModeItemIds: mergeCraftModeItemIds(
+              access.list.craftModeItemIds,
+              input.craftModeItemIds,
+            ),
+            updatedAt: new Date(),
+          })
+          .where(eq(shoppingLists.id, input.listId))
+          .returning();
+
+        if (!updated) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list not found.",
+          });
+        }
+
+        await insertSource(tx, {
+          shoppingListId: input.listId,
+          sourceType: "craft",
+          craftId: input.craftId,
+          itemId: blueprint.item?.id ?? null,
+          quantity: input.quantity,
+        });
+
+        await regenerateListState(tx, updated, progress);
+        return { id: updated.id };
+      });
+    }),
+
+  updateCraftSource: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+        sourceId: z.string().uuid(),
+        craftId: z.number().int(),
+        quantity: z.number().int().min(1).default(1),
+        name: z.string().trim().min(1).max(120).optional(),
+        craftModeItemIds: z.array(z.number().int()).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const blueprint = await fetchCraftBlueprint(ctx.db, input.craftId);
+
+      return ctx.db.transaction(async (tx: DbTx) => {
+        const existingSources = await getListSources(tx, input.listId);
+        assertValidListSources(existingSources);
+
+        if (getSourceKind(existingSources) !== "craft") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Only craft list sources can be edited here.",
+          });
+        }
+
+        const [source] = await tx
+          .select()
+          .from(shoppingListSources)
+          .where(
+            and(
+              eq(shoppingListSources.id, input.sourceId),
+              eq(shoppingListSources.shoppingListId, input.listId),
+            ),
+          )
+          .limit(1);
+
+        if (!source) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list source not found.",
+          });
+        }
+
+        if (source.sourceType !== "craft") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Only craft sources can be edited here.",
+          });
+        }
+
+        const progress = await getExistingProgress(tx, input.listId);
+        const [updated] = await tx
+          .update(shoppingLists)
+          .set({
+            name: input.name?.trim() ?? access.list.name,
+            craftModeItemIds: mergeCraftModeItemIds(
+              access.list.craftModeItemIds,
+              input.craftModeItemIds,
+            ),
+            updatedAt: new Date(),
+          })
+          .where(eq(shoppingLists.id, input.listId))
+          .returning();
+
+        if (!updated) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list not found.",
+          });
+        }
+
+        await tx
+          .update(shoppingListSources)
+          .set({
+            craftId: input.craftId,
+            itemId: blueprint.item?.id ?? null,
+            quantity: input.quantity,
+            updatedAt: new Date(),
+          })
+          .where(eq(shoppingListSources.id, input.sourceId));
+
+        await regenerateListState(tx, updated, progress);
+        return { id: updated.id };
       });
     }),
 
@@ -386,15 +743,31 @@ export const shoppingListsRouter = {
       }
 
       return ctx.db.transaction(async (tx: DbTx) => {
+        const sources = await getListSources(tx, input.listId);
+        assertValidListSources(sources);
+
+        const sourceKind = getSourceKind(sources);
+        if (sourceKind !== "simulator" || sources.length !== 1) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Only single-source simulator lists can be updated from this flow.",
+          });
+        }
+
+        const source = sources[0];
+        if (!source) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Shopping list source missing.",
+          });
+        }
+
         const progress = await getExistingProgress(tx, input.listId);
         const [updated] = await tx
           .update(shoppingLists)
           .set({
             name: input.name?.trim() ?? access.list.name,
-            sourceType: input.sourceType ?? access.list.sourceType,
-            sourceCraftId: input.craftId ?? access.list.sourceCraftId,
-            sourceItemId: input.itemId ?? access.list.sourceItemId,
-            sourceQuantity: input.quantity ?? access.list.sourceQuantity,
             craftModeItemIds:
               input.craftModeItemIds ?? access.list.craftModeItemIds,
             updatedAt: new Date(),
@@ -409,8 +782,171 @@ export const shoppingListsRouter = {
           });
         }
 
+        await tx
+          .update(shoppingListSources)
+          .set({
+            sourceType: input.sourceType ?? source.sourceType,
+            craftId: input.craftId ?? source.craftId,
+            itemId: input.itemId ?? source.itemId,
+            quantity: input.quantity ?? source.quantity,
+            updatedAt: new Date(),
+          })
+          .where(eq(shoppingListSources.id, source.id));
+
         await regenerateListState(tx, updated, progress);
 
+        return { id: updated.id };
+      });
+    }),
+
+  rename: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+        name: z.string().trim().min(1).max(120),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      await ctx.db
+        .update(shoppingLists)
+        .set({
+          name: input.name.trim(),
+          updatedAt: new Date(),
+        })
+        .where(eq(shoppingLists.id, input.listId));
+    }),
+
+  updateSourceQuantity: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+        sourceId: z.string().uuid(),
+        quantity: z.number().int().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      return ctx.db.transaction(async (tx: DbTx) => {
+        const progress = await getExistingProgress(tx, input.listId);
+        const [source] = await tx
+          .select()
+          .from(shoppingListSources)
+          .where(
+            and(
+              eq(shoppingListSources.id, input.sourceId),
+              eq(shoppingListSources.shoppingListId, input.listId),
+            ),
+          )
+          .limit(1);
+
+        if (!source) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list source not found.",
+          });
+        }
+
+        await tx
+          .update(shoppingListSources)
+          .set({
+            quantity: input.quantity,
+            updatedAt: new Date(),
+          })
+          .where(eq(shoppingListSources.id, source.id));
+
+        const [updated] = await tx
+          .update(shoppingLists)
+          .set({ updatedAt: new Date() })
+          .where(eq(shoppingLists.id, input.listId))
+          .returning();
+
+        if (!updated) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list not found.",
+          });
+        }
+
+        await regenerateListState(tx, updated, progress);
+        return { id: updated.id };
+      });
+    }),
+
+  removeSource: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+        sourceId: z.string().uuid(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      return ctx.db.transaction(async (tx: DbTx) => {
+        const progress = await getExistingProgress(tx, input.listId);
+        const [source] = await tx
+          .select()
+          .from(shoppingListSources)
+          .where(
+            and(
+              eq(shoppingListSources.id, input.sourceId),
+              eq(shoppingListSources.shoppingListId, input.listId),
+            ),
+          )
+          .limit(1);
+
+        if (!source) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list source not found.",
+          });
+        }
+
+        await tx
+          .delete(shoppingListSources)
+          .where(eq(shoppingListSources.id, source.id));
+
+        const remainingSources = await getListSources(tx, input.listId);
+        assertValidListSources(remainingSources);
+
+        const [updated] = await tx
+          .update(shoppingLists)
+          .set({ updatedAt: new Date() })
+          .where(eq(shoppingLists.id, input.listId))
+          .returning();
+
+        if (!updated) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Shopping list not found.",
+          });
+        }
+
+        await regenerateListState(tx, updated, progress);
         return { id: updated.id };
       });
     }),
@@ -544,6 +1080,7 @@ export const shoppingListsRouter = {
         input.listId,
         ctx.session.user.id,
       );
+      const sourceDefinitions = await getListSources(ctx.db, input.listId);
       const [sourceItems, sourceCraftRows]: [
         { itemId: number; obtainedQuantity: number }[],
         { craftId: number; completedCount: number }[],
@@ -576,10 +1113,6 @@ export const shoppingListsRouter = {
               input.mode === "fresh"
                 ? `${access.list.name} copy`
                 : `${access.list.name} snapshot`,
-            sourceType: access.list.sourceType,
-            sourceCraftId: access.list.sourceCraftId,
-            sourceItemId: access.list.sourceItemId,
-            sourceQuantity: access.list.sourceQuantity,
             craftModeItemIds: access.list.craftModeItemIds,
             updatedAt: new Date(),
           })
@@ -590,6 +1123,20 @@ export const shoppingListsRouter = {
             code: "INTERNAL_SERVER_ERROR",
             message: "Shopping list duplication failed.",
           });
+        }
+
+        if (sourceDefinitions.length > 0) {
+          await tx.insert(shoppingListSources).values(
+            sourceDefinitions.map((source) => ({
+              shoppingListId: created.id,
+              sourceType: source.sourceType,
+              craftId: source.craftId,
+              itemId: source.itemId,
+              quantity: source.quantity,
+              position: source.position,
+              updatedAt: new Date(),
+            })),
+          );
         }
 
         await regenerateListState(tx, created, {

@@ -1,6 +1,7 @@
 import { Suspense, useDeferredValue, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { z } from "zod";
 
 import { Badge } from "@acme/ui/badge";
 
@@ -14,6 +15,9 @@ import { useRecentSearches } from "~/lib/recent-searches";
 import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/craft/")({
+  validateSearch: z.object({
+    listId: z.string().uuid().optional(),
+  }),
   head: () => ({
     meta: [
       { title: "Craft | AAC Dashboard" },
@@ -32,6 +36,7 @@ export const Route = createFileRoute("/craft/")({
 });
 
 function RouteComponent() {
+  const { listId } = Route.useSearch();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const { recents, add, remove } = useRecentSearches();
@@ -47,14 +52,18 @@ function RouteComponent() {
         <Suspense
           fallback={<p className="text-muted-foreground text-sm">Loading...</p>}
         >
-          <SearchResults query={deferredQuery} onSelect={add} />
+          <SearchResults query={deferredQuery} onSelect={add} listId={listId} />
         </Suspense>
       ) : (
         <RecentItemList
           recents={recents}
           onRemove={remove}
           renderLink={(item, content) => (
-            <Link to="/craft/$itemId" params={{ itemId: item.id }}>
+            <Link
+              to="/craft/$itemId"
+              params={{ itemId: item.id }}
+              search={{ listId }}
+            >
               {content}
             </Link>
           )}
@@ -72,9 +81,11 @@ function RouteComponent() {
 function SearchResults({
   query,
   onSelect,
+  listId,
 }: {
   query: string;
   onSelect: (item: RecentItem) => void;
+  listId?: string;
 }) {
   const trpc = useTRPC();
   const { data: allItems } = useSuspenseQuery(
@@ -108,6 +119,7 @@ function SearchResults({
         <Link
           to="/craft/$itemId"
           params={{ itemId: item.id }}
+          search={{ listId }}
           onClick={() =>
             onSelect({
               id: item.id,

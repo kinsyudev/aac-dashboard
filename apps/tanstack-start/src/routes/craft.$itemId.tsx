@@ -36,6 +36,7 @@ import {
   getItemPrice,
   getSelectedEntry,
   hasItemPrice,
+  MAX_CRAFT_DEPTH,
   parseFinitePrice,
 } from "~/lib/craft-optimizer";
 import { useTRPC } from "~/lib/trpc";
@@ -46,6 +47,9 @@ export const Route = createFileRoute("/craft/$itemId")({
     parse: (p) => ({ itemId: z.coerce.number().int().parse(p.itemId) }),
     stringify: (p) => ({ itemId: String(p.itemId) }),
   },
+  validateSearch: z.object({
+    listId: z.string().uuid().optional(),
+  }),
   loader: async ({ context, params }) => {
     const { trpc, queryClient } = context;
     const data = await queryClient.fetchQuery(
@@ -59,16 +63,18 @@ export const Route = createFileRoute("/craft/$itemId")({
 
 function RouteComponent() {
   const { itemId } = Route.useParams();
+  const { listId } = Route.useSearch();
   return (
     <main className="container py-16">
       <Link
         to="/craft"
+        search={{ listId }}
         className="text-muted-foreground mb-6 flex items-center gap-1 text-sm hover:underline"
       >
         ← Back to list
       </Link>
       <Suspense fallback={<p>Loading...</p>}>
-        <ItemDetail itemId={itemId} />
+        <ItemDetail itemId={itemId} listId={listId} />
       </Suspense>
     </main>
   );
@@ -155,6 +161,7 @@ function CraftRecipe({
   setSelectedCrafts,
   collapsedCraftIds,
   toggleCollapsed,
+  listId,
 }: {
   entry: AnyCraftEntry;
   producedItemId: number;
@@ -169,6 +176,7 @@ function CraftRecipe({
   setSelectedCrafts?: Dispatch<SetStateAction<SelectedCraftMap>>;
   collapsedCraftIds?: Set<number>;
   toggleCollapsed?: (craftId: number) => void;
+  listId?: string;
 }) {
   const { craft, materials } = entry;
   const [localModes, setLocalModes] = useState<ModesMap>({});
@@ -217,7 +225,7 @@ function CraftRecipe({
           priceMap,
           overrideMap,
           proficiencyMap,
-          maxDepth: 4,
+          maxDepth: MAX_CRAFT_DEPTH,
         },
         resolvedModes,
         resolvedSelectedCrafts,
@@ -249,7 +257,7 @@ function CraftRecipe({
         priceMap,
         overrideMap,
         proficiencyMap,
-        maxDepth: 4,
+        maxDepth: MAX_CRAFT_DEPTH,
       },
       objective,
     );
@@ -268,7 +276,7 @@ function CraftRecipe({
 
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
   const hasCraftable = materials.some(
-    ({ item }) => depth < 4 && !!subcraftMap[item.id]?.length,
+    ({ item }) => depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id]?.length,
   );
 
   return (
@@ -293,6 +301,7 @@ function CraftRecipe({
                 qty: 1,
                 sub: serializeCraftModeSearch(resolvedModes),
                 sel: serializeSelectedCraftsSearch(resolvedSelectedCrafts),
+                listId,
               }}
               className="text-muted-foreground text-xs hover:underline"
             >
@@ -407,7 +416,8 @@ function CraftRecipe({
           {/* Materials */}
           <ul className="flex flex-col gap-1">
             {materials.map(({ item, amount }) => {
-              const isCraftable = depth < 4 && !!subcraftMap[item.id]?.length;
+              const isCraftable =
+                depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id]?.length;
               const mode = getMode(item.id);
               const customPrice = overrideMap.get(item.id);
               const isCustom = customPrice != null;
@@ -425,7 +435,7 @@ function CraftRecipe({
                       priceMap,
                       overrideMap,
                       proficiencyMap,
-                      maxDepth: 4,
+                      maxDepth: MAX_CRAFT_DEPTH,
                     },
                     resolvedModes,
                     resolvedSelectedCrafts,
@@ -524,6 +534,7 @@ function CraftRecipe({
                         setSelectedCrafts={updateSelectedCrafts}
                         collapsedCraftIds={resolvedCollapsedCraftIds}
                         toggleCollapsed={updateCollapsed}
+                        listId={listId}
                       />
                     </li>
                   )}
@@ -540,7 +551,7 @@ function CraftRecipe({
   );
 }
 
-function ItemDetail({ itemId }: { itemId: number }) {
+function ItemDetail({ itemId, listId }: { itemId: number; listId?: string }) {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(trpc.crafts.forItem.queryOptions(itemId));
   const { proficiencyMap, overrideMap } = useUserData();
@@ -587,6 +598,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
               overrideMap={overrideMap}
               proficiencyMap={proficiencyMap}
               subcraftMap={data.subcraftsByItemId}
+              listId={listId}
             />
           ))}
         </div>

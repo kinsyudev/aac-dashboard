@@ -1,6 +1,8 @@
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import { getDiscountedLabor } from "~/lib/proficiency";
 
+export const MAX_CRAFT_DEPTH = 8;
+
 export type CraftMode = "buy" | "craft";
 export type ModesMap = Record<number, CraftMode>;
 export type SelectedCraftMap = Record<number, number>;
@@ -171,7 +173,7 @@ export function computeManualCraftMetrics<T extends CraftEntryLike>(
 ): CraftMetrics {
   const context: Context<T> = {
     ...contextInput,
-    maxDepth: contextInput.maxDepth ?? 4,
+    maxDepth: contextInput.maxDepth ?? MAX_CRAFT_DEPTH,
   };
   const producedAmount = getProducedAmount(entry, producedItemId);
   const directLabor = getDiscountedLabor(
@@ -244,7 +246,7 @@ export function buildAutoPlan<T extends CraftEntryLike>(
 ): AutoPlan<T> | null {
   const context: Context<T> = {
     ...contextInput,
-    maxDepth: contextInput.maxDepth ?? 4,
+    maxDepth: contextInput.maxDepth ?? MAX_CRAFT_DEPTH,
   };
   if (!entries.length) return null;
 

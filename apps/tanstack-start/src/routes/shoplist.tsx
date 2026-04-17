@@ -10,6 +10,10 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
+import type {
+  ModesMap,
+  OptimizationObjective,
+} from "~/lib/craft-optimizer";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
@@ -22,8 +26,11 @@ import {
   RecipeLegend,
 } from "~/component/recipe-breakdown";
 import {
+  buildAutoPlan,
   computeManualCraftMetrics,
   getSelectedEntry,
+  MAX_CRAFT_DEPTH,
+  parseFinitePrice,
 } from "~/lib/craft-optimizer";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
@@ -44,6 +51,7 @@ const searchSchema = z
     sub: z.string().optional(),
     sel: z.string().optional(),
     listId: z.string().uuid().optional(),
+    sourceId: z.string().uuid().optional(),
   })
   .refine((value) => value.craft != null || value.simItem != null, {
     message: "craft or simItem is required",
@@ -127,6 +135,17 @@ interface ShoppingListItem {
 
 type SelectedCraftMap = Record<number, number>;
 
+function serializeCraftModeSearch(modes: ModesMap): string | undefined {
+  const craftedItemIds = Object.entries(modes)
+    .filter(([, mode]) => mode === "craft")
+    .map(([itemId]) => Number(itemId))
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
+
+  if (!craftedItemIds.length) return undefined;
+  return craftedItemIds.join(",");
+}
+
 function parseSelectedCrafts(value: string | undefined): SelectedCraftMap {
   if (!value) return {};
 
@@ -139,6 +158,22 @@ function parseSelectedCrafts(value: string | undefined): SelectedCraftMap {
     }
     return acc;
   }, {});
+}
+
+function serializeSelectedCraftsSearch(
+  selectedCrafts: SelectedCraftMap,
+): string | undefined {
+  const entries = Object.entries(selectedCrafts)
+    .map(([itemId, craftId]) => [Number(itemId), craftId] as const)
+    .filter(
+      ([itemId, craftId]) =>
+        Number.isInteger(itemId) && Number.isInteger(craftId),
+    )
+    .sort(([left], [right]) => left - right)
+    .map(([itemId, craftId]) => `${itemId}:${craftId}`);
+
+  if (!entries.length) return undefined;
+  return entries.join(",");
 }
 
 function getChosenSubcraft(
@@ -163,7 +198,7 @@ function buildShoppingList(
 ): void {
   for (const { item, amount } of materials) {
     const scaled = amount * scaleFactor;
-    const isCraftable = depth < 4 && !!subcraftMap[item.id];
+    const isCraftable = depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
       const sub = getChosenSubcraft(item.id, subcraftMap, selectedCrafts);
       if (!sub) continue;
@@ -212,7 +247,7 @@ function buildLaborByProficiency(
   }
   for (const { item, amount } of materials) {
     const scaled = amount * scaleFactor;
-    const isCraftable = depth < 4 && !!subcraftMap[item.id];
+    const isCraftable = depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id];
     if (craftModeSet.has(item.id) && isCraftable) {
       const sub = getChosenSubcraft(item.id, subcraftMap, selectedCrafts);
       if (!sub) continue;
@@ -264,6 +299,8 @@ function RecipeTree({
   craftModeSet,
   selectedCrafts,
   toggleMode,
+  setCraftModes,
+  setSelectedCrafts,
   collapsedCraftIds,
   toggleCollapsed,
   depth = 0,
@@ -277,12 +314,15 @@ function RecipeTree({
   craftModeSet: Set<number>;
   selectedCrafts: SelectedCraftMap;
   toggleMode: (itemId: number) => void;
+  setCraftModes: (modes: ModesMap) => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
   collapsedCraftIds: Set<number>;
   toggleCollapsed: (craftId: number) => void;
   depth?: number;
 }) {
   const { craft, materials } = entry;
   const isCollapsed = collapsedCraftIds.has(craft.id);
+  const [localSalePrice, setLocalSalePrice] = useState("");
   const modes = useMemo(
     () =>
       Object.fromEntries(
@@ -301,7 +341,7 @@ function RecipeTree({
           priceMap,
           overrideMap,
           proficiencyMap,
-          maxDepth: 4,
+          maxDepth: MAX_CRAFT_DEPTH,
         },
         modes,
         selectedCrafts,
@@ -319,10 +359,47 @@ function RecipeTree({
       subcraftMap,
     ],
   );
+  const defaultSalePrice = getItemPrice(producedItemId, priceMap, overrideMap);
+  const localSaleOverride = parseFinitePrice(localSalePrice);
+  const effectiveSalePrice =
+    localSalePrice.trim() !== "" &&
+    localSaleOverride != null &&
+    localSaleOverride >= 0
+      ? localSaleOverride
+      : defaultSalePrice;
+
+  const applyAutoPlan = (objective: OptimizationObjective) => {
+    const candidateEntries =
+      depth === 0 ? [entry] : (subcraftMap[producedItemId] ?? [entry]);
+    const plan = buildAutoPlan(
+      candidateEntries,
+      producedItemId,
+      effectiveSalePrice,
+      {
+        subcraftMap,
+        priceMap,
+        overrideMap,
+        proficiencyMap,
+        maxDepth: MAX_CRAFT_DEPTH,
+      },
+      objective,
+    );
+    if (!plan) return;
+
+    setCraftModes({
+      ...modes,
+      ...plan.modes,
+    });
+    setSelectedCrafts({
+      ...selectedCrafts,
+      ...(depth > 0 ? { [producedItemId]: plan.entry.craft.id } : {}),
+      ...plan.selectedCrafts,
+    });
+  };
 
   const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
   const hasCraftable = materials.some(
-    ({ item }) => depth < 4 && !!subcraftMap[item.id],
+    ({ item }) => depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id],
   );
 
   return (
@@ -351,9 +428,60 @@ function RecipeTree({
 
       {!isCollapsed && (
         <>
+          {hasCraftable ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => applyAutoPlan("profit")}
+              >
+                Most profitable
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => applyAutoPlan("silverPerLabor")}
+              >
+                Best silver / labor
+              </Button>
+            </div>
+          ) : null}
+
+          {depth === 0 ? (
+            <div className="mb-4 flex flex-col gap-3 rounded-md border p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Sale price</p>
+                  <p className="text-muted-foreground text-xs">
+                    Uses profile override or market price by default. This input
+                    is temporary to this shoplist preview.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={localSalePrice}
+                    onChange={(event) => setLocalSalePrice(event.target.value)}
+                    placeholder={
+                      defaultSalePrice > 0 ? String(defaultSalePrice) : "0"
+                    }
+                    className="w-32 tabular-nums"
+                    aria-label={`${craft.name} sale price`}
+                  />
+                  <span className="text-muted-foreground text-sm">g</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <ul className="flex flex-col gap-1">
             {materials.map(({ item, amount }) => {
-              const isCraftable = depth < 4 && !!subcraftMap[item.id];
+              const isCraftable =
+                depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id];
               const mode = craftModeSet.has(item.id) ? "craft" : "buy";
               const customPrice = overrideMap.get(item.id);
               const isCustom = customPrice != null;
@@ -373,7 +501,7 @@ function RecipeTree({
                       priceMap,
                       overrideMap,
                       proficiencyMap,
-                      maxDepth: 4,
+                      maxDepth: MAX_CRAFT_DEPTH,
                     },
                     modes,
                     selectedCrafts,
@@ -474,6 +602,8 @@ function RecipeTree({
                         craftModeSet={craftModeSet}
                         selectedCrafts={selectedCrafts}
                         toggleMode={toggleMode}
+                        setCraftModes={setCraftModes}
+                        setSelectedCrafts={setSelectedCrafts}
                         collapsedCraftIds={collapsedCraftIds}
                         toggleCollapsed={toggleCollapsed}
                         depth={depth + 1}
@@ -504,7 +634,7 @@ function ShoplistDetail({
   const trpc = useTRPC();
   const navigate = useNavigate({ from: "/shoplist" });
   const queryClient = useQueryClient();
-  const { qty, sub, sel, attempts, listId } = Route.useSearch();
+  const { qty, sub, sel, attempts, listId, sourceId } = Route.useSearch();
   const isSimulator = simItemId != null;
 
   const craftQuery = useQuery({
@@ -558,10 +688,11 @@ function ShoplistDetail({
     return new Map(prices?.map((p) => [p.itemId, p]) ?? []);
   }, [craftData?.prices, isSimulator, simulatorData?.prices]);
 
-  const craftModeSet = useMemo(
-    () => new Set<number>((sub ?? "").split(",").filter(Boolean).map(Number)),
-    [sub],
-  );
+  const craftModeSet = useMemo(() => {
+    const searchModes = (sub ?? "").split(",").filter(Boolean).map(Number);
+    const existingModes = existingList.data?.list.craftModeItemIds ?? [];
+    return new Set<number>([...existingModes, ...searchModes]);
+  }, [existingList.data?.list.craftModeItemIds, sub]);
   const craftModes = useMemo(
     () =>
       Object.fromEntries(
@@ -591,6 +722,14 @@ function ShoplistDetail({
       else next.add(craftId);
       return next;
     });
+  };
+  const setCraftModes = (nextModes: ModesMap) => {
+    const nextSub = serializeCraftModeSearch(nextModes);
+    void navigate({ search: (prev) => ({ ...prev, sub: nextSub }) });
+  };
+  const setSelectedCraftSearch = (nextSelectedCrafts: SelectedCraftMap) => {
+    const nextSel = serializeSelectedCraftsSearch(nextSelectedCrafts);
+    void navigate({ search: (prev) => ({ ...prev, sel: nextSel }) });
   };
 
   const commitQty = (value: number) => {
@@ -637,9 +776,22 @@ function ShoplistDetail({
   const createSimulatorList = useMutation(
     trpc.shoppingLists.createFromSimulator.mutationOptions(),
   );
+  const addCraftSource = useMutation(
+    trpc.shoppingLists.addCraftSource.mutationOptions(),
+  );
+  const updateCraftSource = useMutation(
+    trpc.shoppingLists.updateCraftSource.mutationOptions(),
+  );
   const updateList = useMutation(
     trpc.shoppingLists.updateDefinition.mutationOptions(),
   );
+  const existingListKind = existingList.data?.list.sourceKind;
+  const editingCraftSource =
+    !!listId && !!sourceId && !isSimulator && existingListKind === "craft";
+  const appendingToCraftList =
+    !!listId && !sourceId && !isSimulator && existingListKind === "craft";
+  const editingSimulatorList =
+    !!listId && isSimulator && existingListKind === "simulator";
 
   const persistList = useMutation({
     mutationFn: async () => {
@@ -648,7 +800,7 @@ function ShoplistDetail({
         if (!simItemId || !simulatorMainCraft) {
           throw new Error("Simulator source unavailable.");
         }
-        if (listId) {
+        if (editingSimulatorList) {
           return updateList.mutateAsync({
             listId,
             name: listName.trim() || undefined,
@@ -672,14 +824,24 @@ function ShoplistDetail({
         throw new Error("Craft source unavailable.");
       }
 
-      if (listId) {
-        return updateList.mutateAsync({
+      if (editingCraftSource) {
+        return updateCraftSource.mutateAsync({
           listId,
-          name: listName.trim() || undefined,
-          sourceType: "craft",
+          sourceId,
           craftId,
           quantity: effectiveQty,
           craftModeItemIds,
+          name: listName.trim() || undefined,
+        });
+      }
+
+      if (appendingToCraftList) {
+        return addCraftSource.mutateAsync({
+          listId,
+          craftId,
+          quantity: effectiveQty,
+          craftModeItemIds,
+          name: listName.trim() || undefined,
         });
       }
 
@@ -698,7 +860,13 @@ function ShoplistDetail({
         queryClient.invalidateQueries(trpc.shoppingLists.getById.pathFilter()),
       ]);
       toast.success(
-        listId ? "Shopping list updated." : "Shopping list created.",
+        editingCraftSource
+          ? "Shopping list recipe updated."
+          : appendingToCraftList
+            ? "Craft added to shopping list."
+            : editingSimulatorList
+              ? "Shopping list updated."
+              : "Shopping list created.",
       );
       await navigate({
         to: "/shoplists/$listId",
@@ -707,9 +875,13 @@ function ShoplistDetail({
     },
     onError: () => {
       toast.error(
-        listId
-          ? "Failed to update shopping list."
-          : "Failed to create shopping list.",
+        editingCraftSource
+          ? "Failed to update shopping list recipe."
+          : appendingToCraftList
+            ? "Failed to add craft to shopping list."
+            : editingSimulatorList
+              ? "Failed to update shopping list."
+              : "Failed to create shopping list.",
       );
     },
   });
@@ -801,11 +973,28 @@ function ShoplistDetail({
         selectedCrafts={selectedCrafts}
         proficiencyMap={proficiencyMap}
         toggleMode={toggleMode}
+        setCraftModes={setCraftModes}
+        setSelectedCrafts={setSelectedCraftSearch}
         collapsedCraftIds={collapsedCraftIds}
         toggleCollapsed={toggleCollapsed}
         listName={listName}
         setListName={setListName}
         listId={listId}
+        sourceId={sourceId}
+        persistListLabel={
+          editingCraftSource
+            ? "Update multiplayer recipe"
+            : appendingToCraftList
+              ? "Add to multiplayer list"
+              : "Create multiplayer list"
+        }
+        persistLoadingText={
+          editingCraftSource
+            ? "Updating..."
+            : appendingToCraftList
+              ? "Adding..."
+              : "Creating..."
+        }
         persistList={persistList.mutate}
         persistListPending={persistList.isPending}
       />
@@ -948,11 +1137,28 @@ function ShoplistDetail({
       selectedCrafts={selectedCrafts}
       proficiencyMap={proficiencyMap}
       toggleMode={toggleMode}
+      setCraftModes={setCraftModes}
+      setSelectedCrafts={setSelectedCraftSearch}
       collapsedCraftIds={collapsedCraftIds}
       toggleCollapsed={toggleCollapsed}
       listName={listName}
       setListName={setListName}
       listId={listId}
+      sourceId={sourceId}
+      persistListLabel={
+        editingSimulatorList
+          ? "Update multiplayer list"
+          : appendingToCraftList
+            ? "Add to multiplayer list"
+            : "Create multiplayer list"
+      }
+      persistLoadingText={
+        editingSimulatorList
+          ? "Updating..."
+          : appendingToCraftList
+            ? "Adding..."
+            : "Creating..."
+      }
       persistList={persistList.mutate}
       persistListPending={persistList.isPending}
     />
@@ -977,11 +1183,15 @@ function ShoplistLayout({
   selectedCrafts,
   proficiencyMap,
   toggleMode,
+  setCraftModes,
+  setSelectedCrafts,
   collapsedCraftIds,
   toggleCollapsed,
   listName,
   setListName,
   listId,
+  persistListLabel,
+  persistLoadingText,
   persistList,
   persistListPending,
 }: {
@@ -1008,11 +1218,15 @@ function ShoplistLayout({
   selectedCrafts: SelectedCraftMap;
   proficiencyMap: ProficiencyMap;
   toggleMode: (itemId: number) => void;
+  setCraftModes: (modes: ModesMap) => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
   collapsedCraftIds: Set<number>;
   toggleCollapsed: (craftId: number) => void;
   listName: string;
   setListName: (value: string) => void;
   listId?: string;
+  persistListLabel: string;
+  persistLoadingText: string;
   persistList: () => void;
   persistListPending: boolean;
 }) {
@@ -1071,9 +1285,9 @@ function ShoplistLayout({
             <Button
               onClick={persistList}
               loading={persistListPending}
-              loadingText={listId ? "Updating..." : "Creating..."}
+              loadingText={persistLoadingText}
             >
-              {listId ? "Update multiplayer list" : "Create multiplayer list"}
+              {persistListLabel}
             </Button>
           </div>
         </div>
@@ -1111,6 +1325,8 @@ function ShoplistLayout({
             craftModeSet={craftModeSet}
             selectedCrafts={selectedCrafts}
             toggleMode={toggleMode}
+            setCraftModes={setCraftModes}
+            setSelectedCrafts={setSelectedCrafts}
             collapsedCraftIds={collapsedCraftIds}
             toggleCollapsed={toggleCollapsed}
           />

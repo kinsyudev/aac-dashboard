@@ -98,18 +98,27 @@ function setDraftValue(
 }
 
 function formatSourceSummary(list: {
-  sourceType: "craft" | "simulator";
-  sourceQuantity: number;
+  sourceKind: "empty" | "craft" | "simulator";
+  rootCount: number;
+  totalQuantity: number;
   craftModeItemIds: number[];
 }) {
   const quantityLabel =
-    list.sourceType === "simulator"
-      ? `${list.sourceQuantity.toLocaleString()} attempt${
-          list.sourceQuantity === 1 ? "" : "s"
+    list.sourceKind === "empty"
+      ? "No roots yet"
+      : list.sourceKind === "simulator"
+        ? `${list.totalQuantity.toLocaleString()} attempt${
+            list.totalQuantity === 1 ? "" : "s"
+          }`
+        : `${list.rootCount.toLocaleString()} root craft${
+            list.rootCount === 1 ? "" : "s"
+          }`;
+  const detailLabel =
+    list.sourceKind === "craft"
+      ? `${list.totalQuantity.toLocaleString()} total craft${
+          list.totalQuantity === 1 ? "" : "s"
         }`
-      : `${list.sourceQuantity.toLocaleString()} craft${
-          list.sourceQuantity === 1 ? "" : "s"
-        }`;
+      : null;
   const modeLabel =
     list.craftModeItemIds.length > 0
       ? `${list.craftModeItemIds.length} subcraft selection${
@@ -119,8 +128,13 @@ function formatSourceSummary(list: {
 
   return {
     sourceLabel:
-      list.sourceType === "simulator" ? "Simulator list" : "Craft list",
+      list.sourceKind === "empty"
+        ? "Empty list"
+        : list.sourceKind === "simulator"
+          ? "Simulator list"
+          : "Craft list",
     quantityLabel,
+    detailLabel,
     modeLabel,
   };
 }
@@ -160,6 +174,8 @@ function ShoppingListDetailPage() {
 
   const [itemDrafts, setItemDrafts] = useState<Record<number, string>>({});
   const [craftDrafts, setCraftDrafts] = useState<Record<number, string>>({});
+  const [sourceDrafts, setSourceDrafts] = useState<Record<string, string>>({});
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
   const inviteBase =
     typeof window === "undefined" ? "" : window.location.origin;
   const itemIds = useMemo(
@@ -334,6 +350,27 @@ function ShoppingListDetailPage() {
       onError: () => toast.error("Failed to delete shopping list."),
     }),
   );
+  const renameList = useMutation(
+    trpc.shoppingLists.rename.mutationOptions({
+      onSuccess: async () => {
+        setNameDraft(null);
+        await invalidate();
+      },
+      onError: () => toast.error("Failed to rename shopping list."),
+    }),
+  );
+  const updateSourceQuantity = useMutation(
+    trpc.shoppingLists.updateSourceQuantity.mutationOptions({
+      onSuccess: invalidate,
+      onError: () => toast.error("Failed to update source quantity."),
+    }),
+  );
+  const removeSource = useMutation(
+    trpc.shoppingLists.removeSource.mutationOptions({
+      onSuccess: invalidate,
+      onError: () => toast.error("Failed to remove source."),
+    }),
+  );
 
   const handleDelete = () => {
     if (typeof window !== "undefined") {
@@ -343,6 +380,15 @@ function ShoppingListDetailPage() {
       if (!confirmed) return;
     }
     deleteList.mutate({ listId });
+  };
+
+  const commitName = () => {
+    const nextName = (nameDraft ?? data.list.name).trim();
+    if (!nextName || nextName === data.list.name) {
+      setNameDraft(null);
+      return;
+    }
+    renameList.mutate({ listId, name: nextName });
   };
 
   const completion = useMemo(() => {
@@ -483,6 +529,32 @@ function ShoppingListDetailPage() {
     });
   };
 
+  const commitSourceQuantity = (sourceId: string, currentQuantity: number) => {
+    const raw = sourceDrafts[sourceId];
+    if (raw === undefined) return;
+    const parsed = Number(raw);
+    const quantity = Math.max(
+      1,
+      Math.floor(Number.isFinite(parsed) ? parsed : 1),
+    );
+    setSourceDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[sourceId];
+      return next;
+    });
+    if (quantity === currentQuantity) return;
+    updateSourceQuantity.mutate({ listId, sourceId, quantity });
+  };
+
+  const resetSourceDraft = (sourceId: string) => {
+    setSourceDrafts((drafts) => {
+      if (!(sourceId in drafts)) return drafts;
+      const next = { ...drafts };
+      delete next[sourceId];
+      return next;
+    });
+  };
+
   return (
     <main className="container py-16">
       <div className="flex flex-col gap-8">
@@ -502,35 +574,31 @@ function ShoppingListDetailPage() {
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <StatPill label={setupSummary.sourceLabel} />
               <StatPill label={setupSummary.quantityLabel} />
+              {setupSummary.detailLabel ? (
+                <StatPill label={setupSummary.detailLabel} />
+              ) : null}
               <StatPill label={setupSummary.modeLabel} />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button asChild size="sm">
-              <Link
-                to="/shoplist"
-                search={{
-                  craft: data.list.sourceCraftId,
-                  simItem:
-                    data.list.sourceType === "simulator"
-                      ? (data.list.sourceItemId ?? undefined)
-                      : undefined,
-                  qty:
-                    data.list.sourceType === "craft"
-                      ? data.list.sourceQuantity
-                      : 1,
-                  attempts:
-                    data.list.sourceType === "simulator"
-                      ? data.list.sourceQuantity
-                      : undefined,
-                  sub: data.list.craftModeItemIds.join(",") || undefined,
-                  listId,
-                }}
-              >
-                <EditIcon />
-                Edit
-              </Link>
-            </Button>
+            {data.list.sourceKind === "simulator" && data.sources[0] ? (
+              <Button asChild size="sm">
+                <Link
+                  to="/shoplist"
+                  search={{
+                    craft: data.sources[0].craftId,
+                    simItem: data.sources[0].itemId ?? undefined,
+                    qty: 1,
+                    attempts: data.sources[0].quantity,
+                    sub: data.list.craftModeItemIds.join(",") || undefined,
+                    listId,
+                  }}
+                >
+                  <EditIcon />
+                  Edit Simulator Setup
+                </Link>
+              </Button>
+            ) : null}
             <HeaderActionMenu
               canDelete={data.isOwner}
               duplicateFreshPending={
@@ -550,6 +618,129 @@ function ShoppingListDetailPage() {
             />
           </div>
         </div>
+
+        <section className="rounded-xl border p-5">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              <label className="flex-1">
+                <span className="mb-1 block text-sm font-medium">
+                  List name
+                </span>
+                <Input
+                  value={nameDraft ?? data.list.name}
+                  disabled={!data.canWrite}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={commitName}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                    if (event.key === "Escape") {
+                      setNameDraft(null);
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/craft" search={{ listId }}>
+                  Add craft
+                </Link>
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {data.sources.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  This list has no root crafts yet. Add one to generate the
+                  shared shopping list.
+                </p>
+              ) : (
+                data.sources.map((source) => (
+                  <div
+                    key={source.id}
+                    className="flex flex-col gap-3 rounded-lg border px-4 py-3 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ItemIcon
+                        icon={source.item?.icon ?? null}
+                        name={source.item?.name ?? source.craft.name}
+                        size="md"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">
+                          {source.item?.name ?? source.craft.name}
+                        </p>
+                        <p className="text-muted-foreground truncate text-sm">
+                          {source.craft.name}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min="1"
+                        disabled={!data.canWrite}
+                        className={STOCK_INPUT_CLASS_NAME}
+                        value={
+                          sourceDrafts[source.id] ?? String(source.quantity)
+                        }
+                        onChange={(event) =>
+                          setSourceDrafts((drafts) => ({
+                            ...drafts,
+                            [source.id]: event.target.value,
+                          }))
+                        }
+                        onBlur={() =>
+                          commitSourceQuantity(source.id, source.quantity)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                          if (event.key === "Escape") {
+                            resetSourceDraft(source.id);
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <Button asChild size="sm" variant="ghost">
+                        <Link
+                          to="/shoplist"
+                          search={{
+                            craft: source.craftId,
+                            qty: source.quantity,
+                            sub:
+                              data.list.craftModeItemIds.join(",") || undefined,
+                            listId,
+                            sourceId: source.id,
+                          }}
+                        >
+                          Review
+                        </Link>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!data.canWrite}
+                        loading={
+                          removeSource.isPending &&
+                          removeSource.variables.sourceId === source.id
+                        }
+                        loadingText="Removing..."
+                        onClick={() =>
+                          removeSource.mutate({ listId, sourceId: source.id })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
 
         <section className="rounded-xl border p-5">
           <div className="flex items-start justify-between gap-4">

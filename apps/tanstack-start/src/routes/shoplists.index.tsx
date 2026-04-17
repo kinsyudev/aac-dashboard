@@ -82,6 +82,20 @@ function ShoplistsContent() {
       onError: () => toast.error("Failed to delete shopping list."),
     }),
   );
+  const createEmpty = useMutation(
+    trpc.shoppingLists.createEmpty.mutationOptions({
+      onSuccess: async (result) => {
+        await queryClient.invalidateQueries(
+          trpc.shoppingLists.listMineAndShared.pathFilter(),
+        );
+        await navigate({
+          to: "/shoplists/$listId",
+          params: { listId: result.id },
+        });
+      },
+      onError: () => toast.error("Failed to create shopping list."),
+    }),
+  );
 
   const handleDelete = (listId: string, name: string) => {
     if (typeof window !== "undefined") {
@@ -102,6 +116,13 @@ function ShoplistsContent() {
             Browse lists you own and lists other players shared with you.
           </p>
         </div>
+        <Button
+          onClick={() => createEmpty.mutate({})}
+          loading={createEmpty.isPending}
+          loadingText="Creating..."
+        >
+          New Multi List
+        </Button>
       </div>
 
       <section className="flex flex-col gap-4">
@@ -211,10 +232,11 @@ function ListCard({
   list: {
     id: string;
     name: string;
-    sourceType: "craft" | "simulator";
-    sourceQuantity: number;
+    sourceKind: "empty" | "craft" | "simulator";
+    totalQuantity: number;
+    rootCount: number;
     updatedAt: Date;
-    sourceItem: {
+    primarySourceItem: {
       id: number | null;
       name: string | null;
       icon: string | null;
@@ -235,21 +257,27 @@ function ListCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            {list.sourceItem?.icon ? (
+            {list.primarySourceItem?.icon ? (
               <ItemIcon
-                icon={list.sourceItem.icon}
-                name={list.sourceItem.name ?? list.name}
+                icon={list.primarySourceItem.icon}
+                name={list.primarySourceItem.name ?? list.name}
               />
             ) : null}
             <h3 className="truncate text-lg font-semibold">{list.name}</h3>
           </div>
           <p className="text-muted-foreground mt-1 text-sm">
-            {list.sourceQuantity}{" "}
-            {list.sourceType === "simulator"
-              ? `attempt${list.sourceQuantity === 1 ? "" : "s"}`
-              : `craft${list.sourceQuantity === 1 ? "" : "s"}`}
+            {list.sourceKind === "empty"
+              ? "Empty list"
+              : list.sourceKind === "simulator"
+                ? `${list.totalQuantity} attempt${list.totalQuantity === 1 ? "" : "s"}`
+                : `${list.rootCount} root craft${list.rootCount === 1 ? "" : "s"} • ${list.totalQuantity} total`}
             {role ? ` • ${role}` : " • owner"}
           </p>
+          {list.rootCount > 1 && list.primarySourceItem?.name ? (
+            <p className="text-muted-foreground mt-1 text-xs">
+              {list.primarySourceItem.name} +{list.rootCount - 1} more
+            </p>
+          ) : null}
         </div>
       </div>
 

@@ -23,15 +23,6 @@ export const shoppingLists = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     name: t.text().notNull(),
-    sourceType: shoppingListSourceTypeEnum().notNull().default("craft"),
-    sourceCraftId: t
-      .integer()
-      .notNull()
-      .references(() => crafts.id, { onDelete: "cascade" }),
-    sourceItemId: t.integer().references(() => items.id, {
-      onDelete: "set null",
-    }),
-    sourceQuantity: t.integer().notNull().default(1),
     craftModeItemIds: t
       .jsonb()
       .$type<number[]>()
@@ -41,6 +32,36 @@ export const shoppingLists = pgTable(
     updatedAt: t.timestamp().notNull().defaultNow(),
   }),
   (table) => [index("idx_shopping_lists_owner").on(table.ownerUserId)],
+);
+
+export const shoppingListSources = pgTable(
+  "shopping_list_sources",
+  (t) => ({
+    id: t.uuid().primaryKey().defaultRandom(),
+    shoppingListId: t
+      .uuid()
+      .notNull()
+      .references(() => shoppingLists.id, { onDelete: "cascade" }),
+    sourceType: shoppingListSourceTypeEnum().notNull().default("craft"),
+    craftId: t
+      .integer()
+      .notNull()
+      .references(() => crafts.id, { onDelete: "cascade" }),
+    itemId: t.integer().references(() => items.id, {
+      onDelete: "set null",
+    }),
+    quantity: t.integer().notNull().default(1),
+    position: t.integer().notNull().default(0),
+    createdAt: t.timestamp().notNull().defaultNow(),
+    updatedAt: t.timestamp().notNull().defaultNow(),
+  }),
+  (table) => [
+    index("idx_shopping_list_sources_list").on(table.shoppingListId),
+    index("idx_shopping_list_sources_type").on(
+      table.shoppingListId,
+      table.sourceType,
+    ),
+  ],
 );
 
 export const shoppingListItems = pgTable(
@@ -140,18 +161,29 @@ export const shoppingListsRelations = relations(
       fields: [shoppingLists.ownerUserId],
       references: [user.id],
     }),
-    sourceItem: one(items, {
-      fields: [shoppingLists.sourceItemId],
-      references: [items.id],
-    }),
-    sourceCraft: one(crafts, {
-      fields: [shoppingLists.sourceCraftId],
-      references: [crafts.id],
-    }),
+    sources: many(shoppingListSources),
     items: many(shoppingListItems),
     crafts: many(shoppingListCrafts),
     members: many(shoppingListMembers),
     invites: many(shoppingListInvites),
+  }),
+);
+
+export const shoppingListSourcesRelations = relations(
+  shoppingListSources,
+  ({ one }) => ({
+    shoppingList: one(shoppingLists, {
+      fields: [shoppingListSources.shoppingListId],
+      references: [shoppingLists.id],
+    }),
+    craft: one(crafts, {
+      fields: [shoppingListSources.craftId],
+      references: [crafts.id],
+    }),
+    item: one(items, {
+      fields: [shoppingListSources.itemId],
+      references: [items.id],
+    }),
   }),
 );
 
