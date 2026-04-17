@@ -20,7 +20,7 @@ const HEADERS: Record<string, string> = {
 
 const AUTH_COOKIE = process.env.AAC_AUTH;
 if (!AUTH_COOKIE) {
-  console.error("Set AAC_AUTH env var to your auth JWT token");
+  console.error("Set AAC_AUTH env var to your auth JWT tokn");
   process.exit(1);
 }
 
@@ -189,7 +189,9 @@ async function main() {
     }
 
     itemsDone += chunk.length;
-    console.log(`  ${itemsDone}/${missingItems.length} processed, ${valid.length}/${chunk.length} inserted`);
+    console.log(
+      `  ${itemsDone}/${missingItems.length} processed, ${valid.length}/${chunk.length} inserted`,
+    );
   }
 
   const totalItems = await db.$count(items);
@@ -231,7 +233,9 @@ async function main() {
             labor: d.labor,
             castDelayMs: d.cast_delay_ms,
             // null if the primary product couldn't be fetched — craft is still usable via craft_products
-            primaryProductId: knownItemIds.has(d.primary_product_id) ? d.primary_product_id : null,
+            primaryProductId: knownItemIds.has(d.primary_product_id)
+              ? d.primary_product_id
+              : null,
           })),
         )
         .onConflictDoUpdate({
@@ -247,10 +251,18 @@ async function main() {
       const allProducts = insertable.flatMap((d) =>
         d.products
           .filter((p) => knownItemIds.has(p.item_id))
-          .map((p) => ({ craftId: d.id, itemId: p.item_id, amount: p.amount, rate: p.rate })),
+          .map((p) => ({
+            craftId: d.id,
+            itemId: p.item_id,
+            amount: p.amount,
+            rate: p.rate,
+          })),
       );
       if (allProducts.length > 0) {
-        await db.insert(craftProducts).values(allProducts).onConflictDoNothing();
+        await db
+          .insert(craftProducts)
+          .values(allProducts)
+          .onConflictDoNothing();
       }
 
       const allMaterials = insertable.flatMap((d) =>
@@ -259,18 +271,25 @@ async function main() {
           .map((m) => ({ craftId: d.id, itemId: m.item_id, amount: m.amount })),
       );
       if (allMaterials.length > 0) {
-        await db.insert(craftMaterials).values(allMaterials).onConflictDoNothing();
+        await db
+          .insert(craftMaterials)
+          .values(allMaterials)
+          .onConflictDoNothing();
       }
     }
 
     craftsDone += chunk.length;
-    console.log(`  ${craftsDone}/${missingCrafts.length} processed, ${insertable.length}/${chunk.length} inserted`);
+    console.log(
+      `  ${craftsDone}/${missingCrafts.length} processed, ${insertable.length}/${chunk.length} inserted`,
+    );
   }
 
   const totalCrafts = await db.$count(crafts);
   const totalProducts = await db.$count(craftProducts);
   const totalMaterials = await db.$count(craftMaterials);
-  console.log(`Crafts done: ${totalCrafts} crafts, ${totalProducts} products, ${totalMaterials} materials`);
+  console.log(
+    `Crafts done: ${totalCrafts} crafts, ${totalProducts} products, ${totalMaterials} materials`,
+  );
   console.log("Building static API cache...");
   await buildStaticApiCache();
   console.log("Done!");
