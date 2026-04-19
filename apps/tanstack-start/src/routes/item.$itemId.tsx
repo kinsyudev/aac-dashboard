@@ -76,6 +76,8 @@ type ItemDetailData = NonNullable<
 >;
 type RecipeEntry = ItemDetailData["craftedBy"][number];
 type PriceSummary = ItemDetailData["latestPrices"][number];
+type PriceHistoryEntry = ItemDetailData["priceHistory"][number];
+type MarketDepthWindow = "30d" | "7d" | "24h";
 interface HistoryChartPoint {
   label: string;
   fullLabel: string;
@@ -88,9 +90,18 @@ interface RecipeGroup {
   entries: RecipeEntry[];
 }
 
-function parseMetric(value: string | null) {
+interface MarketDepthSummary {
+  window: MarketDepthWindow;
+  avgPrice: number;
+  volume: number;
+  goldTurnover: number;
+}
+
+function parseMetric(value: string | null | undefined) {
   if (!value) return null;
-  const parsed = Number.parseFloat(value);
+  const normalized = value.trim();
+  if (normalized.length === 0) return null;
+  const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -114,6 +125,16 @@ function formatCompact(value: number) {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatCompactGold(value: number) {
+  if (value < 1_000) return formatGold(value);
+
+  return `${new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)} gold`;
 }
 
 function formatSnapshotLabel(value: string) {
@@ -149,6 +170,41 @@ function collapseHistoryByDay(data: ItemDetailData["priceHistory"]) {
   }
 
   return [...dailySnapshots.values()];
+}
+
+function getLatestSnapshot(data: ItemDetailData["priceHistory"]) {
+  return data.at(-1) ?? null;
+}
+
+function getMarketDepthSummary(
+  snapshot: PriceHistoryEntry | null,
+): MarketDepthSummary | null {
+  if (!snapshot) return null;
+
+  const candidates: {
+    window: MarketDepthWindow;
+    avgPrice: string | null;
+    volume: string | null;
+  }[] = [
+    { window: "30d", avgPrice: snapshot.avg30d, volume: snapshot.vol30d },
+    { window: "7d", avgPrice: snapshot.avg7d, volume: snapshot.vol7d },
+    { window: "24h", avgPrice: snapshot.avg24h, volume: snapshot.vol24h },
+  ];
+
+  for (const candidate of candidates) {
+    const avgPrice = parseMetric(candidate.avgPrice);
+    const volume = parseMetric(candidate.volume);
+    if (avgPrice == null || volume == null) continue;
+
+    return {
+      window: candidate.window,
+      avgPrice,
+      volume,
+      goldTurnover: avgPrice * volume,
+    };
+  }
+
+  return null;
 }
 
 function getRecipeSearchText(entry: RecipeEntry) {
@@ -206,11 +262,22 @@ function RouteComponent() {
   );
 }
 
-function ItemStat({ label, value }: { label: string; value: string }) {
+function ItemStat({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description?: string;
+}) {
   return (
     <div className="rounded-lg border px-4 py-3">
       <p className="text-muted-foreground text-xs uppercase">{label}</p>
       <p className="mt-1 text-lg font-semibold">{value}</p>
+      {description ? (
+        <p className="text-muted-foreground mt-1 text-xs">{description}</p>
+      ) : null}
     </div>
   );
 }
@@ -791,7 +858,8 @@ function ItemDetail({ itemId }: { itemId: number }) {
   );
 
   const dailyHistory = collapseHistoryByDay(data.priceHistory);
-  const latestSnapshot = dailyHistory.at(-1);
+  const latestSnapshot = getLatestSnapshot(data.priceHistory);
+  const marketDepth = getMarketDepthSummary(latestSnapshot);
   const historyPoints: HistoryChartPoint[] = dailyHistory
     .map((snapshot) => ({
       label: formatSnapshotLabel(snapshot.fetchedAt),
@@ -817,7 +885,7 @@ function ItemDetail({ itemId }: { itemId: number }) {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <ItemStat
             label="24h Price"
             value={
@@ -848,6 +916,19 @@ function ItemDetail({ itemId }: { itemId: number }) {
               parseMetric(latestSnapshot?.avg30d ?? null) != null
                 ? formatGold(parseMetric(latestSnapshot?.avg30d ?? null) ?? 0)
                 : "N/A"
+            }
+          />
+          <ItemStat
+            label="Market Depth"
+            value={
+              marketDepth
+                ? `${formatCompactGold(marketDepth.goldTurnover)} / ${marketDepth.window}`
+                : "N/A"
+            }
+            description={
+              marketDepth
+                ? `${formatGold(marketDepth.avgPrice)} avg × ${formatCompact(marketDepth.volume)} volume`
+                : "No price/volume pair available"
             }
           />
         </div>
