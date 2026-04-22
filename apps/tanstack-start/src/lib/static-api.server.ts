@@ -24,14 +24,17 @@ const payloadLoaders = {
   "items-all": async () =>
     db.select().from(items).orderBy(asc(items.category), asc(items.name)),
   "crafts-all": async () =>
-    db.select().from(crafts).then((rows) =>
-      rows.filter((craft) => {
-        const normalized = craft.name.trim().toLowerCase();
-        return !UNSUPPORTED_CRAFT_NAME_PREFIXES.some((prefix) =>
-          normalized.startsWith(prefix),
-        );
-      }),
-    ),
+    db
+      .select()
+      .from(crafts)
+      .then((rows) =>
+        rows.filter((craft) => {
+          const normalized = craft.name.trim().toLowerCase();
+          return !UNSUPPORTED_CRAFT_NAME_PREFIXES.some((prefix) =>
+            normalized.startsWith(prefix),
+          );
+        }),
+      ),
 } satisfies Record<StaticPayloadName, () => Promise<unknown>>;
 
 function createCacheEntry(
