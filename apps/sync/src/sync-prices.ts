@@ -3,7 +3,7 @@ import { db } from "@acme/db/client";
 import { prices } from "@acme/db/schema";
 
 const SPREADSHEET_ID = "1VezKZkoRFzTnB0hLpTroTRFG40NH5vEpfMjWtWCCXIc";
-const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv`;
+const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv`;
 
 interface PriceRow {
   itemId: number;
@@ -16,10 +16,51 @@ interface PriceRow {
   vol30d: string | null;
 }
 
+interface ParsedSpreadsheet {
+  rows: PriceRow[];
+  fetchedAt: string | null;
+}
+
 function toDailyTimestamp(value = new Date()) {
   return new Date(
     Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
   ).toISOString();
+}
+
+function parseSheetDate(value: string): string | null {
+  const normalized = value.trim();
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})(?:\s+.*)?$/.exec(normalized);
+
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return toDailyTimestamp(parsed);
+}
+
+function findSpreadsheetDate(lines: string[]): string | null {
+  for (const line of lines.slice(0, 5)) {
+    const fields = parseCSVLine(line);
+
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i]?.trim().toLowerCase();
+      if (field !== "last updated at:") continue;
+
+      const candidate = fields[i + 1];
+      if (candidate == null) return null;
+
+      return parseSheetDate(candidate);
+    }
+  }
+
+  return null;
 }
 
 function parseCSVLine(line: string): string[] {
@@ -55,9 +96,10 @@ function parseCSVLine(line: string): string[] {
   return fields;
 }
 
-function parseRows(csv: string): PriceRow[] {
-  const lines = csv.split("\n").filter((l) => l.trim().length > 0);
+function parseRows(csv: string): ParsedSpreadsheet {
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
   const rows: PriceRow[] = [];
+  const fetchedAt = findSpreadsheetDate(lines);
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
@@ -79,7 +121,7 @@ function parseRows(csv: string): PriceRow[] {
     });
   }
 
-  return rows;
+  return { rows, fetchedAt };
 }
 
 async function main() {
@@ -91,7 +133,7 @@ async function main() {
   }
 
   const csv = await resp.text();
-  const rows = parseRows(csv);
+  const { rows, fetchedAt: spreadsheetDate } = parseRows(csv);
   console.log(`Parsed ${rows.length} price rows from spreadsheet`);
 
   if (rows.length === 0) {
@@ -99,7 +141,10 @@ async function main() {
     return;
   }
 
-  const fetchedAt = toDailyTimestamp();
+  const fetchedAt = spreadsheetDate ?? toDailyTimestamp();
+  if (spreadsheetDate == null) {
+    console.warn("Spreadsheet last-updated cell missing or invalid, falling back to current date");
+  }
   const BATCH_SIZE = 500;
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
