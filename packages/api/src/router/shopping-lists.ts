@@ -1067,6 +1067,48 @@ export const shoppingListsRouter = {
       });
     }),
 
+  resetProgress: protectedProcedure
+    .input(
+      z.object({
+        listId: z.string().uuid(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const access = await getListAccess(
+        ctx.db,
+        input.listId,
+        ctx.session.user.id,
+      );
+      if (!access.canWrite) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      await ctx.db.transaction(async (tx: DbTx) => {
+        const updatedAt = new Date();
+
+        await tx
+          .update(shoppingListItems)
+          .set({
+            obtainedQuantity: 0,
+            updatedAt,
+          })
+          .where(eq(shoppingListItems.shoppingListId, input.listId));
+
+        await tx
+          .update(shoppingListCrafts)
+          .set({
+            completedCount: 0,
+            updatedAt,
+          })
+          .where(eq(shoppingListCrafts.shoppingListId, input.listId));
+
+        await tx
+          .update(shoppingLists)
+          .set({ updatedAt })
+          .where(eq(shoppingLists.id, input.listId));
+      });
+    }),
+
   duplicate: protectedProcedure
     .input(
       z.object({

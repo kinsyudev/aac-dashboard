@@ -381,6 +381,44 @@ function ShoppingListDetailPage() {
       onError: () => toast.error("Failed to remove source."),
     }),
   );
+  const resetProgress = useMutation(
+    trpc.shoppingLists.resetProgress.mutationOptions({
+      onMutate: async () => {
+        await queryClient.cancelQueries(listQueryOptions);
+        const previous = queryClient.getQueryData(listQueryOptions.queryKey);
+        queryClient.setQueryData(listQueryOptions.queryKey, (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            items: old.items.map((item) => ({
+              ...item,
+              stockQuantity: 0,
+              remainingQuantity: Math.max(
+                0,
+                item.totalQuantity - item.usedQuantity,
+              ),
+            })),
+            crafts: old.crafts.map((craft) => ({
+              ...craft,
+              stockCount: 0,
+              remainingCount: Math.max(0, craft.totalCount - craft.usedCount),
+            })),
+          };
+        });
+        setItemDrafts({});
+        setCraftDrafts({});
+        return { previous };
+      },
+      onError: (_error, _variables, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(listQueryOptions.queryKey, context.previous);
+        }
+        toast.error("Failed to reset progress.");
+      },
+      onSuccess: () => toast.success("Shopping list progress reset."),
+      onSettled: invalidate,
+    }),
+  );
 
   const handleDelete = () => {
     if (typeof window !== "undefined") {
@@ -399,6 +437,16 @@ function ShoppingListDetailPage() {
       return;
     }
     renameList.mutate({ listId, name: nextName });
+  };
+
+  const handleResetProgress = () => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Reset all material and craft progress for "${data.list.name}" to 0?`,
+      );
+      if (!confirmed) return;
+    }
+    resetProgress.mutate({ listId });
   };
 
   const completion = useMemo(() => {
@@ -755,6 +803,16 @@ function ShoppingListDetailPage() {
         <section className="rounded-xl border p-5">
           <div className="flex items-start justify-between gap-4">
             <h2 className="text-lg font-semibold">Progress</h2>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!data.canWrite}
+              loading={resetProgress.isPending}
+              loadingText="Resetting..."
+              onClick={handleResetProgress}
+            >
+              Reset to 0
+            </Button>
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.95fr]">
             <div className="flex flex-col gap-4">
