@@ -65,11 +65,17 @@ function getMarketPrice(
     | {
         avg24h: string | null;
         avg7d: string | null;
+        avg30d: string | null;
       }
     | null
     | undefined,
 ) {
-  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+  return (
+    parseFinitePrice(price?.avg24h) ??
+    parseFinitePrice(price?.avg7d) ??
+    parseFinitePrice(price?.avg30d) ??
+    0
+  );
 }
 
 function isCoinItem(item: { itemId: number; item: { name: string } }) {
@@ -1386,7 +1392,10 @@ function ItemCost({
   itemId: number;
   remainingQuantity: number;
   overrideMap: Map<number, number>;
-  priceMap: Map<number, { avg24h: string | null; avg7d: string | null }>;
+  priceMap: Map<
+    number,
+    { avg24h: string | null; avg7d: string | null; avg30d: string | null }
+  >;
 }) {
   const override = overrideMap.get(itemId);
   const market = priceMap.get(itemId);

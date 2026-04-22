@@ -86,7 +86,10 @@ type ForItemOutput = NonNullable<
 type CraftMode = "buy" | "craft";
 type CraftEntry = ForItemOutput["crafts"][number];
 type SubcraftEntry = ForItemOutput["subcraftsByItemId"][number][number];
-type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
+type PriceMap = Map<
+  number,
+  { avg24h: string | null; avg7d: string | null; avg30d: string | null }
+>;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = ForItemOutput["subcraftsByItemId"];
 

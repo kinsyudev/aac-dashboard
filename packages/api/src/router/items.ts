@@ -162,6 +162,7 @@ export const itemsRouter = {
             itemId: number;
             avg24h: string | null;
             avg7d: string | null;
+            avg30d: string | null;
           }[],
         };
       }
@@ -220,6 +221,7 @@ export const itemsRouter = {
                 itemId: prices.itemId,
                 avg24h: prices.avg24h,
                 avg7d: prices.avg7d,
+                avg30d: prices.avg30d,
               })
               .from(prices)
               .where(inArray(prices.itemId, materialItemIds))

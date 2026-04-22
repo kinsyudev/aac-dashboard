@@ -162,6 +162,7 @@ export const craftsRouter = {
             itemId: number;
             avg24h: string | null;
             avg7d: string | null;
+            avg30d: string | null;
           }[],
           subcraftsByItemId: {} as Record<
             number,
@@ -231,6 +232,7 @@ export const craftsRouter = {
           itemId: number;
           avg24h: string | null;
           avg7d: string | null;
+          avg30d: string | null;
         }
 
         return {
@@ -338,6 +340,7 @@ export const craftsRouter = {
                 itemId: prices.itemId,
                 avg24h: prices.avg24h,
                 avg7d: prices.avg7d,
+                avg30d: prices.avg30d,
               })
               .from(prices)
               .where(inArray(prices.itemId, pricedItemIds))
@@ -499,6 +502,7 @@ export const craftsRouter = {
                 itemId: prices.itemId,
                 avg24h: prices.avg24h,
                 avg7d: prices.avg7d,
+                avg30d: prices.avg30d,
               })
               .from(prices)
               .where(inArray(prices.itemId, pricedItemIds))

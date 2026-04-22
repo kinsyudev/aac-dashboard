@@ -37,6 +37,7 @@ export const profileRouter = {
         itemId: prices.itemId,
         avg24h: prices.avg24h,
         avg7d: prices.avg7d,
+        avg30d: prices.avg30d,
       })
       .from(prices)
       .where(inArray(prices.itemId, itemIds))

@@ -10,7 +10,7 @@ export type OptimizationObjective = "profit" | "silverPerLabor";
 
 export type PriceMap = Map<
   number,
-  { avg24h: string | null; avg7d: string | null }
+  { avg24h: string | null; avg7d: string | null; avg30d: string | null }
 >;
 export type OverrideMap = Map<number, number>;
 export type ProficiencyMap = Map<string, number>;
@@ -102,17 +102,29 @@ export function parseFinitePrice(
 }
 
 export function getMarketPrice(
-  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
+  price:
+    | { avg24h: string | null; avg7d: string | null; avg30d: string | null }
+    | null
+    | undefined,
 ): number {
-  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+  return (
+    parseFinitePrice(price?.avg24h) ??
+    parseFinitePrice(price?.avg7d) ??
+    parseFinitePrice(price?.avg30d) ??
+    0
+  );
 }
 
 export function hasMarketPrice(
-  price: { avg24h: string | null; avg7d: string | null } | null | undefined,
+  price:
+    | { avg24h: string | null; avg7d: string | null; avg30d: string | null }
+    | null
+    | undefined,
 ): boolean {
   return (
     parseFinitePrice(price?.avg24h) != null ||
-    parseFinitePrice(price?.avg7d) != null
+    parseFinitePrice(price?.avg7d) != null ||
+    parseFinitePrice(price?.avg30d) != null
   );
 }
 

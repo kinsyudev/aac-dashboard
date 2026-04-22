@@ -144,7 +144,10 @@ type SubcraftEntry =
   | ForCraftOutput["subcraftsByItemId"][number][number]
   | ForItemOutput["subcraftsByItemId"][number][number];
 type SubcraftMap = Record<number, SubcraftEntry[]>;
-type PriceMap = Map<number, { avg24h: string | null; avg7d: string | null }>;
+type PriceMap = Map<
+  number,
+  { avg24h: string | null; avg7d: string | null; avg30d: string | null }
+>;
 type OverrideMap = Map<number, number>;
 interface RecipeEntry {
   craft: {

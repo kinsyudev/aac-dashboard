@@ -9,6 +9,7 @@ export type CraftMode = "buy" | "craft";
 export interface PriceEntry {
   avg24h: string | null;
   avg7d: string | null;
+  avg30d: string | null;
 }
 
 export type PriceMap = Map<number, PriceEntry>;
@@ -54,7 +55,12 @@ export function parseFinitePrice(
 }
 
 export function getMarketPrice(price: PriceEntry | null | undefined): number {
-  return parseFinitePrice(price?.avg24h) ?? parseFinitePrice(price?.avg7d) ?? 0;
+  return (
+    parseFinitePrice(price?.avg24h) ??
+    parseFinitePrice(price?.avg7d) ??
+    parseFinitePrice(price?.avg30d) ??
+    0
+  );
 }
 
 export function getItemPrice(
