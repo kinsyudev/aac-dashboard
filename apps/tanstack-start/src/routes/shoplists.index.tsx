@@ -8,6 +8,7 @@ import {
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
 import type { AppRouter } from "@acme/api";
+import { cn } from "@acme/ui";
 import { Button } from "@acme/ui/button";
 import { Checkbox } from "@acme/ui/checkbox";
 import { toast } from "@acme/ui/toast";
@@ -128,7 +129,7 @@ function ShoplistsContent() {
 
   return (
     <div className="flex flex-col gap-10">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Shopping Lists</h1>
           <p className="text-muted-foreground mt-2 text-sm">
@@ -171,6 +172,7 @@ function ShoplistsContent() {
                 list={list}
                 actionLabel="Open"
                 selected={selectedIdSet.has(list.id)}
+                dimmed={selectedIds.length > 0 && !selectedIdSet.has(list.id)}
                 freshDuplicatePending={
                   duplicate.isPending &&
                   duplicate.variables.listId === list.id &&
@@ -217,6 +219,7 @@ function ShoplistsContent() {
                 role={list.role}
                 actionLabel="Open"
                 selected={selectedIdSet.has(list.id)}
+                dimmed={selectedIds.length > 0 && !selectedIdSet.has(list.id)}
                 freshDuplicatePending={
                   duplicate.isPending &&
                   duplicate.variables.listId === list.id &&
@@ -260,6 +263,7 @@ function ListCard({
   onToggleSelected,
   onDelete,
   selected,
+  dimmed,
   freshDuplicatePending = false,
   snapshotDuplicatePending = false,
   deletePending = false,
@@ -285,12 +289,20 @@ function ListCard({
   onToggleSelected: () => void;
   onDelete?: () => void;
   selected: boolean;
+  dimmed: boolean;
   freshDuplicatePending?: boolean;
   snapshotDuplicatePending?: boolean;
   deletePending?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-4 rounded-xl border p-5">
+    <div
+      className={cn(
+        "flex flex-col gap-4 rounded-xl border p-5 transition-all",
+        selected &&
+          "border-primary bg-primary/5 ring-primary/20 shadow-sm ring-1",
+        dimmed && "opacity-45 hover:opacity-80",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -316,7 +328,7 @@ function ListCard({
             </p>
           ) : null}
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm font-medium">
           <Checkbox
             checked={selected}
             onCheckedChange={() => onToggleSelected()}

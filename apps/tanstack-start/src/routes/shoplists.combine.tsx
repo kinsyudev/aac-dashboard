@@ -14,7 +14,6 @@ import { Badge } from "@acme/ui/badge";
 import { Button } from "@acme/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -146,16 +145,18 @@ function CombinedShoppingListsPage() {
       <main className="container py-16">
         <Card className="mx-auto max-w-2xl">
           <CardHeader>
-            <CardTitle>Combined Shopping List</CardTitle>
-            <CardDescription>
-              Select at least two shopping lists to build a read-only combined
-              view.
-            </CardDescription>
-            <CardAction>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Combined Shopping List</CardTitle>
+                <CardDescription className="mt-2">
+                  Select at least two shopping lists to build a read-only
+                  combined view.
+                </CardDescription>
+              </div>
               <Button asChild variant="outline">
                 <Link to="/shoplists">Choose lists</Link>
               </Button>
-            </CardAction>
+            </div>
           </CardHeader>
         </Card>
       </main>
@@ -217,30 +218,34 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
   const overallProgress = getCompletionPercent(totalRequired, totalRemaining);
 
   return (
-    <main className="container py-10 md:py-16">
+    <main className="container py-8 md:py-12">
       <div className="flex flex-col gap-6">
         <Card className="overflow-hidden">
           <CardHeader className="border-b">
-            <div className="flex min-w-0 flex-col gap-2">
-              <Link
-                to="/shoplists"
-                className="text-muted-foreground text-sm hover:underline"
-              >
-                Back to lists
-              </Link>
-              <CardTitle className="text-3xl">Combined Shopping List</CardTitle>
-              <CardDescription>
-                A read-only rollup of materials still needed across{" "}
-                {data.lists.length.toLocaleString()} selected lists.
-              </CardDescription>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <Link
+                  to="/shoplists"
+                  className="text-muted-foreground text-sm hover:underline"
+                >
+                  Back to lists
+                </Link>
+                <CardTitle className="mt-2 text-2xl sm:text-3xl">
+                  Combined Shopping List
+                </CardTitle>
+                <CardDescription className="mt-2 max-w-2xl">
+                  A read-only rollup of materials still needed across{" "}
+                  {data.lists.length.toLocaleString()} selected lists.
+                </CardDescription>
+              </div>
+              <div className="shrink-0">
+                <Button asChild variant="outline">
+                  <Link to="/shoplists">Change selection</Link>
+                </Button>
+              </div>
             </div>
-            <CardAction>
-              <Button asChild variant="outline">
-                <Link to="/shoplists">Change selection</Link>
-              </Button>
-            </CardAction>
           </CardHeader>
-          <CardContent className="grid gap-4 pt-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <CardContent className="grid gap-4 pt-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Materials covered</span>
@@ -271,8 +276,8 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
           </CardContent>
         </Card>
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_340px]">
-          <div className="flex flex-col gap-4">
+        <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex min-w-0 flex-col gap-4">
             <SelectedListsCard lists={data.lists} />
             <CombinedItemsCard
               items={sortedItems}
@@ -281,7 +286,7 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
             />
           </div>
 
-          <aside className="flex flex-col gap-4">
+          <aside className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:flex xl:flex-col">
             <MetricCard
               label="Selected lists"
               value={data.lists.length.toLocaleString()}
@@ -380,7 +385,7 @@ function SelectedListsCard({ lists }: { lists: CombinedData["lists"] }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
           {lists.map((list) => (
             <Link
               key={list.id}
@@ -403,7 +408,9 @@ function SelectedListsCard({ lists }: { lists: CombinedData["lists"] }) {
                       : `${list.rootCount.toLocaleString()} root crafts`}
                 </p>
               </div>
-              <Badge variant="outline">{list.role}</Badge>
+              <Badge className="shrink-0" variant="outline">
+                {list.role}
+              </Badge>
             </Link>
           ))}
         </div>
@@ -429,21 +436,21 @@ function CombinedItemsCard({
           Sorted by estimated remaining buy cost, then item name.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-3 sm:px-6">
         {items.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             No material items found in the selected lists.
           </p>
         ) : (
           <>
-            <div className="hidden md:block">
+            <div className="hidden lg:block">
               <CombinedItemsTable
                 items={items}
                 overrideMap={overrideMap}
                 priceMap={priceMap}
               />
             </div>
-            <div className="grid gap-3 md:hidden">
+            <div className="grid gap-3 lg:hidden">
               {items.map((item) => (
                 <CombinedItemMobileCard
                   key={item.itemId}
@@ -473,12 +480,12 @@ function CombinedItemsTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Item</TableHead>
+          <TableHead className="min-w-48">Item</TableHead>
           <TableHead className="text-right">Remaining</TableHead>
           <TableHead className="text-right">Required</TableHead>
           <TableHead className="min-w-36">Progress</TableHead>
           <TableHead className="text-right">Est. cost</TableHead>
-          <TableHead>Sources</TableHead>
+          <TableHead className="min-w-64">Sources</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -547,7 +554,7 @@ function CombinedItemTableRow({
           <span className="text-muted-foreground">No price</span>
         )}
       </TableCell>
-      <TableCell className="min-w-64">
+      <TableCell>
         <ContributionAccordion item={item} />
       </TableCell>
     </TableRow>
@@ -571,8 +578,8 @@ function CombinedItemMobileCard({
   );
 
   return (
-    <div className="rounded-lg border p-3">
-      <div className="flex items-start gap-3">
+    <div className="min-w-0 rounded-lg border p-3">
+      <div className="flex min-w-0 items-start gap-3">
         <Link
           to="/item/$itemId"
           params={{ itemId: item.itemId }}
@@ -586,7 +593,10 @@ function CombinedItemMobileCard({
             </p>
           </div>
         </Link>
-        <Badge variant={item.remainingQuantity === 0 ? "secondary" : "outline"}>
+        <Badge
+          className="shrink-0"
+          variant={item.remainingQuantity === 0 ? "secondary" : "outline"}
+        >
           {progress}%
         </Badge>
       </div>
@@ -618,7 +628,7 @@ function ContributionAccordion({ item }: { item: CombinedItem }) {
   return (
     <Accordion type="single" collapsible className="mt-2">
       <AccordionItem value="sources" className="rounded-lg">
-        <AccordionTrigger className="px-3 py-2 text-xs">
+        <AccordionTrigger className="min-w-0 px-3 py-2 text-xs">
           <span className="min-w-0 truncate">
             {item.contributions.length} source
             {item.contributions.length === 1 ? "" : "s"}
@@ -631,7 +641,7 @@ function ContributionAccordion({ item }: { item: CombinedItem }) {
             <div className="divide-y">
               {item.contributions.map((contribution) => (
                 <div key={contribution.listId} className="p-3">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
                     <Link
                       to="/shoplists/$listId"
                       params={{ listId: contribution.listId }}
@@ -639,7 +649,7 @@ function ContributionAccordion({ item }: { item: CombinedItem }) {
                     >
                       {contribution.listName}
                     </Link>
-                    <Badge variant="secondary">
+                    <Badge className="shrink-0" variant="secondary">
                       {contribution.remainingQuantity.toLocaleString()} left
                     </Badge>
                   </div>
