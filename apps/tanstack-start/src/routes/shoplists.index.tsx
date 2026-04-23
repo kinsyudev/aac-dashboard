@@ -9,6 +9,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
 import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
+import { Checkbox } from "@acme/ui/checkbox";
 import { toast } from "@acme/ui/toast";
 
 import { ItemIcon } from "~/component/item-icon";
@@ -316,11 +317,9 @@ function ListCard({
           ) : null}
         </div>
         <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
-            className="accent-primary size-4"
+          <Checkbox
             checked={selected}
-            onChange={onToggleSelected}
+            onCheckedChange={() => onToggleSelected()}
           />
           <span>Combine</span>
         </label>

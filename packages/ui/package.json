@@ -15,6 +15,10 @@
     "./badge": "./src/badge.tsx",
     "./card": "./src/card.tsx",
     "./chart": "./src/chart.tsx",
+    "./checkbox": "./src/checkbox.tsx",
+    "./progress": "./src/progress.tsx",
+    "./scroll-area": "./src/scroll-area.tsx",
+    "./table": "./src/table.tsx",
     "./toast": "./src/toast.tsx"
   },
   "license": "MIT",
