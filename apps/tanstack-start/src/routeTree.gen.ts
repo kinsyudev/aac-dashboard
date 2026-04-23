@@ -17,6 +17,7 @@ import { Route as ItemRouteImport } from './routes/item'
 import { Route as CraftRouteImport } from './routes/craft'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SimulatorIndexRouteImport } from './routes/simulator.index'
+import { Route as ShoplistsCombineRouteImport } from './routes/shoplists.combine'
 import { Route as ShoplistsIndexRouteImport } from './routes/shoplists.index'
 import { Route as ItemIndexRouteImport } from './routes/item.index'
 import { Route as CraftIndexRouteImport } from './routes/craft.index'
@@ -73,6 +74,11 @@ const SimulatorIndexRoute = SimulatorIndexRouteImport.update({
 const ShoplistsIndexRoute = ShoplistsIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ShoplistsRoute,
+} as any)
+const ShoplistsCombineRoute = ShoplistsCombineRouteImport.update({
+  id: '/combine',
+  path: '/combine',
   getParentRoute: () => ShoplistsRoute,
 } as any)
 const ItemIndexRoute = ItemIndexRouteImport.update({
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft/': typeof CraftIndexRoute
   '/item/': typeof ItemIndexRoute
+  '/shoplists/combine': typeof ShoplistsCombineRoute
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -160,6 +167,7 @@ export interface FileRoutesByTo {
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
   '/shoplists/$listId': typeof ShoplistsListIdRoute
+  '/shoplists/combine': typeof ShoplistsCombineRoute
   '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft': typeof CraftIndexRoute
   '/item': typeof ItemIndexRoute
@@ -186,6 +194,7 @@ export interface FileRoutesById {
   '/simulator/$itemId': typeof SimulatorItemIdRoute
   '/craft/': typeof CraftIndexRoute
   '/item/': typeof ItemIndexRoute
+  '/shoplists/combine': typeof ShoplistsCombineRoute
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -210,6 +219,7 @@ export interface FileRouteTypes {
     | '/simulator/$itemId'
     | '/craft/'
     | '/item/'
+    | '/shoplists/combine'
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
     | '/craft/$itemId'
     | '/item/$itemId'
     | '/shoplists/$listId'
+    | '/shoplists/combine'
     | '/simulator/$itemId'
     | '/craft'
     | '/item'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/simulator/$itemId'
     | '/craft/'
     | '/item/'
+    | '/shoplists/combine'
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
@@ -336,6 +348,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/shoplists/'
       preLoaderRoute: typeof ShoplistsIndexRouteImport
+      parentRoute: typeof ShoplistsRoute
+    }
+    '/shoplists/combine': {
+      id: '/shoplists/combine'
+      path: '/combine'
+      fullPath: '/shoplists/combine'
+      preLoaderRoute: typeof ShoplistsCombineRouteImport
       parentRoute: typeof ShoplistsRoute
     }
     '/item/': {
@@ -443,12 +462,14 @@ const ItemRouteChildren: ItemRouteChildren = {
 const ItemRouteWithChildren = ItemRoute._addFileChildren(ItemRouteChildren)
 
 interface ShoplistsRouteChildren {
+  ShoplistsCombineRoute: typeof ShoplistsCombineRoute
   ShoplistsListIdRoute: typeof ShoplistsListIdRoute
   ShoplistsIndexRoute: typeof ShoplistsIndexRoute
   ShoplistsInviteTokenRoute: typeof ShoplistsInviteTokenRoute
 }
 
 const ShoplistsRouteChildren: ShoplistsRouteChildren = {
+  ShoplistsCombineRoute: ShoplistsCombineRoute,
   ShoplistsListIdRoute: ShoplistsListIdRoute,
   ShoplistsIndexRoute: ShoplistsIndexRoute,
   ShoplistsInviteTokenRoute: ShoplistsInviteTokenRoute,

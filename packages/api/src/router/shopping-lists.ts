@@ -430,6 +430,151 @@ export const shoppingListsRouter = {
       };
     }),
 
+  getCombined: protectedProcedure
+    .input(
+      z.object({
+        listIds: z.array(z.string().uuid()).min(2).max(50),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const listIds = Array.from(new Set(input.listIds));
+      if (listIds.length < 2) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Select at least two shopping lists to combine.",
+        });
+      }
+
+      const listResults = await Promise.all(
+        listIds.map(async (listId) => {
+          const access = await getListAccess(
+            ctx.db,
+            listId,
+            ctx.session.user.id,
+          );
+          const [sourceRows, itemRows, craftRows] = await Promise.all([
+            getResolvedSources(ctx.db, listId),
+            ctx.db
+              .select({
+                itemId: shoppingListItems.itemId,
+                requiredQuantity: shoppingListItems.requiredQuantity,
+                stockQuantity: shoppingListItems.obtainedQuantity,
+                item: {
+                  id: items.id,
+                  name: items.name,
+                  icon: items.icon,
+                },
+              })
+              .from(shoppingListItems)
+              .innerJoin(items, eq(items.id, shoppingListItems.itemId))
+              .where(eq(shoppingListItems.shoppingListId, listId))
+              .orderBy(asc(items.name)),
+            ctx.db
+              .select({
+                craftId: shoppingListCrafts.craftId,
+                requiredCount: shoppingListCrafts.requiredCount,
+                stockCount: shoppingListCrafts.completedCount,
+              })
+              .from(shoppingListCrafts)
+              .where(eq(shoppingListCrafts.shoppingListId, listId)),
+          ]);
+          const computedUsage = await getComputedUsage(ctx.db, access.list, {
+            itemRows: itemRows.map((row) => ({
+              itemId: row.itemId,
+              requiredQuantity: row.requiredQuantity,
+              stockQuantity: row.stockQuantity,
+            })),
+            craftRows: craftRows.map((row) => ({
+              craftId: row.craftId,
+              requiredCount: row.requiredCount,
+              stockCount: row.stockCount,
+            })),
+          });
+
+          return {
+            list: {
+              id: access.list.id,
+              name: access.list.name,
+              updatedAt: access.list.updatedAt,
+              owner: access.owner,
+              role: access.role,
+              ...buildListSummary(sourceRows),
+            },
+            items: itemRows.map((row) => {
+              const derived = computedUsage.items.get(row.itemId);
+              const totalQuantity =
+                derived?.totalQuantity ?? row.requiredQuantity;
+              const remainingQuantity =
+                derived?.remainingQuantity ??
+                Math.max(0, row.requiredQuantity - row.stockQuantity);
+
+              return {
+                itemId: row.itemId,
+                item: row.item,
+                totalQuantity,
+                remainingQuantity,
+                stockQuantity: derived?.stockQuantity ?? row.stockQuantity,
+                usedQuantity: derived?.usedQuantity ?? 0,
+              };
+            }),
+          };
+        }),
+      );
+
+      const combinedItems = new Map<
+        number,
+        {
+          itemId: number;
+          item: { id: number; name: string; icon: string | null };
+          totalQuantity: number;
+          remainingQuantity: number;
+          contributions: {
+            listId: string;
+            listName: string;
+            totalQuantity: number;
+            remainingQuantity: number;
+            stockQuantity: number;
+            usedQuantity: number;
+          }[];
+        }
+      >();
+
+      for (const result of listResults) {
+        for (const itemRow of result.items) {
+          const existing = combinedItems.get(itemRow.itemId);
+          const contribution = {
+            listId: result.list.id,
+            listName: result.list.name,
+            totalQuantity: itemRow.totalQuantity,
+            remainingQuantity: itemRow.remainingQuantity,
+            stockQuantity: itemRow.stockQuantity,
+            usedQuantity: itemRow.usedQuantity,
+          };
+
+          if (existing) {
+            existing.totalQuantity += itemRow.totalQuantity;
+            existing.remainingQuantity += itemRow.remainingQuantity;
+            existing.contributions.push(contribution);
+          } else {
+            combinedItems.set(itemRow.itemId, {
+              itemId: itemRow.itemId,
+              item: itemRow.item,
+              totalQuantity: itemRow.totalQuantity,
+              remainingQuantity: itemRow.remainingQuantity,
+              contributions: [contribution],
+            });
+          }
+        }
+      }
+
+      return {
+        lists: listResults.map((result) => result.list),
+        items: Array.from(combinedItems.values()).sort((a, b) =>
+          a.item.name.localeCompare(b.item.name),
+        ),
+      };
+    }),
+
   createEmpty: protectedProcedure
     .input(
       z.object({

@@ -1,5 +1,5 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import { Suspense } from "react";
+import { Suspense, useMemo, useState } from "react";
 import {
   useMutation,
   useQueryClient,
@@ -54,6 +54,24 @@ function ShoplistsContent() {
   const { data } = useSuspenseQuery(
     trpc.shoppingLists.listMineAndShared.queryOptions(),
   );
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const toggleSelected = (listId: string) => {
+    setSelectedIds((current) =>
+      current.includes(listId)
+        ? current.filter((id) => id !== listId)
+        : [...current, listId],
+    );
+  };
+
+  const openCombinedView = async () => {
+    if (selectedIds.length < 2) return;
+    await navigate({
+      to: "/shoplists/combine",
+      search: { ids: selectedIds.join(",") },
+    });
+  };
 
   const duplicate = useMutation(
     trpc.shoppingLists.duplicate.mutationOptions({
@@ -116,13 +134,23 @@ function ShoplistsContent() {
             Browse lists you own and lists other players shared with you.
           </p>
         </div>
-        <Button
-          onClick={() => createEmpty.mutate({})}
-          loading={createEmpty.isPending}
-          loadingText="Creating..."
-        >
-          New Multi List
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            disabled={selectedIds.length < 2}
+            onClick={openCombinedView}
+          >
+            Combine selected
+            {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+          </Button>
+          <Button
+            onClick={() => createEmpty.mutate({})}
+            loading={createEmpty.isPending}
+            loadingText="Creating..."
+          >
+            New Multi List
+          </Button>
+        </div>
       </div>
 
       <section className="flex flex-col gap-4">
@@ -141,6 +169,7 @@ function ShoplistsContent() {
                 key={list.id}
                 list={list}
                 actionLabel="Open"
+                selected={selectedIdSet.has(list.id)}
                 freshDuplicatePending={
                   duplicate.isPending &&
                   duplicate.variables.listId === list.id &&
@@ -161,6 +190,7 @@ function ShoplistsContent() {
                 onSnapshotDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "copyState" })
                 }
+                onToggleSelected={() => toggleSelected(list.id)}
                 onDelete={() => handleDelete(list.id, list.name)}
               />
             ))}
@@ -185,6 +215,7 @@ function ShoplistsContent() {
                 list={list}
                 role={list.role}
                 actionLabel="Open"
+                selected={selectedIdSet.has(list.id)}
                 freshDuplicatePending={
                   duplicate.isPending &&
                   duplicate.variables.listId === list.id &&
@@ -201,6 +232,7 @@ function ShoplistsContent() {
                 onSnapshotDuplicate={() =>
                   duplicate.mutate({ listId: list.id, mode: "copyState" })
                 }
+                onToggleSelected={() => toggleSelected(list.id)}
               />
             ))}
           </div>
@@ -224,7 +256,9 @@ function ListCard({
   actionLabel,
   onFreshDuplicate,
   onSnapshotDuplicate,
+  onToggleSelected,
   onDelete,
+  selected,
   freshDuplicatePending = false,
   snapshotDuplicatePending = false,
   deletePending = false,
@@ -247,7 +281,9 @@ function ListCard({
   actionLabel: string;
   onFreshDuplicate: () => void;
   onSnapshotDuplicate: () => void;
+  onToggleSelected: () => void;
   onDelete?: () => void;
+  selected: boolean;
   freshDuplicatePending?: boolean;
   snapshotDuplicatePending?: boolean;
   deletePending?: boolean;
@@ -279,6 +315,15 @@ function ListCard({
             </p>
           ) : null}
         </div>
+        <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="accent-primary size-4"
+            checked={selected}
+            onChange={onToggleSelected}
+          />
+          <span>Combine</span>
+        </label>
       </div>
 
       <div className="text-muted-foreground flex items-center gap-2 text-sm">
