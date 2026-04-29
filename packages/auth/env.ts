@@ -6,6 +6,7 @@ export function authEnv() {
     server: {
       AUTH_DISCORD_ID: z.string().min(1),
       AUTH_DISCORD_SECRET: z.string().min(1),
+      AUTH_DISCORD_BOT_TOKEN: z.string().min(1).optional(),
       AUTH_ALLOWED_DISCORD_IDS: z.string().default(""),
       AUTH_DISCORD_GUILD_ID: z.string().min(1),
       AUTH_DISCORD_ROLE_ID: z.string().min(1),

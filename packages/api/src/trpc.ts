@@ -13,7 +13,7 @@ import { z, ZodError } from "zod/v4";
 import type { Auth } from "@acme/auth";
 import { db } from "@acme/db/client";
 
-import { resolveViewer } from "./authz";
+import { resolveSessionForRequest, resolveViewer } from "./authz";
 
 /**
  * 1. CONTEXT
@@ -33,13 +33,15 @@ export const createTRPCContext = async (opts: {
   auth: Auth;
 }) => {
   const authApi = opts.auth.api;
-  const session = await authApi.getSession({
+  const actorSession = await authApi.getSession({
     headers: opts.headers,
   });
-  const viewer = await resolveViewer(session);
+  const session = await resolveSessionForRequest(opts.headers, actorSession);
+  const viewer = await resolveViewer(session, actorSession);
   return {
     authApi,
     session,
+    actorSession,
     viewer,
     db,
   };

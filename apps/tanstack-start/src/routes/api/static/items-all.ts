@@ -10,7 +10,7 @@ async function handler(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers });
 
   try {
-    await requireMemberViewer(session);
+    await requireMemberViewer(session, request.headers);
   } catch (error) {
     if (error instanceof TRPCError) {
       return new Response(error.message, {

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import * as React from "react";
@@ -17,10 +17,21 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { AppRouter } from "@acme/api";
 import { cn } from "@acme/ui";
 import { Button } from "@acme/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@acme/ui/dropdown-menu";
 import { ThemeProvider, ThemeScript, ThemeToggle } from "@acme/ui/theme";
 import { Toaster } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
+import { env } from "~/env";
 import { StatusPage } from "~/component/status-page";
 import {
   buildMetaTags,
@@ -156,9 +167,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function SiteHeader() {
-  const { data: session } = authClient.useSession();
+  const { data: realSession } = authClient.useSession();
   const trpc = useTRPC();
   const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
+  const { data: effectiveSession } = useQuery(trpc.auth.getSession.queryOptions());
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [isSigningOut, setIsSigningOut] = React.useState(false);
@@ -179,6 +191,7 @@ function SiteHeader() {
   } else if (viewer?.effectiveRole === "member") {
     accessLabel = "Member access";
   }
+  const displaySession = effectiveSession ?? realSession;
 
   return (
     <header className="bg-background/90 fixed top-0 right-0 left-0 z-40 border-b backdrop-blur">
@@ -212,25 +225,37 @@ function SiteHeader() {
         </div>
 
         <div className="lg:ml-auto">
-          {session ? (
+          {realSession ? (
             <div className="flex items-center gap-3 rounded-full border px-2 py-2 lg:pr-3 lg:pl-2">
-              {session.user.image ? (
+              {displaySession?.user.image ? (
                 <img
-                  src={session.user.image}
-                  alt={session.user.name}
+                  src={displaySession.user.image}
+                  alt={displaySession.user.name}
                   className="h-10 w-10 rounded-full border object-cover"
                 />
               ) : (
                 <div className="bg-muted flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold">
-                  {session.user.name.slice(0, 1).toUpperCase()}
+                  {displaySession?.user.name.slice(0, 1).toUpperCase()}
                 </div>
               )}
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">
-                  {session.user.name}
+                  {displaySession?.user.name}
                 </p>
                 <p className="text-muted-foreground text-xs">{accessLabel}</p>
+                {viewer?.isImpersonating ? (
+                  <p className="text-muted-foreground text-xs">
+                    Impersonating in development
+                  </p>
+                ) : null}
               </div>
+              {env.NODE_ENV === "development" ? (
+                <DevImpersonationMenu
+                  actorUserId={realSession.user.id}
+                  currentUserId={displaySession?.user.id ?? realSession.user.id}
+                  isImpersonating={viewer?.isImpersonating ?? false}
+                />
+              ) : null}
               <Button
                 variant="ghost"
                 size="sm"
@@ -278,5 +303,120 @@ function SiteHeader() {
         </div>
       </nav>
     </header>
+  );
+}
+
+interface DevImpersonationResponse {
+  actorUserId: string;
+  currentImpersonatedUserId: string | null;
+  users: {
+    id: string;
+    name: string;
+    image: string | null;
+    role: "member" | "admin" | null;
+    discordAccountId: string | null;
+  }[];
+}
+
+function DevImpersonationMenu({
+  actorUserId,
+  currentUserId,
+  isImpersonating,
+}: {
+  actorUserId: string;
+  currentUserId: string;
+  isImpersonating: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<DevImpersonationResponse>({
+    queryKey: ["dev-impersonation-users"],
+    queryFn: async () => {
+      const response = await fetch("/api/dev/impersonation", {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to load impersonation users");
+      }
+
+      return (await response.json()) as DevImpersonationResponse;
+    },
+    staleTime: 30_000,
+  });
+
+  const switchUser = async (userId: string) => {
+    if (userId === actorUserId) {
+      await clearImpersonation();
+      return;
+    }
+
+    await fetch("/api/dev/impersonation", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ userId }),
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["dev-impersonation-users"],
+    });
+    window.location.reload();
+  };
+
+  const clearImpersonation = async () => {
+    await fetch("/api/dev/impersonation", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["dev-impersonation-users"],
+    });
+    window.location.reload();
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm">
+          {isImpersonating ? "Impersonating" : "Impersonate"}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuLabel>Development only</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-muted-foreground font-normal">
+          Switch the effective server user for local testing.
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {isImpersonating ? (
+          <DropdownMenuItem onSelect={() => void clearImpersonation()}>
+            Stop impersonating
+          </DropdownMenuItem>
+        ) : null}
+        {isLoading ? (
+          <DropdownMenuItem disabled>Loading users...</DropdownMenuItem>
+        ) : (
+          <DropdownMenuRadioGroup
+            value={currentUserId}
+            onValueChange={(value) => void switchUser(value)}
+          >
+            {data?.users.map((item) => {
+              const isActor = item.id === actorUserId;
+              const suffix = item.role ? ` (${item.role})` : "";
+
+              return (
+                <DropdownMenuRadioItem
+                  key={item.id}
+                  value={item.id}
+                >
+                  {isActor ? `You: ${item.name}` : item.name}
+                  {suffix}
+                </DropdownMenuRadioItem>
+              );
+            })}
+          </DropdownMenuRadioGroup>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -25,10 +25,12 @@ import { Route as ShoplistsCombineRouteImport } from './routes/shoplists.combine
 import { Route as ShoplistsListIdRouteImport } from './routes/shoplists.$listId'
 import { Route as ItemItemIdRouteImport } from './routes/item.$itemId'
 import { Route as CraftItemIdRouteImport } from './routes/craft.$itemId'
+import { Route as AuthErrorRouteImport } from './routes/auth.error'
 import { Route as ShoplistsInviteTokenRouteImport } from './routes/shoplists.invite.$token'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
 import { Route as ApiStaticItemsAllRouteImport } from './routes/api/static/items-all'
 import { Route as ApiStaticCraftsAllRouteImport } from './routes/api/static/crafts-all'
+import { Route as ApiDevImpersonationRouteImport } from './routes/api/dev/impersonation'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
 const SimulatorRoute = SimulatorRouteImport.update({
@@ -111,6 +113,11 @@ const CraftItemIdRoute = CraftItemIdRouteImport.update({
   path: '/$itemId',
   getParentRoute: () => CraftRoute,
 } as any)
+const AuthErrorRoute = AuthErrorRouteImport.update({
+  id: '/auth/error',
+  path: '/auth/error',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ShoplistsInviteTokenRoute = ShoplistsInviteTokenRouteImport.update({
   id: '/invite/$token',
   path: '/invite/$token',
@@ -131,6 +138,11 @@ const ApiStaticCraftsAllRoute = ApiStaticCraftsAllRouteImport.update({
   path: '/api/static/crafts-all',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDevImpersonationRoute = ApiDevImpersonationRouteImport.update({
+  id: '/api/dev/impersonation',
+  path: '/api/dev/impersonation',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -145,6 +157,7 @@ export interface FileRoutesByFullPath {
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
+  '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
   '/shoplists/$listId': typeof ShoplistsListIdRoute
@@ -155,6 +168,7 @@ export interface FileRoutesByFullPath {
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/impersonation': typeof ApiDevImpersonationRoute
   '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
   '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -164,6 +178,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
+  '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
   '/shoplists/$listId': typeof ShoplistsListIdRoute
@@ -174,6 +189,7 @@ export interface FileRoutesByTo {
   '/shoplists': typeof ShoplistsIndexRoute
   '/simulator': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/impersonation': typeof ApiDevImpersonationRoute
   '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
   '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -188,6 +204,7 @@ export interface FileRoutesById {
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
+  '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
   '/shoplists/$listId': typeof ShoplistsListIdRoute
@@ -198,6 +215,7 @@ export interface FileRoutesById {
   '/shoplists/': typeof ShoplistsIndexRoute
   '/simulator/': typeof SimulatorIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/impersonation': typeof ApiDevImpersonationRoute
   '/api/static/crafts-all': typeof ApiStaticCraftsAllRoute
   '/api/static/items-all': typeof ApiStaticItemsAllRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -213,6 +231,7 @@ export interface FileRouteTypes {
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
+    | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
     | '/shoplists/$listId'
@@ -223,6 +242,7 @@ export interface FileRouteTypes {
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
+    | '/api/dev/impersonation'
     | '/api/static/crafts-all'
     | '/api/static/items-all'
     | '/api/trpc/$'
@@ -232,6 +252,7 @@ export interface FileRouteTypes {
     | '/'
     | '/profile'
     | '/shoplist'
+    | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
     | '/shoplists/$listId'
@@ -242,6 +263,7 @@ export interface FileRouteTypes {
     | '/shoplists'
     | '/simulator'
     | '/api/auth/$'
+    | '/api/dev/impersonation'
     | '/api/static/crafts-all'
     | '/api/static/items-all'
     | '/api/trpc/$'
@@ -255,6 +277,7 @@ export interface FileRouteTypes {
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
+    | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
     | '/shoplists/$listId'
@@ -265,6 +288,7 @@ export interface FileRouteTypes {
     | '/shoplists/'
     | '/simulator/'
     | '/api/auth/$'
+    | '/api/dev/impersonation'
     | '/api/static/crafts-all'
     | '/api/static/items-all'
     | '/api/trpc/$'
@@ -279,7 +303,9 @@ export interface RootRouteChildren {
   ShoplistRoute: typeof ShoplistRoute
   ShoplistsRoute: typeof ShoplistsRouteWithChildren
   SimulatorRoute: typeof SimulatorRouteWithChildren
+  AuthErrorRoute: typeof AuthErrorRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDevImpersonationRoute: typeof ApiDevImpersonationRoute
   ApiStaticCraftsAllRoute: typeof ApiStaticCraftsAllRoute
   ApiStaticItemsAllRoute: typeof ApiStaticItemsAllRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
@@ -399,6 +425,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CraftItemIdRouteImport
       parentRoute: typeof CraftRoute
     }
+    '/auth/error': {
+      id: '/auth/error'
+      path: '/auth/error'
+      fullPath: '/auth/error'
+      preLoaderRoute: typeof AuthErrorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/shoplists/invite/$token': {
       id: '/shoplists/invite/$token'
       path: '/invite/$token'
@@ -425,6 +458,13 @@ declare module '@tanstack/react-router' {
       path: '/api/static/crafts-all'
       fullPath: '/api/static/crafts-all'
       preLoaderRoute: typeof ApiStaticCraftsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/dev/impersonation': {
+      id: '/api/dev/impersonation'
+      path: '/api/dev/impersonation'
+      fullPath: '/api/dev/impersonation'
+      preLoaderRoute: typeof ApiDevImpersonationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -501,7 +541,9 @@ const rootRouteChildren: RootRouteChildren = {
   ShoplistRoute: ShoplistRoute,
   ShoplistsRoute: ShoplistsRouteWithChildren,
   SimulatorRoute: SimulatorRouteWithChildren,
+  AuthErrorRoute: AuthErrorRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDevImpersonationRoute: ApiDevImpersonationRoute,
   ApiStaticCraftsAllRoute: ApiStaticCraftsAllRoute,
   ApiStaticItemsAllRoute: ApiStaticItemsAllRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
