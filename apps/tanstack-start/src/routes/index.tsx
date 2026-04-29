@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 
 import { authClient } from "~/auth/client";
 import { buildMetaTags, getAppName } from "~/lib/metadata";
+import { useTRPC } from "~/lib/trpc";
 
 const APP_NAME = getAppName();
 const HOME_DESCRIPTION =
@@ -16,6 +18,8 @@ export const Route = createFileRoute("/")({
 
 function HomePage() {
   const { data: session } = authClient.useSession();
+  const trpc = useTRPC();
+  const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
 
   return (
     <main className="container py-16">
@@ -55,12 +59,14 @@ function HomePage() {
             to="/item"
             cta="Browse items"
           />
-          <DashboardCard
-            title="Simulator"
-            description="Model sealed craft chains and compare margins before spending labor or gold."
-            to="/simulator"
-            cta="Run simulations"
-          />
+          {viewer?.canAccessAdmin ? (
+            <DashboardCard
+              title="Simulator"
+              description="Model sealed craft chains and compare margins before spending labor or gold."
+              to="/simulator"
+              cta="Run simulations"
+            />
+          ) : null}
           <DashboardCard
             title="Shopping Lists"
             description="Track ingredient runs, duplicate shared lists, and keep collaboration in one place."
