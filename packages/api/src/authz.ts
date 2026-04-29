@@ -1,8 +1,10 @@
-import { ensureDiscordAccess, type Session } from "@acme/auth";
+import type { Session } from "@acme/auth";
+import type { appRoleEnum } from "@acme/db/schema";
+import { ensureDiscordAccess } from "@acme/auth";
 import { authEnv } from "@acme/auth/env";
 import { and, eq } from "@acme/db";
 import { db } from "@acme/db/client";
-import { account, appRoleEnum, appUserRole, user } from "@acme/db/schema";
+import { account, appUserRole, user } from "@acme/db/schema";
 
 const bypassDiscordIds = new Set(
   authEnv()
@@ -62,10 +64,7 @@ export async function getDiscordAccountForUser(userId: string) {
   });
 }
 
-export async function ensureAppRole(
-  userId: string,
-  role: AppRole = "member",
-) {
+export async function ensureAppRole(userId: string, role: AppRole = "member") {
   await db.insert(appUserRole).values({ userId, role }).onConflictDoNothing();
 }
 

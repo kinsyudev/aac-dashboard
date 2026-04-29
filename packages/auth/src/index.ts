@@ -28,13 +28,17 @@ export function isDiscordBypassUser(
   allowedDiscordIds: Set<string>,
   discordAccountId: string | null | undefined,
 ) {
-  return (
-    discordAccountId != null && allowedDiscordIds.has(discordAccountId)
-  );
+  return discordAccountId != null && allowedDiscordIds.has(discordAccountId);
 }
 
 function isDiscordCallbackContext(
-  context: { path?: string; params?: Record<string, string | undefined> } | null,
+  context:
+    | {
+        path?: string;
+        params?: Record<string, string | undefined>;
+      }
+    | null
+    | undefined,
 ) {
   return context?.path === "/callback/:id" && context.params?.id === "discord";
 }
@@ -131,7 +135,9 @@ async function fetchDiscordGuildMemberWithBot(input: {
       discordAccountId: input.discordAccountId,
       status: response.status,
     });
-    throw new Error(`Discord bot guild member lookup failed: ${response.status}`);
+    throw new Error(
+      `Discord bot guild member lookup failed: ${response.status}`,
+    );
   }
 
   const member = (await response.json()) as DiscordGuildMemberResponse;

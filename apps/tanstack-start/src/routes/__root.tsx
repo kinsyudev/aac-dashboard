@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import * as React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
   HeadContent,
@@ -31,8 +31,8 @@ import { ThemeProvider, ThemeScript, ThemeToggle } from "@acme/ui/theme";
 import { Toaster } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
-import { env } from "~/env";
 import { StatusPage } from "~/component/status-page";
+import { env } from "~/env";
 import {
   buildMetaTags,
   getAppName,
@@ -170,7 +170,9 @@ function SiteHeader() {
   const { data: realSession } = authClient.useSession();
   const trpc = useTRPC();
   const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
-  const { data: effectiveSession } = useQuery(trpc.auth.getSession.queryOptions());
+  const { data: effectiveSession } = useQuery(
+    trpc.auth.getSession.queryOptions(),
+  );
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [isSigningOut, setIsSigningOut] = React.useState(false);
@@ -405,10 +407,7 @@ function DevImpersonationMenu({
               const suffix = item.role ? ` (${item.role})` : "";
 
               return (
-                <DropdownMenuRadioItem
-                  key={item.id}
-                  value={item.id}
-                >
+                <DropdownMenuRadioItem key={item.id} value={item.id}>
                   {isActor ? `You: ${item.name}` : item.name}
                   {suffix}
                 </DropdownMenuRadioItem>

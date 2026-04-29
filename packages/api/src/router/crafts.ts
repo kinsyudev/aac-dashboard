@@ -122,17 +122,15 @@ export const craftsRouter = {
       return { craft, materials, products, subcrafts };
     }),
 
-  byItemId: memberProcedure
-    .input(z.number().int())
-    .query(({ ctx, input }) => {
-      return ctx.db
-        .select()
-        .from(crafts)
-        .where(eq(crafts.primaryProductId, input))
-        .then((rows) =>
-          rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
-        );
-    }),
+  byItemId: memberProcedure.input(z.number().int()).query(({ ctx, input }) => {
+    return ctx.db
+      .select()
+      .from(crafts)
+      .where(eq(crafts.primaryProductId, input))
+      .then((rows) =>
+        rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
+      );
+  }),
 
   forItem: memberProcedure
     .input(z.number().int())

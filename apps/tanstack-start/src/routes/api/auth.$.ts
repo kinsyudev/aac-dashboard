@@ -20,9 +20,10 @@ async function handleAuthRequest(request: Request) {
 
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    const payload = (await response.clone().json().catch(() => null)) as
-      | { code?: string; message?: string }
-      | null;
+    const payload = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { code?: string; message?: string } | null;
 
     if (payload?.code) {
       error = payload.code;

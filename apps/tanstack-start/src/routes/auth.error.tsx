@@ -19,16 +19,18 @@ function AuthErrorPage() {
   const { error, message } = Route.useSearch();
   const errorCode = error?.toUpperCase();
   const isUnauthorized =
-    errorCode === "UNAUTHORIZED" || errorCode?.includes("SIGN_IN");
+    errorCode === "UNAUTHORIZED" || (errorCode?.includes("SIGN_IN") ?? false);
   const isForbidden =
     errorCode === "FORBIDDEN" ||
-    errorCode?.includes("NOT_ALLOWED") ||
-    errorCode?.includes("ACCESS");
+    (errorCode?.includes("NOT_ALLOWED") ?? false) ||
+    (errorCode?.includes("ACCESS") ?? false);
 
   if (isUnauthorized) {
     return (
       <StatusPage variant="sign-in-required">
-        {message ? <p className="text-muted-foreground text-sm">{message}</p> : null}
+        {message ? (
+          <p className="text-muted-foreground text-sm">{message}</p>
+        ) : null}
       </StatusPage>
     );
   }
@@ -45,7 +47,9 @@ function AuthErrorPage() {
           </>
         }
       >
-        {message ? <p className="text-muted-foreground text-sm">{message}</p> : null}
+        {message ? (
+          <p className="text-muted-foreground text-sm">{message}</p>
+        ) : null}
       </StatusPage>
     );
   }
@@ -61,7 +65,9 @@ function AuthErrorPage() {
         </>
       }
     >
-      {message ? <p className="text-muted-foreground text-sm">{message}</p> : null}
+      {message ? (
+        <p className="text-muted-foreground text-sm">{message}</p>
+      ) : null}
     </StatusPage>
   );
 }

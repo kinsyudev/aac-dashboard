@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
+
+import { DEV_IMPERSONATION_COOKIE } from "@acme/api/authz";
 import { and, asc, eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import { account, appUserRole, user } from "@acme/db/schema";
 
 import { auth } from "~/auth/server";
-import { DEV_IMPERSONATION_COOKIE } from "@acme/api/authz";
+import { env } from "~/env";
 
 function devOnly() {
-  return process.env.NODE_ENV === "development";
+  return env.NODE_ENV === "development";
 }
 
 function parseCookieValue(request: Request, name: string) {
