@@ -13,6 +13,10 @@ interface DiscordGuildMemberResponse {
   roles?: string[];
 }
 
+function logAuthDebug(event: string, details: Record<string, unknown>) {
+  console.info("[auth][discord-rbac]", event, details);
+}
+
 function isDiscordCallbackContext(
   context: { path?: string; params?: Record<string, string | undefined> } | null,
 ) {
@@ -23,6 +27,10 @@ async function fetchDiscordGuildMember(input: {
   accessToken: string;
   guildId: string;
 }) {
+  logAuthDebug("guild-member-fetch:start", {
+    guildId: input.guildId,
+  });
+
   const response = await fetch(
     `${DISCORD_API_BASE_URL}/users/@me/guilds/${input.guildId}/member`,
     {
@@ -37,14 +45,27 @@ async function fetchDiscordGuildMember(input: {
     response.status === 403 ||
     response.status === 404
   ) {
+    logAuthDebug("guild-member-fetch:missing", {
+      guildId: input.guildId,
+      status: response.status,
+    });
     return null;
   }
 
   if (!response.ok) {
+    logAuthDebug("guild-member-fetch:error", {
+      guildId: input.guildId,
+      status: response.status,
+    });
     throw new Error(`Discord guild member lookup failed: ${response.status}`);
   }
 
-  return (await response.json()) as DiscordGuildMemberResponse;
+  const member = (await response.json()) as DiscordGuildMemberResponse;
+  logAuthDebug("guild-member-fetch:success", {
+    guildId: input.guildId,
+    roleCount: member.roles?.length ?? 0,
+  });
+  return member;
 }
 
 async function ensureDiscordAccess(input: {
@@ -53,6 +74,10 @@ async function ensureDiscordAccess(input: {
   requiredRoleId: string;
 }) {
   if (!input.accessToken) {
+    logAuthDebug("discord-access:no-access-token", {
+      guildId: input.guildId,
+      requiredRoleId: input.requiredRoleId,
+    });
     return false;
   }
 
@@ -61,7 +86,16 @@ async function ensureDiscordAccess(input: {
     guildId: input.guildId,
   });
 
-  if (!member?.roles?.includes(input.requiredRoleId)) {
+  const hasRequiredRole = member?.roles?.includes(input.requiredRoleId) ?? false;
+
+  logAuthDebug("discord-access:evaluated", {
+    guildId: input.guildId,
+    requiredRoleId: input.requiredRoleId,
+    isGuildMember: member != null,
+    hasRequiredRole,
+  });
+
+  if (!hasRequiredRole) {
     return false;
   }
 
@@ -96,6 +130,12 @@ export function initAuth<
               return;
             }
 
+            logAuthDebug("session-create:discord-callback", {
+              userId: sessionData.userId,
+              path: context?.path ?? null,
+              providerId: context?.params?.id ?? null,
+            });
+
             const discordAccount = await db.query.account.findFirst({
               columns: {
                 accountId: true,
@@ -108,10 +148,17 @@ export function initAuth<
             });
 
             if (!discordAccount) {
+              logAuthDebug("session-create:deny-no-discord-account", {
+                userId: sessionData.userId,
+              });
               return false;
             }
 
             if (options.allowedDiscordIds.has(discordAccount.accountId)) {
+              logAuthDebug("session-create:allow-bypass", {
+                userId: sessionData.userId,
+                discordAccountId: discordAccount.accountId,
+              });
               return;
             }
 
@@ -122,6 +169,12 @@ export function initAuth<
             });
 
             if (!hasDiscordAccess) {
+              logAuthDebug("session-create:deny-discord-gate", {
+                userId: sessionData.userId,
+                discordAccountId: discordAccount.accountId,
+                guildId: options.requiredDiscordGuildId,
+                requiredRoleId: options.requiredDiscordRoleId,
+              });
               return false;
             }
 
@@ -132,6 +185,12 @@ export function initAuth<
                 role: "member",
               })
               .onConflictDoNothing();
+
+            logAuthDebug("session-create:allow-member", {
+              userId: sessionData.userId,
+              discordAccountId: discordAccount.accountId,
+              assignedRole: "member",
+            });
           },
         },
       },

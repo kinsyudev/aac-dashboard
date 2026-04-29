@@ -13,6 +13,10 @@ const bypassDiscordIds = new Set(
 
 export type AppRole = (typeof appRoleEnum.enumValues)[number];
 
+function logAuthzDebug(event: string, details: Record<string, unknown>) {
+  console.info("[authz][viewer]", event, details);
+}
+
 export interface Viewer {
   session: Session | null;
   userId: string | null;
@@ -51,6 +55,7 @@ export function getBypassDiscordIds() {
 
 export async function resolveViewer(session: Session | null): Promise<Viewer> {
   if (!session?.user) {
+    logAuthzDebug("resolve:anonymous", {});
     return {
       session: null,
       userId: null,
@@ -78,6 +83,16 @@ export async function resolveViewer(session: Session | null): Promise<Viewer> {
     discordAccountId != null && bypassDiscordIds.has(discordAccountId);
   const role = roleRow?.role ?? null;
   const effectiveRole = isBypass ? "admin" : role;
+
+  logAuthzDebug("resolve:authenticated", {
+    userId,
+    discordAccountId,
+    isBypass,
+    storedRole: role,
+    effectiveRole,
+    canAccessMember: effectiveRole === "member" || effectiveRole === "admin",
+    canAccessAdmin: effectiveRole === "admin",
+  });
 
   return {
     session,
