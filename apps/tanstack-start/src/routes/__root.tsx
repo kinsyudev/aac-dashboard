@@ -32,7 +32,6 @@ import { Toaster } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
 import { StatusPage } from "~/component/status-page";
-import { env } from "~/env";
 import {
   buildMetaTags,
   getAppName,
@@ -76,12 +75,18 @@ export const Route = createRootRouteWithContext<{
     const viewer = await context.queryClient.fetchQuery(
       context.trpc.auth.getViewer.queryOptions(),
     );
+    // eslint-disable-next-line no-restricted-properties
+    const isDevelopment = process.env.NODE_ENV === "development";
 
     if (viewer.canAccessMember) {
       void context.queryClient.prefetchQuery(
         context.trpc.profile.getUserData.queryOptions(),
       );
     }
+
+    return {
+      isDevelopment,
+    };
   },
   component: RootComponent,
   notFoundComponent: () => <StatusPage variant="not-found" />,
@@ -167,6 +172,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function SiteHeader() {
+  const { isDevelopment } = Route.useLoaderData();
   const { data: realSession } = authClient.useSession();
   const trpc = useTRPC();
   const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
@@ -251,7 +257,7 @@ function SiteHeader() {
                   </p>
                 ) : null}
               </div>
-              {env.NODE_ENV === "development" ? (
+              {isDevelopment ? (
                 <DevImpersonationMenu
                   actorUserId={realSession.user.id}
                   currentUserId={displaySession?.user.id ?? realSession.user.id}

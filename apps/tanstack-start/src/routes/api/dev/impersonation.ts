@@ -6,10 +6,10 @@ import { db } from "@acme/db/client";
 import { account, appUserRole, user } from "@acme/db/schema";
 
 import { auth } from "~/auth/server";
-import { env } from "~/env";
 
 function devOnly() {
-  return env.NODE_ENV === "development";
+  // eslint-disable-next-line no-restricted-properties
+  return process.env.NODE_ENV === "development";
 }
 
 function parseCookieValue(request: Request, name: string) {

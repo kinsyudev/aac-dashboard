@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { authClient } from "~/auth/client";
 import { buildMetaTags, getAppName } from "~/lib/metadata";
