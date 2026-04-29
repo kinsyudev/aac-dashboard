@@ -10,7 +10,7 @@ import {
   prices,
 } from "@acme/db/schema";
 
-import { protectedProcedure } from "../trpc";
+import { memberProcedure } from "../trpc";
 
 const UNSUPPORTED_RECIPE_INGREDIENTS = new Set(["elite trader ticket"]);
 const UNSUPPORTED_CRAFT_NAME_PREFIXES = ["trash_"];
@@ -59,7 +59,7 @@ export interface CraftWithMaterialsAndProducts {
 export type SubcraftEntry = CraftWithMaterialsAndProducts;
 
 export const craftsRouter = {
-  all: protectedProcedure.query(({ ctx }) => {
+  all: memberProcedure.query(({ ctx }) => {
     return ctx.db
       .select()
       .from(crafts)
@@ -67,7 +67,7 @@ export const craftsRouter = {
         rows.filter((craft) => !hasUnsupportedCraftName(craft.name)),
       );
   }),
-  byId: protectedProcedure
+  byId: memberProcedure
     .input(z.number().int())
     .query(async ({ ctx, input }) => {
       const craft = await ctx.db
@@ -122,7 +122,7 @@ export const craftsRouter = {
       return { craft, materials, products, subcrafts };
     }),
 
-  byItemId: protectedProcedure
+  byItemId: memberProcedure
     .input(z.number().int())
     .query(({ ctx, input }) => {
       return ctx.db
@@ -134,7 +134,7 @@ export const craftsRouter = {
         );
     }),
 
-  forItem: protectedProcedure
+  forItem: memberProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: itemId }) => {
       // Round 1: item + crafts for item (parallel)
@@ -358,7 +358,7 @@ export const craftsRouter = {
         subcraftsByItemId,
       };
     }),
-  forCraft: protectedProcedure
+  forCraft: memberProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: craftId }) => {
       const craft = await ctx.db

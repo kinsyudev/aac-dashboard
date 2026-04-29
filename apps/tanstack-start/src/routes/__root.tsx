@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { useQuery } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
 import * as React from "react";
@@ -26,16 +27,17 @@ import {
   getAppName,
   getDefaultDescription,
 } from "~/lib/metadata";
+import { useTRPC } from "~/lib/trpc";
 import appCss from "~/styles.css?url";
 
 const APP_NAME = getAppName();
 const APP_DESCRIPTION = getDefaultDescription();
 const NAV_ITEMS = [
-  { to: "/craft", label: "Craft" },
-  { to: "/item", label: "Items" },
-  { to: "/simulator", label: "Simulator" },
-  { to: "/shoplists", label: "Shopping Lists" },
-  { to: "/profile", label: "Profile" },
+  { to: "/craft", label: "Craft", access: "member" },
+  { to: "/item", label: "Items", access: "member" },
+  { to: "/simulator", label: "Simulator", access: "admin" },
+  { to: "/shoplists", label: "Shopping Lists", access: "member" },
+  { to: "/profile", label: "Profile", access: "member" },
 ] as const;
 
 export const Route = createRootRouteWithContext<{
@@ -59,10 +61,16 @@ export const Route = createRootRouteWithContext<{
       { rel: "shortcut icon", href: "https://aa-classic.com/favicon.ico" },
     ],
   }),
-  loader: ({ context }) => {
-    void context.queryClient.prefetchQuery(
-      context.trpc.profile.getUserData.queryOptions(),
+  loader: async ({ context }) => {
+    const viewer = await context.queryClient.fetchQuery(
+      context.trpc.auth.getViewer.queryOptions(),
     );
+
+    if (viewer.canAccessMember) {
+      void context.queryClient.prefetchQuery(
+        context.trpc.profile.getUserData.queryOptions(),
+      );
+    }
   },
   component: RootComponent,
   notFoundComponent: () => <StatusPage variant="not-found" />,
@@ -149,10 +157,28 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 
 function SiteHeader() {
   const { data: session } = authClient.useSession();
+  const trpc = useTRPC();
+  const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [isSigningOut, setIsSigningOut] = React.useState(false);
   const [isSigningIn, setIsSigningIn] = React.useState(false);
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (item.access === "admin") {
+      return viewer?.canAccessAdmin ?? false;
+    }
+
+    return viewer?.canAccessMember ?? false;
+  });
+  let accessLabel = "Connected with Discord";
+
+  if (viewer?.isBypass) {
+    accessLabel = "Allowlisted access";
+  } else if (viewer?.effectiveRole === "admin") {
+    accessLabel = "Admin access";
+  } else if (viewer?.effectiveRole === "member") {
+    accessLabel = "Member access";
+  }
 
   return (
     <header className="bg-background/90 fixed top-0 right-0 left-0 z-40 border-b backdrop-blur">
@@ -165,7 +191,7 @@ function SiteHeader() {
             <span className="text-muted-foreground text-xs">Dashboard</span>
           </Link>
           <div className="flex flex-wrap items-center gap-2">
-            {NAV_ITEMS.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive =
                 pathname === item.to || pathname.startsWith(`${item.to}/`);
 
@@ -203,9 +229,7 @@ function SiteHeader() {
                 <p className="truncate text-sm font-medium">
                   {session.user.name}
                 </p>
-                <p className="text-muted-foreground text-xs">
-                  Connected with Discord
-                </p>
+                <p className="text-muted-foreground text-xs">{accessLabel}</p>
               </div>
               <Button
                 variant="ghost"

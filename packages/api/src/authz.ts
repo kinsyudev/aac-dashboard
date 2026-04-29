@@ -1,33 +1,93 @@
+import type { Session } from "@acme/auth";
 import { authEnv } from "@acme/auth/env";
-import { eq } from "@acme/db";
+import { and, eq } from "@acme/db";
 import { db } from "@acme/db/client";
-import { account } from "@acme/db/schema";
+import { account, appRoleEnum, appUserRole } from "@acme/db/schema";
 
-const allowedDiscordIds = new Set(
+const bypassDiscordIds = new Set(
   authEnv()
     .AUTH_ALLOWED_DISCORD_IDS.split(",")
     .map((id) => id.trim())
     .filter(Boolean),
 );
 
-let allowedUserIds = new Set<string>();
+export type AppRole = (typeof appRoleEnum.enumValues)[number];
 
-async function refreshAllowedUserIds() {
-  const accounts = await db.query.account.findMany({
-    where: eq(account.providerId, "discord"),
-  });
-
-  allowedUserIds = new Set(
-    accounts
-      .filter((entry) => allowedDiscordIds.has(entry.accountId))
-      .map((entry) => entry.userId),
-  );
+export interface Viewer {
+  session: Session | null;
+  userId: string | null;
+  discordAccountId: string | null;
+  isAuthenticated: boolean;
+  isBypass: boolean;
+  role: AppRole | null;
+  effectiveRole: "admin" | AppRole | null;
+  canAccessMember: boolean;
+  canAccessAdmin: boolean;
 }
 
-const initialAllowedUserLoad = refreshAllowedUserIds();
-setInterval(() => void refreshAllowedUserIds(), 60_000);
+export async function getDiscordAccountForUser(userId: string) {
+  return db.query.account.findFirst({
+    columns: {
+      accountId: true,
+      accessToken: true,
+      providerId: true,
+      scope: true,
+      userId: true,
+    },
+    where: and(eq(account.userId, userId), eq(account.providerId, "discord")),
+  });
+}
 
-export async function isAllowedUserId(userId: string) {
-  await initialAllowedUserLoad;
-  return allowedUserIds.has(userId);
+export async function ensureAppRole(
+  userId: string,
+  role: AppRole = "member",
+) {
+  await db.insert(appUserRole).values({ userId, role }).onConflictDoNothing();
+}
+
+export function getBypassDiscordIds() {
+  return bypassDiscordIds;
+}
+
+export async function resolveViewer(session: Session | null): Promise<Viewer> {
+  if (!session?.user) {
+    return {
+      session: null,
+      userId: null,
+      discordAccountId: null,
+      isAuthenticated: false,
+      isBypass: false,
+      role: null,
+      effectiveRole: null,
+      canAccessMember: false,
+      canAccessAdmin: false,
+    };
+  }
+
+  const userId = session.user.id;
+  const [discordAccount, roleRow] = await Promise.all([
+    getDiscordAccountForUser(userId),
+    db.query.appUserRole.findFirst({
+      columns: { role: true },
+      where: eq(appUserRole.userId, userId),
+    }),
+  ]);
+
+  const discordAccountId = discordAccount?.accountId ?? null;
+  const isBypass =
+    discordAccountId != null && bypassDiscordIds.has(discordAccountId);
+  const role = roleRow?.role ?? null;
+  const effectiveRole = isBypass ? "admin" : role;
+
+  return {
+    session,
+    userId,
+    discordAccountId,
+    isAuthenticated: true,
+    isBypass,
+    role,
+    effectiveRole,
+    canAccessMember: effectiveRole === "member" || effectiveRole === "admin",
+    canAccessAdmin: effectiveRole === "admin",
+  };
 }

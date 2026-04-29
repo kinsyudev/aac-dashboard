@@ -1,18 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { TRPCError } from "@trpc/server";
+import { getHTTPStatusCodeFromError } from "@trpc/server/http";
 
 import { auth } from "~/auth/server";
-import { isAllowedUserId } from "~/lib/allowed-user.server";
+import { requireMemberViewer } from "~/lib/authz.server";
 import { createStaticApiResponse } from "~/lib/static-api.server";
 
 async function handler(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers });
 
-  if (!session?.user) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  if (!(await isAllowedUserId(session.user.id))) {
-    return new Response("Forbidden", { status: 403 });
+  try {
+    await requireMemberViewer(session);
+  } catch (error) {
+    if (error instanceof TRPCError) {
+      return new Response(error.message, {
+        status: getHTTPStatusCodeFromError(error),
+      });
+    }
+    return new Response("Internal Server Error", { status: 500 });
   }
 
   return createStaticApiResponse(request, "crafts-all");

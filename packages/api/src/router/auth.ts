@@ -1,12 +1,18 @@
 import type { TRPCRouterRecord } from "@trpc/server";
 
-import { protectedProcedure, publicProcedure } from "../trpc";
+import { adminProcedure, memberProcedure, publicProcedure } from "../trpc";
 
 export const authRouter = {
   getSession: publicProcedure.query(({ ctx }) => {
     return ctx.session;
   }),
-  getSecretMessage: protectedProcedure.query(() => {
-    return "you can see this secret message!";
+  getViewer: publicProcedure.query(({ ctx }) => {
+    return ctx.viewer;
+  }),
+  requireMember: memberProcedure.query(() => {
+    return { ok: true } as const;
+  }),
+  requireAdmin: adminProcedure.query(() => {
+    return { ok: true } as const;
   }),
 } satisfies TRPCRouterRecord;

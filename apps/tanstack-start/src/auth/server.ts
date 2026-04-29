@@ -11,6 +11,8 @@ export const auth = initAuth({
   secret: env.AUTH_SECRET,
   discordClientId: env.AUTH_DISCORD_ID,
   discordClientSecret: env.AUTH_DISCORD_SECRET,
+  requiredDiscordGuildId: env.AUTH_DISCORD_GUILD_ID,
+  requiredDiscordRoleId: env.AUTH_DISCORD_ROLE_ID,
   allowedDiscordIds: new Set(
     env.AUTH_ALLOWED_DISCORD_IDS.split(",")
       .map((id) => id.trim())

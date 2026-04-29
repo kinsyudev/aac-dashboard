@@ -50,6 +50,9 @@ Fill in the required values:
 | `AUTH_SECRET` | Random secret — generate with `openssl rand -base64 32` |
 | `AUTH_DISCORD_ID` | Discord OAuth app client ID |
 | `AUTH_DISCORD_SECRET` | Discord OAuth app client secret |
+| `AUTH_DISCORD_GUILD_ID` | Discord server ID required for non-bypass logins |
+| `AUTH_DISCORD_ROLE_ID` | Discord role ID required for non-bypass logins |
+| `AUTH_ALLOWED_DISCORD_IDS` | Comma-separated Discord user IDs with full bypass access |
 | `AAC_AUTH` | Auth JWT for aa-classic.com API (required for item sync) |
 
 ### 3. Push database schema
@@ -91,8 +94,16 @@ pnpm --filter @acme/sync sync-items:full-refresh
 
 ## Authentication
 
-This project uses [Better Auth](https://www.better-auth.com) with Discord OAuth. Access is restricted to an allowlist of Discord user IDs configured in `packages/auth`.
+This project uses [Better Auth](https://www.better-auth.com) with Discord OAuth.
 
-To add or remove users, update the allowlist in the auth configuration.
+Access rules:
+
+- `/` is public
+- `/craft*`, `/item*`, `/shoplist*`, `/shoplists*`, and `/profile` require a `member` role
+- `/simulator*` requires an `admin` role
+
+Non-allowlisted users must be in the configured Discord server and hold the configured Discord role at login time. Allowlisted Discord IDs bypass both the Discord admission check and app-level role checks.
+
+App roles are stored in the `app_user_role` table. Non-allowlisted users are auto-provisioned as `member` on first successful login. `admin` is assigned manually in the database for now.
 
 For more on the Better Auth CLI, see the [official docs](https://www.better-auth.com/docs/concepts/cli#generate).

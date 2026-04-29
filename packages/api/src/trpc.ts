@@ -13,7 +13,7 @@ import { z, ZodError } from "zod/v4";
 import type { Auth } from "@acme/auth";
 import { db } from "@acme/db/client";
 
-import { isAllowedUserId } from "./authz";
+import { resolveViewer } from "./authz";
 
 /**
  * 1. CONTEXT
@@ -36,9 +36,11 @@ export const createTRPCContext = async (opts: {
   const session = await authApi.getSession({
     headers: opts.headers,
   });
+  const viewer = await resolveViewer(session);
   return {
     authApi,
     session,
+    viewer,
     db,
   };
 };
@@ -102,26 +104,40 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
 export const publicProcedure = t.procedure.use(timingMiddleware);
 
 /**
- * Protected (authenticated) procedure
+ * Authenticated procedure
  *
- * If you want a query or mutation to ONLY be accessible to logged in users, use this. It verifies
- * the session is valid and guarantees `ctx.session.user` is not null.
+ * If you want a query or mutation to ONLY be accessible to logged in users, use this.
  *
  * @see https://trpc.io/docs/procedures
  */
-export const protectedProcedure = t.procedure
+export const authenticatedProcedure = t.procedure
   .use(timingMiddleware)
   .use(async ({ ctx, next }) => {
-    if (!ctx.session?.user) {
+    if (!ctx.viewer.isAuthenticated || !ctx.session?.user) {
       throw new TRPCError({ code: "UNAUTHORIZED" });
-    }
-    if (!(await isAllowedUserId(ctx.session.user.id))) {
-      throw new TRPCError({ code: "FORBIDDEN" });
     }
     return next({
       ctx: {
-        // infers the `session` as non-nullable
         session: { ...ctx.session, user: ctx.session.user },
+        viewer: ctx.viewer,
       },
     });
   });
+
+export const memberProcedure = authenticatedProcedure.use(
+  async ({ ctx, next }) => {
+    if (!ctx.viewer.canAccessMember) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    return next();
+  },
+);
+
+export const adminProcedure = authenticatedProcedure.use(
+  async ({ ctx, next }) => {
+    if (!ctx.viewer.canAccessAdmin) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    return next();
+  },
+);

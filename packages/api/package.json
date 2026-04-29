@@ -6,6 +6,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
+    },
+    "./authz": {
+      "types": "./src/authz.ts",
+      "default": "./src/authz.ts"
     }
   },
   "license": "MIT",

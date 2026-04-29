@@ -28,7 +28,7 @@ import {
   getSourceKind,
   regenerateListState,
 } from "../lib/shopping-list-state";
-import { protectedProcedure, publicProcedure } from "../trpc";
+import { memberProcedure, publicProcedure } from "../trpc";
 
 async function getListAccess(
   dbClient: typeof db | DbTx,
@@ -193,7 +193,7 @@ function mergeCraftModeItemIds(current: number[], incoming?: number[]) {
 }
 
 export const shoppingListsRouter = {
-  listMineAndShared: protectedProcedure.query(async ({ ctx }) => {
+  listMineAndShared: memberProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
 
     const [ownedLists, sharedLists] = await Promise.all([
@@ -303,7 +303,7 @@ export const shoppingListsRouter = {
     };
   }),
 
-  getById: protectedProcedure
+  getById: memberProcedure
     .input(z.string().uuid())
     .query(async ({ ctx, input }) => {
       const access = await getListAccess(ctx.db, input, ctx.session.user.id);
@@ -430,7 +430,7 @@ export const shoppingListsRouter = {
       };
     }),
 
-  getCombined: protectedProcedure
+  getCombined: memberProcedure
     .input(
       z.object({
         listIds: z.array(z.string().uuid()).min(2).max(50),
@@ -575,7 +575,7 @@ export const shoppingListsRouter = {
       };
     }),
 
-  createEmpty: protectedProcedure
+  createEmpty: memberProcedure
     .input(
       z.object({
         name: z.string().trim().min(1).max(120).optional(),
@@ -601,7 +601,7 @@ export const shoppingListsRouter = {
       return { id: created.id };
     }),
 
-  createFromCraft: protectedProcedure
+  createFromCraft: memberProcedure
     .input(
       z.object({
         craftId: z.number().int(),
@@ -647,7 +647,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  createFromSimulator: protectedProcedure
+  createFromSimulator: memberProcedure
     .input(
       z.object({
         itemId: z.number().int(),
@@ -703,7 +703,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  addCraftSource: protectedProcedure
+  addCraftSource: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -770,7 +770,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  updateCraftSource: protectedProcedure
+  updateCraftSource: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -865,7 +865,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  updateDefinition: protectedProcedure
+  updateDefinition: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -944,7 +944,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  rename: protectedProcedure
+  rename: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -970,7 +970,7 @@ export const shoppingListsRouter = {
         .where(eq(shoppingLists.id, input.listId));
     }),
 
-  updateSourceQuantity: protectedProcedure
+  updateSourceQuantity: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1034,7 +1034,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  removeSource: protectedProcedure
+  removeSource: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1096,7 +1096,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  updateItemProgress: protectedProcedure
+  updateItemProgress: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1151,7 +1151,7 @@ export const shoppingListsRouter = {
         );
     }),
 
-  updateCraftProgress: protectedProcedure
+  updateCraftProgress: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1212,7 +1212,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  resetProgress: protectedProcedure
+  resetProgress: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1254,7 +1254,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  duplicate: protectedProcedure
+  duplicate: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1349,7 +1349,7 @@ export const shoppingListsRouter = {
       });
     }),
 
-  createInvite: protectedProcedure
+  createInvite: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1395,7 +1395,7 @@ export const shoppingListsRouter = {
       };
     }),
 
-  revokeInvite: protectedProcedure
+  revokeInvite: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1423,7 +1423,7 @@ export const shoppingListsRouter = {
         );
     }),
 
-  removeMember: protectedProcedure
+  removeMember: memberProcedure
     .input(
       z.object({
         listId: z.string().uuid(),
@@ -1456,7 +1456,7 @@ export const shoppingListsRouter = {
         );
     }),
 
-  delete: protectedProcedure
+  delete: memberProcedure
     .input(z.object({ listId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const access = await getListAccess(
@@ -1513,7 +1513,7 @@ export const shoppingListsRouter = {
       };
     }),
 
-  acceptInviteToken: protectedProcedure
+  acceptInviteToken: memberProcedure
     .input(z.string())
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;

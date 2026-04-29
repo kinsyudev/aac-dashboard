@@ -24,4 +24,7 @@ export const auth = initAuth({
   secret: "secret",
   discordClientId: "1234567890",
   discordClientSecret: "1234567890",
+  allowedDiscordIds: new Set(),
+  requiredDiscordGuildId: "1234567890",
+  requiredDiscordRoleId: "1234567890",
 });

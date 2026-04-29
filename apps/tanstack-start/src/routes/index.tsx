@@ -38,7 +38,7 @@ function HomePage() {
           <p className="text-muted-foreground text-sm">
             {session
               ? `Connected as ${session.user.name}.`
-              : "Sign in with Discord to save profile pricing and access shared lists."}
+              : "Sign in with Discord to access member tools and save profile pricing."}
           </p>
         </section>
 

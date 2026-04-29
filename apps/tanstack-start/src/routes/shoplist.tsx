@@ -69,6 +69,7 @@ export const Route = createFileRoute("/shoplist")({
   }),
   loader: async ({ context, deps }) => {
     const { trpc, queryClient } = context;
+    await queryClient.fetchQuery(trpc.auth.requireMember.queryOptions());
     if (deps.simItemId != null) {
       const data = await queryClient.fetchQuery(
         trpc.crafts.forItem.queryOptions(deps.simItemId),

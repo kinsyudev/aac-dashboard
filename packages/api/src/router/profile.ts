@@ -10,10 +10,10 @@ import {
   userProficiencies,
 } from "@acme/db/schema";
 
-import { protectedProcedure } from "../trpc";
+import { memberProcedure } from "../trpc";
 
 export const profileRouter = {
-  getPriceOverrides: protectedProcedure.query(async ({ ctx }) => {
+  getPriceOverrides: memberProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
 
     const overrides = await ctx.db
@@ -51,7 +51,7 @@ export const profileRouter = {
     }));
   }),
 
-  setPriceOverride: protectedProcedure
+  setPriceOverride: memberProcedure
     .input(z.object({ itemId: z.number().int(), price: z.number().positive() }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
@@ -70,7 +70,7 @@ export const profileRouter = {
         });
     }),
 
-  deletePriceOverride: protectedProcedure
+  deletePriceOverride: memberProcedure
     .input(z.number().int())
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
@@ -84,7 +84,7 @@ export const profileRouter = {
         );
     }),
 
-  getUserData: protectedProcedure.query(async ({ ctx }) => {
+  getUserData: memberProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
     const [proficiencies, overrides] = await Promise.all([
       ctx.db
@@ -105,7 +105,7 @@ export const profileRouter = {
     return { proficiencies, overrides };
   }),
 
-  getProficiencies: protectedProcedure.query(async ({ ctx }) => {
+  getProficiencies: memberProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
     return ctx.db
       .select({
@@ -117,7 +117,7 @@ export const profileRouter = {
       .where(eq(userProficiencies.userId, userId));
   }),
 
-  setProficiency: protectedProcedure
+  setProficiency: memberProcedure
     .input(
       z.object({
         proficiency: z.enum(proficiencyEnum.enumValues),

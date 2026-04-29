@@ -11,18 +11,18 @@ import {
 } from "@acme/db/schema";
 
 import type { CraftWithMaterialsAndProducts } from "./crafts";
-import { protectedProcedure } from "../trpc";
+import { memberProcedure } from "../trpc";
 import { hasUnsupportedCraftName } from "./crafts";
 
 export const itemsRouter = {
-  all: protectedProcedure.query(({ ctx }) => {
+  all: memberProcedure.query(({ ctx }) => {
     return ctx.db
       .select(getTableColumns(items))
       .from(items)
       .orderBy(asc(items.category), asc(items.name));
   }),
 
-  price: protectedProcedure.input(z.number().int()).query(({ ctx, input }) => {
+  price: memberProcedure.input(z.number().int()).query(({ ctx, input }) => {
     return ctx.db
       .select()
       .from(prices)
@@ -32,7 +32,7 @@ export const itemsRouter = {
       .then((rows) => rows[0] ?? null);
   }),
 
-  pricesBatch: protectedProcedure
+  pricesBatch: memberProcedure
     .input(z.array(z.number().int()))
     .query(({ ctx, input }) => {
       if (input.length === 0) return [];
@@ -43,7 +43,7 @@ export const itemsRouter = {
         .orderBy(prices.itemId, desc(prices.fetchedAt));
     }),
 
-  priceHistory: protectedProcedure
+  priceHistory: memberProcedure
     .input(z.number().int())
     .query(({ ctx, input }) => {
       return ctx.db
@@ -53,7 +53,7 @@ export const itemsRouter = {
         .orderBy(desc(prices.fetchedAt));
     }),
 
-  byId: protectedProcedure.input(z.number().int()).query(({ ctx, input }) => {
+  byId: memberProcedure.input(z.number().int()).query(({ ctx, input }) => {
     return ctx.db
       .select({ ...getTableColumns(items), labor: crafts.labor })
       .from(items)
@@ -62,7 +62,7 @@ export const itemsRouter = {
       .then((rows) => rows[0] ?? null);
   }),
 
-  craftable: protectedProcedure.query(({ ctx }) => {
+  craftable: memberProcedure.query(({ ctx }) => {
     return ctx.db
       .selectDistinctOn([items.id], {
         ...getTableColumns(items),
@@ -79,7 +79,7 @@ export const itemsRouter = {
       );
   }),
 
-  byName: protectedProcedure.input(z.string()).query(({ ctx, input }) => {
+  byName: memberProcedure.input(z.string()).query(({ ctx, input }) => {
     return ctx.db
       .select({ ...getTableColumns(items), labor: crafts.labor })
       .from(items)
@@ -88,7 +88,7 @@ export const itemsRouter = {
       .orderBy(items.name);
   }),
 
-  search: protectedProcedure
+  search: memberProcedure
     .input(z.string().min(2))
     .query(({ ctx, input }) => {
       return ctx.db
@@ -105,7 +105,7 @@ export const itemsRouter = {
         .limit(25);
     }),
 
-  detail: protectedProcedure
+  detail: memberProcedure
     .input(z.number().int())
     .query(async ({ ctx, input: itemId }) => {
       const [item, priceHistory, craftedByRows, usedInRows] = await Promise.all(

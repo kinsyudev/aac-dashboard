@@ -28,8 +28,9 @@ export const Route = createFileRoute("/profile")({
       },
     ],
   }),
-  loader: ({ context }) => {
+  loader: async ({ context }) => {
     const { trpc, queryClient } = context;
+    await queryClient.fetchQuery(trpc.auth.requireMember.queryOptions());
     void queryClient.prefetchQuery(
       trpc.profile.getPriceOverrides.queryOptions(),
     );
