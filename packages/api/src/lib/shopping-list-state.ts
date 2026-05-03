@@ -622,9 +622,9 @@ async function buildSnapshotForResealSimulatorSource(
       }
     : null;
 
-  const manaSealItemId = manaSealBlueprint?.item?.id ?? null;
+  const manaSealItemId = manaSealBlueprint.item?.id ?? null;
   const manaSealProduced =
-    manaSealBlueprint && manaSealItemId != null
+    manaSealItemId != null
       ? (manaSealBlueprint.products.find(
           (product) => product.item.id === manaSealItemId,
         )?.amount ?? 1)

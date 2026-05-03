@@ -1235,9 +1235,9 @@ function ShoplistDetail({
       acc,
       simulatorAttempts,
     );
-    if (scaledSealEntry) {
+    if (scaledSealEntry && manaSealCraft) {
       buildShoppingList(
-        manaSealCraft!.materials,
+        manaSealCraft.materials,
         craftModeSet,
         sealSubcraftMap,
         selectedCrafts,
@@ -1274,10 +1274,10 @@ function ShoplistDetail({
       acc,
       proficiencyMap,
     );
-    if (scaledSealEntry) {
+    if (scaledSealEntry && manaSealCraft) {
       buildLaborByProficiency(
-        manaSealCraft!.craft,
-        manaSealCraft!.materials,
+        manaSealCraft.craft,
+        manaSealCraft.materials,
         craftModeSet,
         sealSubcraftMap,
         selectedCrafts,

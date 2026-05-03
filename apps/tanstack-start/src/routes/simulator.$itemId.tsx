@@ -731,8 +731,7 @@ function SimulatorDetail() {
     );
     const upgradeMaterials = ayanadCraft
       ? ayanadCraft.materials.filter(
-          ({ item }) =>
-            !isConsumedUpgradeGearMaterial(item, data.item, equip),
+          ({ item }) => !isConsumedUpgradeGearMaterial(item, data.item, equip),
         )
       : [];
     const sealedUpgradeCost = upgradeMaterials.reduce(
