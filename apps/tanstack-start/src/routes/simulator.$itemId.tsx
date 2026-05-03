@@ -7,7 +7,12 @@ import { z } from "zod";
 import type { AppRouter } from "@acme/api";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
-import type { SimulationResult } from "~/lib/simulator";
+import type {
+  ResealLoopSimulationResult,
+  SalvageLoopSimulationResult,
+  SimulationResult,
+} from "~/lib/simulator";
+import type { SimulationChain } from "~/lib/simulator-upgrade";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
 import {
@@ -19,9 +24,14 @@ import {
 } from "~/component/recipe-breakdown";
 import { StatCard } from "~/component/stat-card";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
+import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
-import { computeSimulation, detectPieceAndTier } from "~/lib/simulator";
+import {
+  computeResealLoopSimulation,
+  computeSimulation,
+  detectPieceAndTier,
+} from "~/lib/simulator";
 import {
   deepCraftCost,
   getCraftEntryUnitCost,
@@ -92,6 +102,7 @@ type PriceMap = Map<
 >;
 type OverrideMap = Map<number, number>;
 type SubcraftMap = ForItemOutput["subcraftsByItemId"];
+type SimulatorStrategy = "salvage" | "reseal";
 
 interface CraftExecution {
   craftId: number;
@@ -99,6 +110,27 @@ interface CraftExecution {
   proficiency: string | null;
   batches: number;
   laborPerBatch: number;
+}
+
+interface SimulationBaseData {
+  chain: SimulationChain;
+  mainCraft: CraftEntry;
+  ayanadCraft: CraftEntry | null;
+  attemptMaterials: CraftEntry["materials"];
+  seedWispsPerAttempt: number;
+  seedLabor: number;
+  costPerAttempt: number;
+  laborPerAttempt: number;
+  upgradeMaterials: CraftEntry["materials"];
+}
+
+interface ResealStrategyData {
+  result: ResealLoopSimulationResult | null;
+  sealName: string | null;
+  sealItem: ForItemOutput["item"] | null;
+  sealCraft: CraftEntry | null;
+  sealMaterials: CraftEntry["materials"];
+  unsupportedReason: string | null;
 }
 
 function formatGold(value: number): string {
@@ -408,6 +440,52 @@ function collectCraftExecutionsForItem(
   }
 }
 
+function addCraftExecution(
+  craft: CraftEntry["craft"],
+  batches: number,
+  proficiencyMap: ProficiencyMap,
+  acc: Map<number, CraftExecution>,
+) {
+  if (batches <= 0) return;
+
+  const existing = acc.get(craft.id);
+  if (existing) {
+    existing.batches += batches;
+    return;
+  }
+
+  acc.set(craft.id, {
+    craftId: craft.id,
+    name: craft.name,
+    proficiency: craft.proficiency,
+    batches,
+    laborPerBatch: getDiscountedLabor(
+      craft.labor,
+      craft.proficiency,
+      proficiencyMap,
+    ),
+  });
+}
+
+function fillMissingCraftLabor(
+  acc: Map<number, CraftExecution>,
+  subcraftMap: SubcraftMap,
+  proficiencyMap: ProficiencyMap,
+) {
+  for (const craft of acc.values()) {
+    if (craft.laborPerBatch > 0) continue;
+    const subEntry = Object.values(subcraftMap)
+      .flat()
+      .find((entry) => entry.craft.id === craft.craftId);
+    if (!subEntry) continue;
+    craft.laborPerBatch = getDiscountedLabor(
+      subEntry.craft.labor,
+      subEntry.craft.proficiency,
+      proficiencyMap,
+    );
+  }
+}
+
 function SimulatorDetail() {
   const trpc = useTRPC();
   const data = Route.useLoaderData();
@@ -417,6 +495,8 @@ function SimulatorDetail() {
     () => new Set(),
   );
   const [localSalePrice, setLocalSalePrice] = useState("");
+  const [activeStrategy, setActiveStrategy] =
+    useState<SimulatorStrategy>("reseal");
 
   const priceMap: PriceMap = useMemo(
     () => new Map(data.prices.map((p) => [p.itemId, p])),
@@ -428,6 +508,35 @@ function SimulatorDetail() {
   const wisp = useMemo(
     () => findWispInChain(data, priceMap, overrideMap),
     [data, priceMap, overrideMap],
+  );
+  const manaSealName = useMemo(
+    () =>
+      equip
+        ? resolveDelphinadManaSealName({
+            name: data.item.name,
+            category: data.item.category,
+            equip,
+          })
+        : null,
+    [data.item.category, data.item.name, equip],
+  );
+  const manaSealItemQuery = useQuery({
+    ...trpc.items.byName.queryOptions(manaSealName ?? ""),
+    enabled: !!manaSealName,
+  });
+  const manaSealItem = useMemo(
+    () =>
+      manaSealItemQuery.data?.find((item) => item.name === manaSealName) ??
+      null,
+    [manaSealItemQuery.data, manaSealName],
+  );
+  const manaSealCraftQuery = useQuery({
+    ...trpc.crafts.forItem.queryOptions(manaSealItem?.id ?? -1),
+    enabled: manaSealItem?.id != null,
+  });
+  const manaSealPriceMap: PriceMap = useMemo(
+    () => new Map(manaSealCraftQuery.data?.prices.map((p) => [p.itemId, p])),
+    [manaSealCraftQuery.data],
   );
   const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(data.item.name);
   const ayanadPriceQuery = useQuery({
@@ -473,16 +582,47 @@ function SimulatorDetail() {
     );
   }, [ayanadCraftData, ayanadItem, modes, overrideMap, priceMap]);
   const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;
+  const manaSealCraft = useMemo(() => {
+    if (!manaSealCraftQuery.data?.crafts.length || manaSealItem == null) {
+      return null;
+    }
+    return pickCheapestCraftForItem(
+      manaSealCraftQuery.data.crafts,
+      manaSealItem.id,
+      manaSealCraftQuery.data.subcraftsByItemId,
+      manaSealPriceMap,
+      overrideMap,
+      modes,
+    );
+  }, [
+    manaSealCraftQuery.data,
+    manaSealItem,
+    manaSealPriceMap,
+    modes,
+    overrideMap,
+  ]);
 
   const recommendedModes = useMemo(() => {
     if (!mainCraft) return {};
-    return buildRecommendedModes(
-      mainCraft.materials,
-      data.subcraftsByItemId,
-      priceMap,
-      overrideMap,
-    );
-  }, [data, mainCraft, priceMap, overrideMap]);
+    const materials = [
+      ...mainCraft.materials,
+      ...(manaSealCraft?.materials ?? []),
+    ];
+    const subcraftMap = {
+      ...data.subcraftsByItemId,
+      ...(manaSealCraftQuery.data?.subcraftsByItemId ?? {}),
+    };
+    const prices = new Map([...priceMap, ...manaSealPriceMap]);
+    return buildRecommendedModes(materials, subcraftMap, prices, overrideMap);
+  }, [
+    data,
+    mainCraft,
+    manaSealCraft,
+    manaSealCraftQuery.data,
+    manaSealPriceMap,
+    priceMap,
+    overrideMap,
+  ]);
   const effectiveModes = useMemo(
     () => ({ ...recommendedModes, ...modes }),
     [recommendedModes, modes],
@@ -565,22 +705,22 @@ function SimulatorDetail() {
           effectiveModes,
         )
       : 0;
-    const laborPerAttempt =
+    const seedLabor = chain.keyMaterialId
+      ? deepCraftLabor(
+          chain.keyMaterialId,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          effectiveModes,
+        )
+      : 0;
+    const sealedCraftLabor =
       getDiscountedLabor(
         mainCraft.craft.labor,
         mainCraft.craft.proficiency,
         proficiencyMap,
       ) +
-      (chain.keyMaterialId
-        ? deepCraftLabor(
-            chain.keyMaterialId,
-            subcraftMap,
-            priceMap,
-            overrideMap,
-            proficiencyMap,
-            effectiveModes,
-          )
-        : 0) +
       attemptMaterials.reduce(
         (sum, { item, amount }) =>
           sum +
@@ -595,8 +735,9 @@ function SimulatorDetail() {
             amount,
         0,
       );
+    const laborPerAttempt = seedLabor + sealedCraftLabor;
 
-    const result = computeSimulation({
+    const salvageResult = computeSimulation({
       costPerAttempt,
       sealedUpgradeCost,
       rngTier: equip.tier,
@@ -608,14 +749,91 @@ function SimulatorDetail() {
       seedWispsPerAttempt,
     });
 
-    return {
-      result,
+    let reseal: ResealStrategyData = {
+      result: null,
+      sealName: manaSealName,
+      sealItem: manaSealItem,
+      sealCraft: manaSealCraft,
+      sealMaterials: [],
+      unsupportedReason: null,
+    };
+
+    if (!manaSealName) {
+      reseal = {
+        ...reseal,
+        unsupportedReason: "No Delphinad mana seal mapping for this item.",
+      };
+    } else if (!manaSealItem) {
+      reseal = {
+        ...reseal,
+        unsupportedReason: `Could not find ${manaSealName}.`,
+      };
+    } else if (!manaSealCraft) {
+      reseal = {
+        ...reseal,
+        unsupportedReason: `No craft data found for ${manaSealName}.`,
+      };
+    } else {
+      const sealSubcraftMap = manaSealCraftQuery.data?.subcraftsByItemId ?? {};
+      const manaSealCost = deepCraftCost(
+        manaSealItem.id,
+        sealSubcraftMap,
+        manaSealPriceMap,
+        overrideMap,
+        effectiveModes,
+      );
+      const manaSealLabor = deepCraftLabor(
+        manaSealItem.id,
+        sealSubcraftMap,
+        manaSealPriceMap,
+        overrideMap,
+        proficiencyMap,
+        effectiveModes,
+      );
+
+      reseal = {
+        result:
+          manaSealCost > 0
+            ? computeResealLoopSimulation({
+                rngTier: equip.tier,
+                equip,
+                wispPrice: wisp.price,
+                sellPrice: effectiveSalePrice,
+                initialSeedCost: seedWispsPerAttempt * wisp.price,
+                initialSealedCraftCost: costPerAttempt,
+                initialSeedLabor: seedLabor,
+                initialSealedCraftLabor: sealedCraftLabor,
+                manaSealCost,
+                manaSealLabor,
+                sealedUpgradeCost,
+                sealedUpgradeLabor,
+              })
+            : null,
+        sealName: manaSealName,
+        sealItem: manaSealItem,
+        sealCraft: manaSealCraft,
+        sealMaterials: manaSealCraft.materials,
+        unsupportedReason:
+          manaSealCost > 0 ? null : `No usable price data for ${manaSealName}.`,
+      };
+    }
+
+    const base: SimulationBaseData = {
       chain,
       mainCraft,
       ayanadCraft,
       attemptMaterials,
       seedWispsPerAttempt,
+      seedLabor,
+      costPerAttempt,
+      laborPerAttempt,
       upgradeMaterials,
+    };
+
+    return {
+      base,
+      salvage: salvageResult,
+      reseal,
     };
   }, [
     data,
@@ -629,6 +847,11 @@ function SimulatorDetail() {
     effectiveSalePrice,
     ayanadCraft,
     ayanadSubcraftMap,
+    manaSealCraft,
+    manaSealCraftQuery.data,
+    manaSealItem,
+    manaSealName,
+    manaSealPriceMap,
   ]);
 
   const craftExecutions = useMemo(() => {
@@ -636,19 +859,27 @@ function SimulatorDetail() {
 
     const acc = new Map<number, CraftExecution>();
     const subcraftMap = data.subcraftsByItemId;
+    const detailStrategy =
+      activeStrategy === "reseal" && simulationData.reseal.result
+        ? "reseal"
+        : "salvage";
+    const result =
+      detailStrategy === "reseal"
+        ? (simulationData.reseal.result ?? simulationData.salvage)
+        : simulationData.salvage;
     const {
       chain,
-      result,
       mainCraft,
       ayanadCraft,
       attemptMaterials,
       upgradeMaterials,
-    } = simulationData;
+    } = simulationData.base;
+    const attemptBatches = detailStrategy === "reseal" ? 1 : result.variants;
 
     if (chain.keyMaterialId) {
       collectCraftExecutionsForItem(
         chain.keyMaterialId,
-        result.variants,
+        attemptBatches,
         subcraftMap,
         priceMap,
         overrideMap,
@@ -662,7 +893,7 @@ function SimulatorDetail() {
       if ((effectiveModes[item.id] ?? "buy") === "craft") {
         collectCraftExecutionsForItem(
           item.id,
-          amount * result.variants,
+          amount * attemptBatches,
           subcraftMap,
           priceMap,
           overrideMap,
@@ -673,38 +904,26 @@ function SimulatorDetail() {
       }
     }
 
-    const existing = acc.get(mainCraft.craft.id);
-    if (existing) existing.batches += result.variants;
-    else {
-      acc.set(mainCraft.craft.id, {
-        craftId: mainCraft.craft.id,
-        name: mainCraft.craft.name,
-        proficiency: mainCraft.craft.proficiency,
-        batches: result.variants,
-        laborPerBatch: getDiscountedLabor(
-          mainCraft.craft.labor,
-          mainCraft.craft.proficiency,
+    addCraftExecution(mainCraft.craft, attemptBatches, proficiencyMap, acc);
+
+    if (detailStrategy === "reseal" && simulationData.reseal.result) {
+      const sealSubcraftMap = manaSealCraftQuery.data?.subcraftsByItemId ?? {};
+      if (simulationData.reseal.sealItem) {
+        collectCraftExecutionsForItem(
+          simulationData.reseal.sealItem.id,
+          simulationData.reseal.result.failedRetries,
+          sealSubcraftMap,
+          manaSealPriceMap,
+          overrideMap,
           proficiencyMap,
-        ),
-      });
+          effectiveModes,
+          acc,
+        );
+      }
     }
 
     if (ayanadCraft) {
-      const existingUpgrade = acc.get(ayanadCraft.craft.id);
-      if (existingUpgrade) existingUpgrade.batches += 1;
-      else {
-        acc.set(ayanadCraft.craft.id, {
-          craftId: ayanadCraft.craft.id,
-          name: ayanadCraft.craft.name,
-          proficiency: ayanadCraft.craft.proficiency,
-          batches: 1,
-          laborPerBatch: getDiscountedLabor(
-            ayanadCraft.craft.labor,
-            ayanadCraft.craft.proficiency,
-            proficiencyMap,
-          ),
-        });
-      }
+      addCraftExecution(ayanadCraft.craft, 1, proficiencyMap, acc);
     }
 
     const upgradeSubcraftMap =
@@ -724,24 +943,21 @@ function SimulatorDetail() {
       }
     }
 
-    for (const craft of acc.values()) {
-      if (craft.laborPerBatch > 0) continue;
-      const subEntry = Object.values(upgradeSubcraftMap)
-        .flat()
-        .find((entry) => entry.craft.id === craft.craftId);
-      if (!subEntry) continue;
-      craft.laborPerBatch = getDiscountedLabor(
-        subEntry.craft.labor,
-        subEntry.craft.proficiency,
-        proficiencyMap,
-      );
-    }
+    fillMissingCraftLabor(acc, upgradeSubcraftMap, proficiencyMap);
+    fillMissingCraftLabor(
+      acc,
+      manaSealCraftQuery.data?.subcraftsByItemId ?? {},
+      proficiencyMap,
+    );
 
     return [...acc.values()].sort((a, b) => b.batches - a.batches);
   }, [
+    activeStrategy,
     ayanadCraftData,
     data,
     effectiveModes,
+    manaSealCraftQuery.data,
+    manaSealPriceMap,
     overrideMap,
     priceMap,
     proficiencyMap,
@@ -770,6 +986,14 @@ function SimulatorDetail() {
 
   const { item } = data;
   const exportModes = serializeCraftModes(effectiveModes);
+  const detailStrategy =
+    activeStrategy === "reseal" && simulationData?.reseal.result
+      ? "reseal"
+      : "salvage";
+  const detailResult =
+    detailStrategy === "reseal"
+      ? simulationData?.reseal.result
+      : simulationData?.salvage;
 
   return (
     <div className="flex flex-col gap-6">
@@ -794,7 +1018,7 @@ function SimulatorDetail() {
                 craft: mainCraft.craft.id,
                 qty: 1,
                 simItem: item.id,
-                attempts: simulationData.result.variants,
+                attempts: simulationData.salvage.variants,
                 sub: exportModes,
               }}
               className="text-muted-foreground text-xs hover:underline"
@@ -853,16 +1077,45 @@ function SimulatorDetail() {
 
       {craftExecutions.length > 0 && (
         <div className="rounded-md border p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-semibold">Crafts being done</h2>
-            {simulationData && (
-              <p className="text-muted-foreground text-sm">
-                Expected attempts:{" "}
-                <span className="text-foreground font-medium">
-                  ×{simulationData.result.variants}
-                </span>
-              </p>
-            )}
+            <div className="flex items-center gap-2">
+              {simulationData && (
+                <div className="bg-muted flex rounded-md p-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveStrategy("salvage")}
+                    className={`rounded px-2.5 py-1 text-xs font-medium ${
+                      detailStrategy === "salvage"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Salvage Loop
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveStrategy("reseal")}
+                    disabled={!simulationData.reseal.result}
+                    className={`rounded px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                      detailStrategy === "reseal"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Reseal Loop
+                  </button>
+                </div>
+              )}
+              {detailResult && (
+                <p className="text-muted-foreground text-sm">
+                  Expected attempts:{" "}
+                  <span className="text-foreground font-medium">
+                    ×{detailResult.variants}
+                  </span>
+                </p>
+              )}
+            </div>
           </div>
           {laborByProficiency.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-1.5">
@@ -928,7 +1181,10 @@ function SimulatorDetail() {
       )}
 
       {simulationData ? (
-        <SimulationResults result={simulationData.result} />
+        <SimulationResults
+          salvage={simulationData.salvage}
+          reseal={simulationData.reseal}
+        />
       ) : (
         <p className="text-muted-foreground text-sm">
           {!wisp
@@ -1186,103 +1442,180 @@ function pct(value: number): string {
   return (value * 100).toFixed(1) + "%";
 }
 
-function SimulationResults({ result }: { result: SimulationResult }) {
+function resultVariant(value: number) {
+  return value > 0 ? "positive" : value < 0 ? "negative" : "neutral";
+}
+
+function StrategySummaryCard({
+  title,
+  result,
+}: {
+  title: string;
+  result: SimulationResult;
+}) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard
-          label="Success rate"
-          value={`1/${result.variants} (${pct(result.successRate)})`}
-        />
+    <div className="rounded-md border p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-semibold">{title}</h3>
+        <span className="text-muted-foreground text-sm">
+          1/{result.variants} ({pct(result.successRate)})
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Total cost" value={gold(result.totalCost)} />
         <StatCard
           label="Profit (salvage)"
           value={gold(result.profitSalvage)}
-          variant={
-            result.profitSalvage > 0
-              ? "positive"
-              : result.profitSalvage < 0
-                ? "negative"
-                : "neutral"
-          }
+          variant={resultVariant(result.profitSalvage)}
         />
         <StatCard
           label="Profit (sell)"
           value={gold(result.profitSell)}
-          variant={
-            result.profitSell > 0
-              ? "positive"
-              : result.profitSell < 0
-                ? "negative"
-                : "neutral"
-          }
+          variant={resultVariant(result.profitSell)}
         />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <StatCard
-          label="Cost per attempt"
-          value={gold(result.costPerAttempt)}
-        />
-        <StatCard
-          label={`Expected attempts (×${result.variants})`}
-          value={gold(result.expectedAttemptsCost)}
-        />
-        <StatCard
-          label="Initial seed wisps"
-          value={gold(result.initialSeedCost)}
-        />
-        <StatCard
-          label="Fail salvage"
-          value={`${result.failSalvageWisps} wisps = ${gold(result.failRecoveryPerAttempt)}`}
-          variant="positive"
-        />
-        <StatCard
-          label="Net cost per fail"
-          value={gold(result.costPerAttempt - result.failNetRecoveryPerAttempt)}
-        />
-        <StatCard
-          label="Sealed upgrade cost"
-          value={gold(result.sealedUpgradeCost)}
-        />
-        <StatCard
-          label={`Net fail recovery (×${result.variants - 1})`}
-          value={`${result.failSurplusWisps} × ${result.variants - 1} = ${gold(result.totalFailNetRecovery)}`}
-          variant="positive"
-        />
-        <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
-        <StatCard
-          label="Revenue (salvage)"
-          value={gold(result.revenueSalvage)}
-        />
-        <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
         <StatCard
           label="Total labor"
           value={result.totalLabor.toLocaleString()}
         />
-        <StatCard
-          label="Silver/labor (salvage)"
-          value={result.silverPerLaborSalvage.toFixed(2)}
-          variant={
-            result.silverPerLaborSalvage > 0
-              ? "positive"
-              : result.silverPerLaborSalvage < 0
-                ? "negative"
-                : "neutral"
-          }
-        />
-        <StatCard
-          label="Silver/labor (sell)"
-          value={result.silverPerLaborSell.toFixed(2)}
-          variant={
-            result.silverPerLaborSell > 0
-              ? "positive"
-              : result.silverPerLaborSell < 0
-                ? "negative"
-                : "neutral"
-          }
-        />
       </div>
+    </div>
+  );
+}
+
+function SalvageLoopDetails({
+  result,
+}: {
+  result: SalvageLoopSimulationResult;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <StatCard label="Cost per attempt" value={gold(result.costPerAttempt)} />
+      <StatCard
+        label={`Expected attempts (×${result.variants})`}
+        value={gold(result.expectedAttemptsCost)}
+      />
+      <StatCard
+        label="Initial seed wisps"
+        value={gold(result.initialSeedCost)}
+      />
+      <StatCard
+        label="Fail salvage"
+        value={`${result.failSalvageWisps} wisps = ${gold(result.failRecoveryPerAttempt)}`}
+        variant="positive"
+      />
+      <StatCard
+        label="Net cost per fail"
+        value={gold(result.costPerAttempt - result.failNetRecoveryPerAttempt)}
+      />
+      <StatCard
+        label="Sealed upgrade cost"
+        value={gold(result.sealedUpgradeCost)}
+      />
+      <StatCard
+        label={`Net fail recovery (×${result.variants - 1})`}
+        value={`${result.failSurplusWisps} × ${result.variants - 1} = ${gold(result.totalFailNetRecovery)}`}
+        variant="positive"
+      />
+      <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
+      <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
+      <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
+      <StatCard
+        label="Silver/labor (salvage)"
+        value={result.silverPerLaborSalvage.toFixed(2)}
+        variant={resultVariant(result.silverPerLaborSalvage)}
+      />
+      <StatCard
+        label="Silver/labor (sell)"
+        value={result.silverPerLaborSell.toFixed(2)}
+        variant={resultVariant(result.silverPerLaborSell)}
+      />
+    </div>
+  );
+}
+
+function ResealLoopDetails({
+  result,
+  sealName,
+}: {
+  result: ResealLoopSimulationResult;
+  sealName: string;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <StatCard label="Initial seed" value={gold(result.initialSeedCost)} />
+      <StatCard
+        label="Initial sealed craft"
+        value={gold(result.initialSealedCraftCost)}
+      />
+      <StatCard label="Initial setup" value={gold(result.initialSetupCost)} />
+      <StatCard
+        label={`Failed retries (×${result.failedRetries})`}
+        value={gold(result.totalManaSealRetryCost)}
+      />
+      <StatCard label="Mana seal per fail" value={gold(result.manaSealCost)} />
+      <StatCard label="Mana seal" value={sealName} />
+      <StatCard
+        label="Sealed upgrade cost"
+        value={gold(result.sealedUpgradeCost)}
+      />
+      <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
+      <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
+      <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
+      <StatCard
+        label="Silver/labor (salvage)"
+        value={result.silverPerLaborSalvage.toFixed(2)}
+        variant={resultVariant(result.silverPerLaborSalvage)}
+      />
+      <StatCard
+        label="Silver/labor (sell)"
+        value={result.silverPerLaborSell.toFixed(2)}
+        variant={resultVariant(result.silverPerLaborSell)}
+      />
+    </div>
+  );
+}
+
+function SimulationResults({
+  salvage,
+  reseal,
+}: {
+  salvage: SalvageLoopSimulationResult;
+  reseal: ResealStrategyData;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <StrategySummaryCard title="Salvage Loop" result={salvage} />
+        {reseal.result ? (
+          <StrategySummaryCard title="Reseal Loop" result={reseal.result} />
+        ) : (
+          <div className="rounded-md border border-dashed p-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="font-semibold">Reseal Loop</h3>
+              <span className="text-muted-foreground text-sm">Unsupported</span>
+            </div>
+            <p className="text-muted-foreground text-sm">
+              {reseal.unsupportedReason ??
+                "Could not compute the reseal strategy for this item."}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-xl font-semibold">Salvage Loop details</h2>
+        <SalvageLoopDetails result={salvage} />
+      </div>
+
+      {reseal.result && reseal.sealName ? (
+        <div className="flex flex-col gap-3">
+          <h2 className="text-xl font-semibold">Reseal Loop details</h2>
+          <ResealLoopDetails
+            result={reseal.result}
+            sealName={reseal.sealName}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

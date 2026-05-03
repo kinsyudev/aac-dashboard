@@ -93,12 +93,8 @@ export function getSalvageWisps(
   return weaponSalvageValuesByTier[tier];
 }
 
-export interface SimulationInput {
-  /** Extra gold/material cost for one sealed Delphinad attempt. */
-  costPerAttempt: number;
-  /** Material cost to go from the successful revealed Delphinad to Ayanad. */
-  sealedUpgradeCost: number;
-  /** Tier of the failed revealed item that gets salvaged. */
+interface BaseSimulationInput {
+  /** Tier of the RNG item being rolled. */
   rngTier: Tier;
   /** Detected equip info for salvage lookups. */
   equip: DetectedEquip;
@@ -106,6 +102,38 @@ export interface SimulationInput {
   wispPrice: number;
   /** Market price of the final sealed ayanad item (for sell comparison). */
   sellPrice: number;
+}
+
+interface BaseSimulationResult {
+  /** Number of variants at the RNG tier. */
+  variants: number;
+  /** Success rate as a fraction (e.g. 0.1429). */
+  successRate: number;
+  /** Grand total cost for the strategy. */
+  totalCost: number;
+  /** Wisps from salvaging the final sealed ayanad piece. */
+  salvageWisps: number;
+  /** Revenue if salvaged (wisps x wisp price). */
+  revenueSalvage: number;
+  /** Revenue if sold on market. */
+  revenueSell: number;
+  /** Profit if salvaged. */
+  profitSalvage: number;
+  /** Profit if sold. */
+  profitSell: number;
+  /** Total labor for the strategy. */
+  totalLabor: number;
+  /** Gold per labor point (salvage path). */
+  silverPerLaborSalvage: number;
+  /** Gold per labor point (sell path). */
+  silverPerLaborSell: number;
+}
+
+export interface SalvageLoopSimulationInput extends BaseSimulationInput {
+  /** Extra gold/material cost for one sealed Delphinad attempt. */
+  costPerAttempt: number;
+  /** Material cost to go from the successful revealed Delphinad to Ayanad. */
+  sealedUpgradeCost: number;
   /** Total labor for one attempt. */
   laborPerAttempt: number;
   /** Labor for the upgrade craft step after rolling the correct variant. */
@@ -114,11 +142,8 @@ export interface SimulationInput {
   seedWispsPerAttempt: number;
 }
 
-export interface SimulationResult {
-  /** Number of variants at the RNG tier. */
-  variants: number;
-  /** Success rate as a fraction (e.g. 0.1429). */
-  successRate: number;
+export interface SalvageLoopSimulationResult extends BaseSimulationResult {
+  strategy: "salvage";
   /** Cost of a single attempt through the chain. */
   costPerAttempt: number;
   /** Expected total cost of attempts to get one success. */
@@ -139,29 +164,87 @@ export interface SimulationResult {
   initialSeedCost: number;
   /** Cost of the final upgrade (variant → sealed ayanad). */
   sealedUpgradeCost: number;
-  /** Grand total cost including all attempts + upgrade - failure recovery. */
-  totalCost: number;
-  /** Wisps from salvaging the final sealed ayanad piece. */
-  salvageWisps: number;
-  /** Revenue if salvaged (wisps × wisp price). */
-  revenueSalvage: number;
-  /** Revenue if sold on market. */
-  revenueSell: number;
-  /** Profit if salvaged. */
-  profitSalvage: number;
-  /** Profit if sold. */
-  profitSell: number;
-  /** Total labor across all expected attempts + final upgrade. */
-  totalLabor: number;
-  /** Silver (gold) per labor point (salvage path). */
-  silverPerLaborSalvage: number;
-  /** Silver (gold) per labor point (sell path). */
-  silverPerLaborSell: number;
 }
 
-export function computeSimulation(input: SimulationInput): SimulationResult {
+export interface ResealLoopSimulationInput extends BaseSimulationInput {
+  /** Upfront gold value of the wisps needed for the first base item. */
+  initialSeedCost: number;
+  /** Material cost to craft the first sealed Delphinad item, excluding the seed. */
+  initialSealedCraftCost: number;
+  /** Labor to craft the first seed item, if crafted. */
+  initialSeedLabor: number;
+  /** Labor to craft the first sealed Delphinad item, excluding the seed. */
+  initialSealedCraftLabor: number;
+  /** Cost of one Delphinad mana seal consumed per failed retry. */
+  manaSealCost: number;
+  /** Labor to obtain one Delphinad mana seal when crafted. */
+  manaSealLabor: number;
+  /** Material cost to go from the successful revealed Delphinad to Ayanad. */
+  sealedUpgradeCost: number;
+  /** Labor for the upgrade craft step after rolling the correct variant. */
+  sealedUpgradeLabor: number;
+}
+
+export interface ResealLoopSimulationResult extends BaseSimulationResult {
+  strategy: "reseal";
+  failedRetries: number;
+  initialSeedCost: number;
+  initialSealedCraftCost: number;
+  initialSetupCost: number;
+  manaSealCost: number;
+  totalManaSealRetryCost: number;
+  sealedUpgradeCost: number;
+}
+
+export type SimulationResult =
+  | SalvageLoopSimulationResult
+  | ResealLoopSimulationResult;
+
+function getFinalRevenue(input: BaseSimulationInput) {
+  const nextTierIndex = tiers.indexOf(input.rngTier) + 1;
+  const salvageTier = tiers[nextTierIndex] ?? input.rngTier;
+  const salvageWisps = getSalvageWisps(
+    salvageTier,
+    input.equip.piece,
+    input.equip.category,
+  );
+  const revenueSalvage = salvageWisps * input.wispPrice;
+  const revenueSell = input.sellPrice;
+
+  return { salvageWisps, revenueSalvage, revenueSell };
+}
+
+function getBaseResult(
+  input: BaseSimulationInput,
+  totalCost: number,
+  totalLabor: number,
+): BaseSimulationResult {
   const variants = variantsByTier[input.rngTier];
   const successRate = 1 / variants;
+  const { salvageWisps, revenueSalvage, revenueSell } = getFinalRevenue(input);
+
+  const profitSalvage = revenueSalvage - totalCost;
+  const profitSell = revenueSell - totalCost;
+
+  return {
+    variants,
+    successRate,
+    totalCost,
+    salvageWisps,
+    revenueSalvage,
+    revenueSell,
+    profitSalvage,
+    profitSell,
+    totalLabor,
+    silverPerLaborSalvage: totalLabor > 0 ? profitSalvage / totalLabor : 0,
+    silverPerLaborSell: totalLabor > 0 ? profitSell / totalLabor : 0,
+  };
+}
+
+export function computeSalvageLoopSimulation(
+  input: SalvageLoopSimulationInput,
+): SalvageLoopSimulationResult {
+  const variants = variantsByTier[input.rngTier];
   const expectedAttempts = variants;
   const failedAttempts = expectedAttempts - 1;
 
@@ -187,30 +270,12 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
     expectedAttemptsCost +
     input.sealedUpgradeCost -
     totalFailNetRecovery;
-
-  // Revenue from the final piece
-  const nextTierIndex = tiers.indexOf(input.rngTier) + 1;
-  const salvageTier = tiers[nextTierIndex] ?? input.rngTier;
-  const salvageWisps = getSalvageWisps(
-    salvageTier,
-    input.equip.piece,
-    input.equip.category,
-  );
-  const revenueSalvage = salvageWisps * input.wispPrice;
-  const revenueSell = input.sellPrice;
-
-  const profitSalvage = revenueSalvage - totalCost;
-  const profitSell = revenueSell - totalCost;
-
   const totalLabor =
     input.laborPerAttempt * expectedAttempts + input.sealedUpgradeLabor;
 
-  const silverPerLaborSalvage = totalLabor > 0 ? profitSalvage / totalLabor : 0;
-  const silverPerLaborSell = totalLabor > 0 ? profitSell / totalLabor : 0;
-
   return {
-    variants,
-    successRate,
+    strategy: "salvage",
+    ...getBaseResult(input, totalCost, totalLabor),
     costPerAttempt: input.costPerAttempt,
     expectedAttemptsCost,
     failSalvageWisps,
@@ -221,14 +286,35 @@ export function computeSimulation(input: SimulationInput): SimulationResult {
     totalFailNetRecovery,
     initialSeedCost,
     sealedUpgradeCost: input.sealedUpgradeCost,
-    totalCost,
-    salvageWisps,
-    revenueSalvage,
-    revenueSell,
-    profitSalvage,
-    profitSell,
-    totalLabor,
-    silverPerLaborSalvage,
-    silverPerLaborSell,
   };
 }
+
+export function computeResealLoopSimulation(
+  input: ResealLoopSimulationInput,
+): ResealLoopSimulationResult {
+  const variants = variantsByTier[input.rngTier];
+  const failedRetries = variants - 1;
+  const initialSetupCost = input.initialSeedCost + input.initialSealedCraftCost;
+  const totalManaSealRetryCost = input.manaSealCost * failedRetries;
+  const totalCost =
+    initialSetupCost + totalManaSealRetryCost + input.sealedUpgradeCost;
+  const totalLabor =
+    input.initialSeedLabor +
+    input.initialSealedCraftLabor +
+    input.manaSealLabor * failedRetries +
+    input.sealedUpgradeLabor;
+
+  return {
+    strategy: "reseal",
+    ...getBaseResult(input, totalCost, totalLabor),
+    failedRetries,
+    initialSeedCost: input.initialSeedCost,
+    initialSealedCraftCost: input.initialSealedCraftCost,
+    initialSetupCost,
+    manaSealCost: input.manaSealCost,
+    totalManaSealRetryCost,
+    sealedUpgradeCost: input.sealedUpgradeCost,
+  };
+}
+
+export const computeSimulation = computeSalvageLoopSimulation;
