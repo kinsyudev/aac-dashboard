@@ -137,6 +137,34 @@ function resolveDelphinadManaSealName(sourceItem: ItemRow | null) {
   return null;
 }
 
+function isConsumedUpgradeGearMaterial(
+  material: ItemRow,
+  sourceItem: ItemRow | null,
+): boolean {
+  if (!sourceItem) return false;
+
+  const lower = material.name.toLowerCase();
+  if (!lower.includes("delphinad") && !lower.includes("ayanad")) return false;
+  if (lower.includes("scroll")) return false;
+
+  if (material.category.toLowerCase() === sourceItem.category.toLowerCase()) {
+    return true;
+  }
+
+  const sourceSearchable =
+    `${sourceItem.name} ${sourceItem.category}`.toLowerCase();
+  for (const tokens of Object.values(armorTokensByPiece)) {
+    if (!tokens.some((token) => sourceSearchable.includes(token))) continue;
+    return tokens.some((token) => lower.includes(token));
+  }
+
+  if (sourceSearchable.includes("necklace")) return lower.includes("necklace");
+  if (sourceSearchable.includes("ring")) return lower.includes("ring");
+  if (sourceSearchable.includes("earring")) return lower.includes("earring");
+
+  return false;
+}
+
 function pickPreferredCraft<
   T extends { products: { item: { id: number }; amount: number }[] },
 >(entries: T[], itemId: number): T {
@@ -535,10 +563,10 @@ function buildSnapshotForSimulatorSource(
   const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
     ? {
         craft: ayanadBlueprint.craft,
-        materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
-          const lower = material.item.name.toLowerCase();
-          return !(lower.includes("delphinad") || lower.includes("ayanad"));
-        }),
+        materials: ayanadBlueprint.materials.filter(
+          (material: MaterialRow) =>
+            !isConsumedUpgradeGearMaterial(material.item, blueprint.item),
+        ),
         products: ayanadBlueprint.products,
       }
     : null;
@@ -586,10 +614,10 @@ async function buildSnapshotForResealSimulatorSource(
   const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
     ? {
         craft: ayanadBlueprint.craft,
-        materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
-          const lower = material.item.name.toLowerCase();
-          return !(lower.includes("delphinad") || lower.includes("ayanad"));
-        }),
+        materials: ayanadBlueprint.materials.filter(
+          (material: MaterialRow) =>
+            !isConsumedUpgradeGearMaterial(material.item, blueprint.item),
+        ),
         products: ayanadBlueprint.products,
       }
     : null;

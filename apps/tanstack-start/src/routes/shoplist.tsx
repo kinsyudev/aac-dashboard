@@ -38,6 +38,7 @@ import {
 import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
+import { piecesMap } from "~/lib/salvage";
 import { detectPieceAndTier } from "~/lib/simulator";
 import {
   getItemPrice,
@@ -307,6 +308,31 @@ function buildLaborByProficiency(
       );
     }
   }
+}
+
+function isConsumedUpgradeGearMaterial(
+  material: { name: string; category?: string | null },
+  source: { name: string; category: string },
+): boolean {
+  const lower = material.name.toLowerCase();
+  if (!lower.includes("delphinad") && !lower.includes("ayanad")) return false;
+  if (lower.includes("scroll")) return false;
+
+  if (
+    material.category != null &&
+    material.category.toLowerCase() === source.category.toLowerCase()
+  ) {
+    return true;
+  }
+
+  const equip = detectPieceAndTier(source.name);
+  if (!equip) return false;
+
+  if (equip.category === "armor" && equip.piece) {
+    return piecesMap[equip.piece].some((token) => lower.includes(token));
+  }
+
+  return equip.pieceToken != null && lower.includes(equip.pieceToken);
 }
 
 // ─── Share button ─────────────────────────────────────────────────────────────
@@ -1191,10 +1217,10 @@ function ShoplistDetail({
   const finalUpgradeEntry: RecipeEntry | null = ayanadCraft
     ? {
         craft: ayanadCraft.craft,
-        materials: ayanadCraft.materials.filter(({ item }) => {
-          const lower = item.name.toLowerCase();
-          return !(lower.includes("delphinad") || lower.includes("ayanad"));
-        }),
+        materials: ayanadCraft.materials.filter(
+          ({ item }) =>
+            !isConsumedUpgradeGearMaterial(item, simulatorSource.item),
+        ),
         products: ayanadCraft.products,
       }
     : null;

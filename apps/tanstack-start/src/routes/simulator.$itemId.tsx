@@ -27,6 +27,7 @@ import { pickCheapestCraft } from "~/lib/craft-helpers";
 import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
+import { piecesMap } from "~/lib/salvage";
 import {
   computeResealLoopSimulation,
   computeSimulation,
@@ -265,6 +266,29 @@ function getChosenMaterialLabor(
     );
   }
   return 0;
+}
+
+function isConsumedUpgradeGearMaterial(
+  material: { name: string; category?: string | null },
+  source: { category: string },
+  equip: NonNullable<ReturnType<typeof detectPieceAndTier>>,
+): boolean {
+  const lower = material.name.toLowerCase();
+  if (!lower.includes("delphinad") && !lower.includes("ayanad")) return false;
+  if (lower.includes("scroll")) return false;
+
+  if (
+    material.category != null &&
+    material.category.toLowerCase() === source.category.toLowerCase()
+  ) {
+    return true;
+  }
+
+  if (equip.category === "armor" && equip.piece) {
+    return piecesMap[equip.piece].some((token) => lower.includes(token));
+  }
+
+  return equip.pieceToken != null && lower.includes(equip.pieceToken);
 }
 
 function getSelectedCraftUnitLabor(
@@ -706,10 +730,10 @@ function SimulatorDetail() {
       0,
     );
     const upgradeMaterials = ayanadCraft
-      ? ayanadCraft.materials.filter(({ item }) => {
-          const lower = item.name.toLowerCase();
-          return !(lower.includes("delphinad") || lower.includes("ayanad"));
-        })
+      ? ayanadCraft.materials.filter(
+          ({ item }) =>
+            !isConsumedUpgradeGearMaterial(item, data.item, equip),
+        )
       : [];
     const sealedUpgradeCost = upgradeMaterials.reduce(
       (sum, { item, amount }) =>
