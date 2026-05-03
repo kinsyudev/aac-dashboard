@@ -267,6 +267,42 @@ function getChosenMaterialLabor(
   return 0;
 }
 
+function getSelectedCraftUnitLabor(
+  entry: CraftEntry,
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  priceMap: PriceMap,
+  overrideMap: OverrideMap,
+  proficiencyMap: ProficiencyMap,
+  modes: Record<number, CraftMode>,
+): number {
+  const produced =
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
+
+  const batchLabor =
+    getDiscountedLabor(
+      entry.craft.labor,
+      entry.craft.proficiency,
+      proficiencyMap,
+    ) +
+    entry.materials.reduce(
+      (sum, { item, amount }) =>
+        sum +
+        getChosenMaterialLabor(
+          item.id,
+          subcraftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          modes,
+        ) *
+          amount,
+      0,
+    );
+
+  return batchLabor / produced;
+}
+
 function buildRecommendedModes(
   materials: { item: { id: number } }[],
   subcraftMap: SubcraftMap,
@@ -465,6 +501,20 @@ function addCraftExecution(
       proficiencyMap,
     ),
   });
+}
+
+function addSelectedCraftExecutionForUnits(
+  entry: CraftEntry,
+  itemId: number,
+  requiredUnits: number,
+  proficiencyMap: ProficiencyMap,
+  acc: Map<number, CraftExecution>,
+): number {
+  const produced =
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
+  const batches = Math.ceil(requiredUnits / produced);
+  addCraftExecution(entry.craft, batches, proficiencyMap, acc);
+  return batches;
 }
 
 function fillMissingCraftLabor(
@@ -775,14 +825,16 @@ function SimulatorDetail() {
       };
     } else {
       const sealSubcraftMap = manaSealCraftQuery.data?.subcraftsByItemId ?? {};
-      const manaSealCost = deepCraftCost(
+      const manaSealCost = getCraftEntryUnitCost(
+        manaSealCraft,
         manaSealItem.id,
         sealSubcraftMap,
         manaSealPriceMap,
         overrideMap,
         effectiveModes,
       );
-      const manaSealLabor = deepCraftLabor(
+      const manaSealLabor = getSelectedCraftUnitLabor(
+        manaSealCraft,
         manaSealItem.id,
         sealSubcraftMap,
         manaSealPriceMap,
@@ -814,7 +866,9 @@ function SimulatorDetail() {
         sealCraft: manaSealCraft,
         sealMaterials: manaSealCraft.materials,
         unsupportedReason:
-          manaSealCost > 0 ? null : `No usable price data for ${manaSealName}.`,
+          manaSealCost > 0
+            ? null
+            : `No usable ingredient price data for ${manaSealName}.`,
       };
     }
 
@@ -908,17 +962,30 @@ function SimulatorDetail() {
 
     if (detailStrategy === "reseal" && simulationData.reseal.result) {
       const sealSubcraftMap = manaSealCraftQuery.data?.subcraftsByItemId ?? {};
-      if (simulationData.reseal.sealItem) {
-        collectCraftExecutionsForItem(
+      const sealCraft = simulationData.reseal.sealCraft;
+      if (sealCraft && simulationData.reseal.sealItem) {
+        const sealBatches = addSelectedCraftExecutionForUnits(
+          sealCraft,
           simulationData.reseal.sealItem.id,
           simulationData.reseal.result.failedRetries,
-          sealSubcraftMap,
-          manaSealPriceMap,
-          overrideMap,
           proficiencyMap,
-          effectiveModes,
           acc,
         );
+
+        for (const { item, amount } of sealCraft.materials) {
+          if ((effectiveModes[item.id] ?? "buy") === "craft") {
+            collectCraftExecutionsForItem(
+              item.id,
+              amount * sealBatches,
+              sealSubcraftMap,
+              manaSealPriceMap,
+              overrideMap,
+              proficiencyMap,
+              effectiveModes,
+              acc,
+            );
+          }
+        }
       }
     }
 
@@ -1012,19 +1079,38 @@ function SimulatorDetail() {
         </div>
         <div className="flex items-center gap-3">
           {simulationData && mainCraft && (
-            <Link
-              to="/shoplist"
-              search={{
-                craft: mainCraft.craft.id,
-                qty: 1,
-                simItem: item.id,
-                attempts: simulationData.salvage.variants,
-                sub: exportModes,
-              }}
-              className="text-muted-foreground text-xs hover:underline"
-            >
-              Export shoplist →
-            </Link>
+            <>
+              <Link
+                to="/shoplist"
+                search={{
+                  craft: mainCraft.craft.id,
+                  qty: 1,
+                  simItem: item.id,
+                  attempts: simulationData.salvage.variants,
+                  strategy: "salvage",
+                  sub: exportModes,
+                }}
+                className="text-muted-foreground text-xs hover:underline"
+              >
+                Export salvage shoplist →
+              </Link>
+              {simulationData.reseal.result ? (
+                <Link
+                  to="/shoplist"
+                  search={{
+                    craft: mainCraft.craft.id,
+                    qty: 1,
+                    simItem: item.id,
+                    attempts: simulationData.reseal.result.failedRetries,
+                    strategy: "reseal",
+                    sub: exportModes,
+                  }}
+                  className="text-muted-foreground text-xs hover:underline"
+                >
+                  Export reseal shoplist →
+                </Link>
+              ) : null}
+            </>
           )}
           <Link
             to="/craft/$itemId"

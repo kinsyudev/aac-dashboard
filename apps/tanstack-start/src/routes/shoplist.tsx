@@ -35,8 +35,10 @@ import {
   MAX_CRAFT_DEPTH,
   parseFinitePrice,
 } from "~/lib/craft-optimizer";
+import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
+import { detectPieceAndTier } from "~/lib/simulator";
 import {
   getItemPrice,
   getSimulationChain,
@@ -52,6 +54,7 @@ const searchSchema = z
     simItem: z.coerce.number().int().optional(),
     qty: z.coerce.number().int().min(1).default(1),
     attempts: z.coerce.number().int().min(1).optional(),
+    strategy: z.enum(["salvage", "reseal"]).default("salvage"),
     sub: z.string().optional(),
     sel: z.string().optional(),
     listId: z.string().uuid().optional(),
@@ -672,8 +675,10 @@ function ShoplistDetail({
   const trpc = useTRPC();
   const navigate = useNavigate({ from: "/shoplist" });
   const queryClient = useQueryClient();
-  const { qty, sub, sel, attempts, listId, sourceId } = Route.useSearch();
+  const { qty, sub, sel, attempts, strategy, listId, sourceId } =
+    Route.useSearch();
   const isSimulator = simItemId != null;
+  const isResealSimulator = isSimulator && strategy === "reseal";
 
   const craftQuery = useQuery({
     ...trpc.crafts.forCraft.queryOptions(craftId ?? -1),
@@ -706,7 +711,11 @@ function ShoplistDetail({
       return;
     }
     if (isSimulator && simulatorData?.item.name) {
-      setListName(`${simulatorData.item.name} attempt plan`);
+      setListName(
+        isResealSimulator
+          ? `${simulatorData.item.name} reseal plan`
+          : `${simulatorData.item.name} attempt plan`,
+      );
       return;
     }
     if (craftData?.item?.name) {
@@ -718,13 +727,55 @@ function ShoplistDetail({
     craftData?.item?.name,
     existingList.data?.list.name,
     isSimulator,
+    isResealSimulator,
     simulatorData?.item.name,
   ]);
 
-  const priceMap: PriceMap = useMemo(() => {
+  const basePriceMap: PriceMap = useMemo(() => {
     const prices = isSimulator ? simulatorData?.prices : craftData?.prices;
     return new Map(prices?.map((p) => [p.itemId, p]) ?? []);
   }, [craftData?.prices, isSimulator, simulatorData?.prices]);
+
+  const simulatorEquip = useMemo(
+    () =>
+      isResealSimulator && simulatorData
+        ? detectPieceAndTier(simulatorData.item.name)
+        : null,
+    [isResealSimulator, simulatorData],
+  );
+  const manaSealName = useMemo(
+    () =>
+      isResealSimulator && simulatorData && simulatorEquip
+        ? resolveDelphinadManaSealName({
+            name: simulatorData.item.name,
+            category: simulatorData.item.category,
+            equip: simulatorEquip,
+          })
+        : null,
+    [isResealSimulator, simulatorData, simulatorEquip],
+  );
+  const manaSealItemQuery = useQuery({
+    ...trpc.items.byName.queryOptions(manaSealName ?? ""),
+    enabled: !!manaSealName,
+  });
+  const manaSealItem = useMemo(
+    () =>
+      manaSealItemQuery.data?.find((item) => item.name === manaSealName) ??
+      null,
+    [manaSealItemQuery.data, manaSealName],
+  );
+  const manaSealCraftQuery = useQuery({
+    ...trpc.crafts.forItem.queryOptions(manaSealItem?.id ?? -1),
+    enabled: manaSealItem?.id != null,
+  });
+  const manaSealPriceMap: PriceMap = useMemo(
+    () => new Map(manaSealCraftQuery.data?.prices.map((p) => [p.itemId, p])),
+    [manaSealCraftQuery.data],
+  );
+  const priceMap: PriceMap = useMemo(
+    () => new Map([...basePriceMap, ...manaSealPriceMap]),
+    [basePriceMap, manaSealPriceMap],
+  );
 
   const craftModeSet = useMemo(() => {
     const searchModes = (sub ?? "").split(",").filter(Boolean).map(Number);
@@ -794,6 +845,25 @@ function ShoplistDetail({
     }
     return simulatorData.crafts[0] ?? null;
   }, [craftId, simulatorData?.crafts]);
+  const manaSealCraft = useMemo(() => {
+    if (!manaSealCraftQuery.data?.crafts.length || manaSealItem == null) {
+      return null;
+    }
+    return pickCheapestCraftForItem(
+      manaSealCraftQuery.data.crafts,
+      manaSealItem.id,
+      manaSealCraftQuery.data.subcraftsByItemId,
+      priceMap,
+      overrideMap,
+      craftModes,
+    );
+  }, [
+    craftModes,
+    manaSealCraftQuery.data,
+    manaSealItem,
+    overrideMap,
+    priceMap,
+  ]);
   const ayanadCraft = useMemo(() => {
     if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
     return pickCheapestCraftForItem(
@@ -813,6 +883,9 @@ function ShoplistDetail({
   );
   const createSimulatorList = useMutation(
     trpc.shoppingLists.createFromSimulator.mutationOptions(),
+  );
+  const createResealSimulatorList = useMutation(
+    trpc.shoppingLists.createFromResealSimulator.mutationOptions(),
   );
   const addCraftSource = useMutation(
     trpc.shoppingLists.addCraftSource.mutationOptions(),
@@ -842,11 +915,20 @@ function ShoplistDetail({
           return updateList.mutateAsync({
             listId,
             name: listName.trim() || undefined,
-            sourceType: "simulator",
+            sourceType: isResealSimulator ? "resealSimulator" : "simulator",
             itemId: simItemId,
             craftId: simulatorMainCraft.craft.id,
             quantity: effectiveQty,
             craftModeItemIds,
+          });
+        }
+        if (isResealSimulator) {
+          return createResealSimulatorList.mutateAsync({
+            itemId: simItemId,
+            craftId: simulatorMainCraft.craft.id,
+            failedRetries: effectiveQty,
+            craftModeItemIds,
+            name: listName.trim() || undefined,
           });
         }
         return createSimulatorList.mutateAsync({
@@ -1044,18 +1126,66 @@ function ShoplistDetail({
     return <StatusPage variant="not-found" />;
   }
 
+  if (isResealSimulator) {
+    if (!simulatorEquip) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Could not detect tier/piece for this reseal simulator export.
+        </p>
+      );
+    }
+    if (!manaSealName) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          No Delphinad mana seal mapping exists for this simulator export.
+        </p>
+      );
+    }
+    if (manaSealItemQuery.isLoading || manaSealCraftQuery.isLoading) {
+      return <p>Loading reseal shoplist...</p>;
+    }
+    if (!manaSealItem || !manaSealCraft) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Could not load craft data for {manaSealName}.
+        </p>
+      );
+    }
+  }
+
   const simulatorChain = getSimulationChain(
     simulatorCraft,
     simulatorSubcraftMap,
   );
+  const simulatorAttempts = isResealSimulator ? 1 : effectiveQty;
+  const sealSubcraftMap = manaSealCraftQuery.data?.subcraftsByItemId ?? {};
+  const sealProductAmount =
+    manaSealCraft && manaSealItem
+      ? (manaSealCraft.products.find((p) => p.item.id === manaSealItem.id)
+          ?.amount ?? 1)
+      : 1;
+  const sealBatches = isResealSimulator
+    ? Math.ceil(effectiveQty / sealProductAmount)
+    : 0;
   const scaledAttemptEntry: RecipeEntry = {
     craft: simulatorCraft.craft,
     materials: simulatorCraft.materials.map((material) => ({
       ...material,
-      amount: material.amount * effectiveQty,
+      amount: material.amount * simulatorAttempts,
     })),
     products: simulatorCraft.products,
   };
+  const scaledSealEntry: RecipeEntry | null =
+    isResealSimulator && manaSealCraft
+      ? {
+          craft: manaSealCraft.craft,
+          materials: manaSealCraft.materials.map((material) => ({
+            ...material,
+            amount: material.amount * sealBatches,
+          })),
+          products: manaSealCraft.products,
+        }
+      : null;
   const finalUpgradeSubcraftMap =
     ayanadCraftData?.subcraftsByItemId ?? simulatorSubcraftMap;
   const finalUpgradeEntry: RecipeEntry | null = ayanadCraft
@@ -1077,8 +1207,19 @@ function ShoplistDetail({
       selectedCrafts,
       0,
       acc,
-      effectiveQty,
+      simulatorAttempts,
     );
+    if (scaledSealEntry) {
+      buildShoppingList(
+        manaSealCraft!.materials,
+        craftModeSet,
+        sealSubcraftMap,
+        selectedCrafts,
+        0,
+        acc,
+        sealBatches,
+      );
+    }
     if (finalUpgradeEntry) {
       buildShoppingList(
         finalUpgradeEntry.materials,
@@ -1103,10 +1244,23 @@ function ShoplistDetail({
       simulatorSubcraftMap,
       selectedCrafts,
       0,
-      effectiveQty,
+      simulatorAttempts,
       acc,
       proficiencyMap,
     );
+    if (scaledSealEntry) {
+      buildLaborByProficiency(
+        manaSealCraft!.craft,
+        manaSealCraft!.materials,
+        craftModeSet,
+        sealSubcraftMap,
+        selectedCrafts,
+        0,
+        sealBatches,
+        acc,
+        proficiencyMap,
+      );
+    }
     if (finalUpgradeEntry) {
       buildLaborByProficiency(
         finalUpgradeEntry.craft,
@@ -1135,20 +1289,40 @@ function ShoplistDetail({
         </Link>
       }
       title={simulatorSource.item.name}
-      subtitle="Simulator export"
+      subtitle={
+        isResealSimulator ? "Reseal loop simulator export" : "Simulator export"
+      }
       icon={simulatorSource.item.icon}
-      quantityLabel="Expected attempts"
+      quantityLabel={
+        isResealSimulator ? "Expected failed retries" : "Expected attempts"
+      }
       localQty={localQty}
       setLocalQty={setLocalQty}
       commitQty={commitQty}
       recipeSections={[
         {
-          title: "Attempt chain",
+          title: isResealSimulator ? "Initial sealed craft" : "Attempt chain",
           entry: scaledAttemptEntry,
           producedItemId: simulatorSource.item.id,
-          note: null,
+          note: isResealSimulator
+            ? "Crafted once to create the initial Sealed Delphinad item."
+            : null,
           subcraftMap: simulatorSubcraftMap,
         },
+        ...(scaledSealEntry
+          ? [
+              {
+                title: "Mana seal retries",
+                entry: scaledSealEntry,
+                producedItemId:
+                  manaSealItem?.id ??
+                  scaledSealEntry.products[0]?.item.id ??
+                  scaledSealEntry.craft.id,
+                note: `Consumes ${effectiveQty.toLocaleString()} ${manaSealName} across failed retries.`,
+                subcraftMap: sealSubcraftMap,
+              },
+            ]
+          : []),
         ...(finalUpgradeEntry
           ? [
               {
@@ -1159,7 +1333,9 @@ function ShoplistDetail({
                   finalUpgradeEntry.products[0]?.item.id ??
                   finalUpgradeEntry.craft.id,
                 note: simulatorChain.keyMaterialName
-                  ? `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
+                  ? isResealSimulator
+                    ? `Consumes the successful ${simulatorChain.keyMaterialName} after reseal retries.`
+                    : `Consumes 1 successful ${simulatorChain.keyMaterialName} from the attempt chain.`
                   : null,
                 subcraftMap: finalUpgradeSubcraftMap,
               },
@@ -1230,6 +1406,7 @@ function ShoplistLayout({
   persistLoadingText,
   persistList,
   persistListPending,
+  persistDisabledReason,
 }: {
   backLink: React.ReactNode;
   title: string;
@@ -1265,6 +1442,7 @@ function ShoplistLayout({
   persistLoadingText: string;
   persistList: () => void;
   persistListPending: boolean;
+  persistDisabledReason?: string | null;
 }) {
   const totalLabor = useMemo(
     () =>
@@ -1322,11 +1500,18 @@ function ShoplistLayout({
               onClick={persistList}
               loading={persistListPending}
               loadingText={persistLoadingText}
+              disabled={!!persistDisabledReason}
+              title={persistDisabledReason ?? undefined}
             >
               {persistListLabel}
             </Button>
           </div>
         </div>
+        {persistDisabledReason ? (
+          <p className="text-muted-foreground text-sm">
+            {persistDisabledReason}
+          </p>
+        ) : null}
       </section>
 
       <div className="flex items-center gap-3">

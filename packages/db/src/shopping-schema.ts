@@ -12,6 +12,7 @@ export const shoppingListRoleEnum = pgEnum("shopping_list_role", [
 export const shoppingListSourceTypeEnum = pgEnum("shopping_list_source_type", [
   "craft",
   "simulator",
+  "resealSimulator",
 ]);
 
 export const shoppingLists = pgTable(

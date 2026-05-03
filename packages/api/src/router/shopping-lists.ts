@@ -91,7 +91,7 @@ async function insertSource(
   tx: DbTx,
   input: {
     shoppingListId: string;
-    sourceType: "craft" | "simulator";
+    sourceType: "craft" | "simulator" | "resealSimulator";
     craftId: number;
     itemId: number | null;
     quantity: number;
@@ -161,7 +161,7 @@ async function getResolvedSources(dbClient: typeof db | DbTx, listId: string) {
 
 function buildListSummary<
   T extends {
-    sourceType: "craft" | "simulator";
+    sourceType: "craft" | "simulator" | "resealSimulator";
     quantity: number;
     item: {
       id: number | null;
@@ -254,7 +254,7 @@ export const shoppingListsRouter = {
       Map<
         string,
         {
-          sourceType: "craft" | "simulator";
+          sourceType: "craft" | "simulator" | "resealSimulator";
           quantity: number;
           position: number;
           createdAt: Date;
@@ -696,6 +696,62 @@ export const shoppingListsRouter = {
           craftId: input.craftId,
           itemId: targetItem.id,
           quantity: input.attempts,
+        });
+        await regenerateListState(tx, created);
+
+        return { id: created.id };
+      });
+    }),
+
+  createFromResealSimulator: memberProcedure
+    .input(
+      z.object({
+        itemId: z.number().int(),
+        craftId: z.number().int(),
+        failedRetries: z.number().int().min(1).default(1),
+        craftModeItemIds: z.array(z.number().int()).default([]),
+        name: z.string().trim().min(1).max(120).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const [targetItem] = await ctx.db
+        .select()
+        .from(items)
+        .where(eq(items.id, input.itemId))
+        .limit(1);
+
+      if (!targetItem) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      }
+
+      const name =
+        input.name?.trim() ??
+        `${targetItem.name} reseal plan x${input.failedRetries}`;
+
+      return ctx.db.transaction(async (tx: DbTx) => {
+        const [created] = await tx
+          .insert(shoppingLists)
+          .values({
+            ownerUserId: ctx.session.user.id,
+            name,
+            craftModeItemIds: input.craftModeItemIds,
+            updatedAt: new Date(),
+          })
+          .returning();
+
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Shopping list creation failed.",
+          });
+        }
+
+        await insertSource(tx, {
+          shoppingListId: created.id,
+          sourceType: "resealSimulator",
+          craftId: input.craftId,
+          itemId: targetItem.id,
+          quantity: input.failedRetries,
         });
         await regenerateListState(tx, created);
 

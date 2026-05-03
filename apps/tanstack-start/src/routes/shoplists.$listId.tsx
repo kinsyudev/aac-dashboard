@@ -654,6 +654,10 @@ function ShoppingListDetailPage() {
                     simItem: data.sources[0].itemId ?? undefined,
                     qty: 1,
                     attempts: data.sources[0].quantity,
+                    strategy:
+                      data.sources[0].sourceType === "resealSimulator"
+                        ? "reseal"
+                        : "salvage",
                     sub: data.list.craftModeItemIds.join(",") || undefined,
                     listId,
                   }}

@@ -62,6 +62,81 @@ interface CraftBlueprint {
 type ShoppingListRow = typeof shoppingLists.$inferSelect;
 type ShoppingListSourceRow = typeof shoppingListSources.$inferSelect;
 
+const armorSealByPiece = {
+  head: "Medium Mana Seal",
+  chest: "Chest Mana Seal",
+  waist: "Small Mana Seal",
+  wrists: "Small Mana Seal",
+  hands: "Medium Mana Seal",
+  legs: "Pants Mana Seal",
+  feet: "Medium Mana Seal",
+} as const;
+
+const weaponSealByType = {
+  Musical: "Musical Mana Seal",
+  "1h": "One-Hander Mana Seal",
+  "2h": "Two-Hander Mana Seal",
+  Wooden: "Wooden Mana Seal",
+} as const;
+
+const weaponTokensByType = {
+  "1h": ["Dagger", "Sword", "Katana", "Axe", "Club", "Shortspear"],
+  "2h": ["Greatsword", "Nodachi", "Greataxe", "Greatclub", "Longspear"],
+  Musical: ["Lute", "Flute"],
+  Wooden: ["Bow", "Scepter", "Staff", "Shield"],
+} as const;
+
+const armorTokensByPiece = {
+  head: ["hood", "cap", "helm", "helmet"],
+  chest: ["shirt", "jerkin", "cuirass"],
+  waist: ["belt"],
+  wrists: ["guards", "vambraces", "bracers"],
+  hands: ["gloves", "fists", "gauntlets"],
+  legs: ["pants", "breeches", "greaves"],
+  feet: ["shoes", "boots", "sabatons"],
+} as const;
+
+type ArmorPiece = keyof typeof armorSealByPiece;
+type WeaponType = keyof typeof weaponSealByType;
+
+function resolveDelphinadManaSealName(sourceItem: ItemRow | null) {
+  if (!sourceItem) return null;
+
+  const searchable = `${sourceItem.name} ${sourceItem.category}`.toLowerCase();
+  if (!searchable.includes("delphinad")) return null;
+
+  for (const [piece, tokens] of Object.entries(armorTokensByPiece)) {
+    if (!tokens.some((token) => searchable.includes(token))) continue;
+
+    const category = sourceItem.category.toLowerCase();
+    const armorMaterial = category.includes("cloth")
+      ? "Cloth"
+      : category.includes("leather")
+        ? "Leather"
+        : category.includes("plate")
+          ? "Plate"
+          : null;
+    if (!armorMaterial) return null;
+
+    return `Delphinad ${armorMaterial} ${armorSealByPiece[piece as ArmorPiece]}`;
+  }
+
+  for (const [weaponType, tokens] of Object.entries(weaponTokensByType)) {
+    if (tokens.some((token) => searchable.includes(token.toLowerCase()))) {
+      return `Delphinad ${weaponSealByType[weaponType as WeaponType]}`;
+    }
+  }
+
+  if (searchable.includes("necklace")) {
+    return "Delphinad Large Jewelry Mana Seal";
+  }
+  if (searchable.includes("ring") || searchable.includes("earring")) {
+    return "Delphinad Small Jewelry Mana Seal";
+  }
+
+  return null;
+}
+
 function pickPreferredCraft<
   T extends { products: { item: { id: number }; amount: number }[] },
 >(entries: T[], itemId: number): T {
@@ -265,6 +340,43 @@ async function resolveAyanadUpgradeBlueprint(
   return preferredBlueprint;
 }
 
+async function resolvePrimaryCraftBlueprintForItemName(
+  dbClient: DbClient | DbTx,
+  itemName: string | null,
+): Promise<CraftBlueprint | null> {
+  if (!itemName) return null;
+
+  const [targetItem] = await dbClient
+    .select()
+    .from(items)
+    .where(eq(items.name, itemName))
+    .limit(1);
+
+  if (!targetItem) return null;
+
+  const craftRows = await dbClient
+    .select()
+    .from(crafts)
+    .where(eq(crafts.primaryProductId, targetItem.id));
+
+  const supportedCrafts = craftRows.filter(
+    (craft) => !craft.name.startsWith("trash_"),
+  );
+  if (!supportedCrafts.length) return null;
+
+  const blueprintMap = await fetchCraftBlueprintMap(
+    dbClient,
+    supportedCrafts.map((craft) => craft.id),
+  );
+
+  return pickPreferredCraft(
+    supportedCrafts
+      .map((craft) => blueprintMap.get(craft.id))
+      .filter((blueprint): blueprint is CraftBlueprint => blueprint != null),
+    targetItem.id,
+  );
+}
+
 function buildSnapshot(
   entry: CraftEntry,
   craftModeSet: Set<number>,
@@ -453,6 +565,76 @@ function buildSnapshotForSimulatorSource(
   ]);
 }
 
+async function buildSnapshotForResealSimulatorSource(
+  dbClient: DbClient | DbTx,
+  blueprint: CraftBlueprint,
+  ayanadBlueprint: CraftBlueprint | null,
+  craftModeSet: Set<number>,
+  failedRetries: number,
+): Promise<Snapshot> {
+  const manaSealBlueprint = await resolvePrimaryCraftBlueprintForItemName(
+    dbClient,
+    resolveDelphinadManaSealName(blueprint.item),
+  );
+  if (!manaSealBlueprint) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Could not resolve Delphinad mana seal craft for this item.",
+    });
+  }
+
+  const finalUpgradeEntry: CraftEntry | null = ayanadBlueprint
+    ? {
+        craft: ayanadBlueprint.craft,
+        materials: ayanadBlueprint.materials.filter((material: MaterialRow) => {
+          const lower = material.item.name.toLowerCase();
+          return !(lower.includes("delphinad") || lower.includes("ayanad"));
+        }),
+        products: ayanadBlueprint.products,
+      }
+    : null;
+
+  const manaSealItemId = manaSealBlueprint?.item?.id ?? null;
+  const manaSealProduced =
+    manaSealBlueprint && manaSealItemId != null
+      ? (manaSealBlueprint.products.find(
+          (product) => product.item.id === manaSealItemId,
+        )?.amount ?? 1)
+      : 1;
+  const manaSealBatches = Math.ceil(failedRetries / manaSealProduced);
+
+  return mergeSnapshots([
+    buildSnapshot(
+      {
+        craft: blueprint.craft,
+        materials: blueprint.materials,
+        products: blueprint.products,
+      },
+      craftModeSet,
+      blueprint.subcraftsByItemId,
+      1,
+    ),
+    buildSnapshot(
+      {
+        craft: manaSealBlueprint.craft,
+        materials: manaSealBlueprint.materials,
+        products: manaSealBlueprint.products,
+      },
+      craftModeSet,
+      manaSealBlueprint.subcraftsByItemId,
+      manaSealBatches,
+    ),
+    finalUpgradeEntry
+      ? buildSnapshot(
+          finalUpgradeEntry,
+          craftModeSet,
+          ayanadBlueprint?.subcraftsByItemId ?? blueprint.subcraftsByItemId,
+          1,
+        )
+      : { items: [], crafts: [] },
+  ]);
+}
+
 async function buildSourceSnapshot(
   tx: DbTx,
   source: ShoppingListSourceRow,
@@ -466,6 +648,20 @@ async function buildSourceSnapshot(
       blueprint.item,
     );
     return buildSnapshotForSimulatorSource(
+      blueprint,
+      ayanadBlueprint,
+      craftModeSet,
+      source.quantity,
+    );
+  }
+
+  if (source.sourceType === "resealSimulator") {
+    const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
+      tx,
+      blueprint.item,
+    );
+    return buildSnapshotForResealSimulatorSource(
+      tx,
       blueprint,
       ayanadBlueprint,
       craftModeSet,
@@ -489,7 +685,10 @@ export function getSourceKind(
   sources: Pick<ShoppingListSourceRow, "sourceType">[],
 ): "empty" | "craft" | "simulator" {
   if (sources.length === 0) return "empty";
-  return sources[0]?.sourceType === "simulator" ? "simulator" : "craft";
+  return sources[0]?.sourceType === "simulator" ||
+    sources[0]?.sourceType === "resealSimulator"
+    ? "simulator"
+    : "craft";
 }
 
 export function assertValidListSources(
@@ -499,7 +698,9 @@ export function assertValidListSources(
 
   const hasCraft = sources.some((source) => source.sourceType === "craft");
   const hasSimulator = sources.some(
-    (source) => source.sourceType === "simulator",
+    (source) =>
+      source.sourceType === "simulator" ||
+      source.sourceType === "resealSimulator",
   );
 
   if (hasCraft && hasSimulator) {
