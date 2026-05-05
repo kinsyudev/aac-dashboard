@@ -138,6 +138,40 @@ function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
 }
 
+function serializePriceMap(map: PriceMap) {
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([itemId, price]) => ({ itemId, ...price }));
+}
+
+function serializeOverrideMap(map: OverrideMap) {
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([itemId, price]) => ({ itemId, price }));
+}
+
+function serializeCraftEntry(entry: CraftEntry | SubcraftEntry | null) {
+  if (!entry) return null;
+  return {
+    craft: {
+      id: entry.craft.id,
+      name: entry.craft.name,
+      labor: entry.craft.labor,
+      proficiency: entry.craft.proficiency,
+    },
+    products: entry.products.map(({ item, amount }) => ({
+      itemId: item.id,
+      name: item.name,
+      amount,
+    })),
+    materials: entry.materials.map(({ item, amount }) => ({
+      itemId: item.id,
+      name: item.name,
+      amount,
+    })),
+  };
+}
+
 function isManaWisp(name: string): boolean {
   return name.toLowerCase().includes("mana wisp");
 }
@@ -571,6 +605,7 @@ function SimulatorDetail() {
   const [localSalePrice, setLocalSalePrice] = useState("");
   const [activeStrategy, setActiveStrategy] =
     useState<SimulatorStrategy>("reseal");
+  const [debugCopyState, setDebugCopyState] = useState<string | null>(null);
 
   const priceMap: PriceMap = useMemo(
     () => new Map(data.prices.map((p) => [p.itemId, p])),
@@ -1084,6 +1119,150 @@ function SimulatorDetail() {
     detailStrategy === "reseal"
       ? simulationData?.reseal.result
       : simulationData?.salvage;
+  const isDevelopment = import.meta.env.DEV;
+  const copyDebugState = () => {
+    const reseal = simulationData?.reseal.result;
+    const debugState = {
+      capturedAt: new Date().toISOString(),
+      item: {
+        id: item.id,
+        name: item.name,
+        category: item.category,
+      },
+      detectedEquip: equip,
+      selectedStrategy: detailStrategy,
+      salePrice: {
+        localSalePrice,
+        defaultSalePrice,
+        effectiveSalePrice,
+        ayanadMarketPrice,
+        ayanadItem: ayanadItem
+          ? { id: ayanadItem.id, name: ayanadItem.name }
+          : null,
+      },
+      wisp,
+      modes: {
+        manual: modes,
+        recommended: recommendedModes,
+        effective: effectiveModes,
+        export: exportModes,
+      },
+      prices: {
+        base: serializePriceMap(priceMap),
+        manaSeal: serializePriceMap(manaSealPriceMap),
+        overrides: serializeOverrideMap(overrideMap),
+      },
+      selectedCrafts: {
+        mainCraft: serializeCraftEntry(mainCraft),
+        ayanadCraft: serializeCraftEntry(ayanadCraft),
+        manaSealCraft: serializeCraftEntry(manaSealCraft),
+      },
+      simulationBase: simulationData
+        ? {
+            chain: simulationData.base.chain,
+            seedWispsPerAttempt: simulationData.base.seedWispsPerAttempt,
+            seedLabor: simulationData.base.seedLabor,
+            costPerAttempt: simulationData.base.costPerAttempt,
+            laborPerAttempt: simulationData.base.laborPerAttempt,
+            attemptMaterials: simulationData.base.attemptMaterials.map(
+              ({ item, amount }) => ({
+                itemId: item.id,
+                name: item.name,
+                amount,
+                mode: effectiveModes[item.id] ?? "buy",
+                unitCost: getChosenMaterialUnitCost(
+                  item.id,
+                  data.subcraftsByItemId,
+                  priceMap,
+                  overrideMap,
+                  effectiveModes,
+                ),
+                unitLabor: getChosenMaterialLabor(
+                  item.id,
+                  data.subcraftsByItemId,
+                  priceMap,
+                  overrideMap,
+                  proficiencyMap,
+                  effectiveModes,
+                ),
+              }),
+            ),
+            upgradeMaterials: simulationData.base.upgradeMaterials.map(
+              ({ item, amount }) => ({
+                itemId: item.id,
+                name: item.name,
+                amount,
+                mode: effectiveModes[item.id] ?? "buy",
+                unitCost: getChosenMaterialUnitCost(
+                  item.id,
+                  ayanadSubcraftMap ?? data.subcraftsByItemId,
+                  priceMap,
+                  overrideMap,
+                  effectiveModes,
+                ),
+                unitLabor: getChosenMaterialLabor(
+                  item.id,
+                  ayanadSubcraftMap ?? data.subcraftsByItemId,
+                  priceMap,
+                  overrideMap,
+                  proficiencyMap,
+                  effectiveModes,
+                ),
+              }),
+            ),
+          }
+        : null,
+      salvage: simulationData?.salvage ?? null,
+      reseal: {
+        result: reseal ?? null,
+        sealName: simulationData?.reseal.sealName ?? manaSealName,
+        unsupportedReason: simulationData?.reseal.unsupportedReason ?? null,
+        sealItem: simulationData?.reseal.sealItem
+          ? {
+              id: simulationData.reseal.sealItem.id,
+              name: simulationData.reseal.sealItem.name,
+            }
+          : null,
+        sanity: reseal
+          ? {
+              expectedTotalCost:
+                reseal.initialSetupCost +
+                reseal.totalManaSealRetryCost +
+                reseal.sealedUpgradeCost,
+              totalEvSalvage: reseal.revenueSalvage - reseal.totalCost,
+              evPerAttemptSalvage:
+                (reseal.revenueSalvage - reseal.totalCost) / reseal.variants,
+              silverPerLaborSalvage:
+                ((reseal.revenueSalvage - reseal.totalCost) * 100) /
+                reseal.totalLabor,
+            }
+          : null,
+      },
+      craftExecutions,
+      laborByProficiency: Object.fromEntries(laborByProficiency),
+    };
+    const text = JSON.stringify(debugState, null, 2);
+    console.info("Simulator debug state", debugState);
+
+    const clearDebugCopyState = () =>
+      window.setTimeout(() => setDebugCopyState(null), 2000);
+    if (!navigator.clipboard) {
+      setDebugCopyState("Logged to console");
+      clearDebugCopyState();
+      return;
+    }
+
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setDebugCopyState("Copied");
+        clearDebugCopyState();
+      },
+      () => {
+        setDebugCopyState("Logged to console");
+        clearDebugCopyState();
+      },
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -1142,6 +1321,15 @@ function SimulatorDetail() {
           >
             View craft →
           </Link>
+          {isDevelopment ? (
+            <button
+              type="button"
+              onClick={copyDebugState}
+              className="text-muted-foreground text-xs hover:underline"
+            >
+              {debugCopyState ?? "Dump debug state"}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -1573,9 +1761,9 @@ function StrategySummaryCard({
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Total cost" value={gold(result.totalCost)} />
         <StatCard
-          label="Profit (salvage)"
-          value={gold(result.profitSalvage)}
-          variant={resultVariant(result.profitSalvage)}
+          label="EV / attempt (salvage)"
+          value={gold(result.expectedValueSalvage)}
+          variant={resultVariant(result.expectedValueSalvage)}
         />
         <StatCard
           label="Silver/labor"
@@ -1604,6 +1792,16 @@ function SalvageLoopDetails({
         value={gold(result.expectedAttemptsCost)}
       />
       <StatCard
+        label="EV / attempt (salvage)"
+        value={gold(result.expectedValueSalvage)}
+        variant={resultVariant(result.expectedValueSalvage)}
+      />
+      <StatCard
+        label="EV / attempt (sell)"
+        value={gold(result.expectedValueSell)}
+        variant={resultVariant(result.expectedValueSell)}
+      />
+      <StatCard
         label="Initial seed wisps"
         value={gold(result.initialSeedCost)}
       />
@@ -1627,7 +1825,17 @@ function SalvageLoopDetails({
       />
       <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
       <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
+      <StatCard
+        label={`Total EV (salvage ×${result.variants})`}
+        value={gold(result.profitSalvage)}
+        variant={resultVariant(result.profitSalvage)}
+      />
       <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
+      <StatCard
+        label={`Total EV (sell ×${result.variants})`}
+        value={gold(result.profitSell)}
+        variant={resultVariant(result.profitSell)}
+      />
       <StatCard
         label="Silver/labor (salvage)"
         value={result.silverPerLaborSalvage.toFixed(2)}
@@ -1649,10 +1857,6 @@ function ResealLoopDetails({
   result: ResealLoopSimulationResult;
   sealName: string;
 }) {
-  const retryCost = result.initialSetupCost + result.totalManaSealRetryCost;
-  const profitSalvage = result.revenueSalvage - retryCost;
-  const profitSell = result.revenueSell - retryCost;
-
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       <StatCard label="Initial seed" value={gold(result.initialSeedCost)} />
@@ -1674,15 +1878,25 @@ function ResealLoopDetails({
       <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
       <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
       <StatCard
-        label="Profit (salvage)"
-        value={gold(profitSalvage)}
-        variant={resultVariant(profitSalvage)}
+        label="EV / attempt (salvage)"
+        value={gold(result.expectedValueSalvage)}
+        variant={resultVariant(result.expectedValueSalvage)}
       />
       <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
       <StatCard
-        label="Profit (sell)"
-        value={gold(profitSell)}
-        variant={resultVariant(profitSell)}
+        label="EV / attempt (sell)"
+        value={gold(result.expectedValueSell)}
+        variant={resultVariant(result.expectedValueSell)}
+      />
+      <StatCard
+        label={`Total EV (salvage ×${result.variants})`}
+        value={gold(result.profitSalvage)}
+        variant={resultVariant(result.profitSalvage)}
+      />
+      <StatCard
+        label={`Total EV (sell ×${result.variants})`}
+        value={gold(result.profitSell)}
+        variant={resultVariant(result.profitSell)}
       />
       <StatCard
         label="Silver/labor (salvage)"

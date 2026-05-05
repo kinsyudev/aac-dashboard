@@ -121,6 +121,10 @@ interface BaseSimulationResult {
   profitSalvage: number;
   /** Profit if sold. */
   profitSell: number;
+  /** Expected profit per RNG attempt if the successful item is salvaged. */
+  expectedValueSalvage: number;
+  /** Expected profit per RNG attempt if the successful item is sold. */
+  expectedValueSell: number;
   /** Total labor for the strategy. */
   totalLabor: number;
   /** Gold per labor point (salvage path). */
@@ -225,6 +229,8 @@ function getBaseResult(
 
   const profitSalvage = revenueSalvage - totalCost;
   const profitSell = revenueSell - totalCost;
+  const expectedValueSalvage = profitSalvage / variants;
+  const expectedValueSell = profitSell / variants;
 
   return {
     variants,
@@ -235,9 +241,12 @@ function getBaseResult(
     revenueSell,
     profitSalvage,
     profitSell,
+    expectedValueSalvage,
+    expectedValueSell,
     totalLabor,
-    silverPerLaborSalvage: totalLabor > 0 ? profitSalvage / totalLabor : 0,
-    silverPerLaborSell: totalLabor > 0 ? profitSell / totalLabor : 0,
+    silverPerLaborSalvage:
+      totalLabor > 0 ? (profitSalvage * 100) / totalLabor : 0,
+    silverPerLaborSell: totalLabor > 0 ? (profitSell * 100) / totalLabor : 0,
   };
 }
 

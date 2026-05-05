@@ -40,6 +40,9 @@ export interface CraftEntryLike {
 
 export type SubcraftMap<T extends CraftEntryLike> = Record<number, T[]>;
 
+const COIN_ITEM_ID = 500;
+const GOLD_PER_COIN = 0.0001;
+
 export interface SimulationChain {
   keyMaterialId: number | null;
   keyMaterialName: string | null;
@@ -68,6 +71,7 @@ export function getItemPrice(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
 ): number {
+  if (itemId === COIN_ITEM_ID) return GOLD_PER_COIN;
   const custom = overrideMap.get(itemId);
   if (custom != null) return custom;
   return getMarketPrice(priceMap.get(itemId));
