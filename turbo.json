@@ -55,6 +55,7 @@
     "AUTH_REDIRECT_PROXY_URL",
     "AUTH_SECRET",
     "DATABASE_URL",
+    "DEV",
 
     "PORT"
   ],

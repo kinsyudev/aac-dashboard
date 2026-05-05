@@ -1246,12 +1246,6 @@ function SimulatorDetail() {
 
     const clearDebugCopyState = () =>
       window.setTimeout(() => setDebugCopyState(null), 2000);
-    if (!navigator.clipboard) {
-      setDebugCopyState("Logged to console");
-      clearDebugCopyState();
-      return;
-    }
-
     void navigator.clipboard.writeText(text).then(
       () => {
         setDebugCopyState("Copied");
