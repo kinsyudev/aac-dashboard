@@ -1578,9 +1578,9 @@ function StrategySummaryCard({
           variant={resultVariant(result.profitSalvage)}
         />
         <StatCard
-          label="Profit (sell)"
-          value={gold(result.profitSell)}
-          variant={resultVariant(result.profitSell)}
+          label="Silver/labor"
+          value={result.silverPerLaborSalvage.toFixed(2)}
+          variant={resultVariant(result.silverPerLaborSalvage)}
         />
         <StatCard
           label="Total labor"
@@ -1649,6 +1649,10 @@ function ResealLoopDetails({
   result: ResealLoopSimulationResult;
   sealName: string;
 }) {
+  const retryCost = result.initialSetupCost + result.totalManaSealRetryCost;
+  const profitSalvage = result.revenueSalvage - retryCost;
+  const profitSell = result.revenueSell - retryCost;
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       <StatCard label="Initial seed" value={gold(result.initialSeedCost)} />
@@ -1669,7 +1673,17 @@ function ResealLoopDetails({
       />
       <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
       <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
+      <StatCard
+        label="Profit (salvage)"
+        value={gold(profitSalvage)}
+        variant={resultVariant(profitSalvage)}
+      />
       <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
+      <StatCard
+        label="Profit (sell)"
+        value={gold(profitSell)}
+        variant={resultVariant(profitSell)}
+      />
       <StatCard
         label="Silver/labor (salvage)"
         value={result.silverPerLaborSalvage.toFixed(2)}
