@@ -30,8 +30,8 @@ export const sealToGearMap = {
   },
   weapon: {
     Musical: "Musical Mana Seal",
-    "1h": "One-Hander Mana Seal",
-    "2h": "Two-Hander Mana Seal",
+    "1h": "One-Hander Metal Mana Seal",
+    "2h": "Two-Hander Metal Mana Seal",
     Wooden: "Wooden Mana Seal",
   },
   jewelry: {
