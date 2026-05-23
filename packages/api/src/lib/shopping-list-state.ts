@@ -2,18 +2,21 @@ import { TRPCError } from "@trpc/server";
 
 import type { db } from "@acme/db/client";
 import type { shoppingLists } from "@acme/db/schema";
-import { eq, getTableColumns, inArray } from "@acme/db";
+import { desc, eq, getTableColumns, inArray } from "@acme/db";
 import {
   craftMaterials,
   craftProducts,
   crafts,
   items,
+  prices,
   shoppingListCrafts,
   shoppingListItems,
   shoppingListSources,
 } from "@acme/db/schema";
 
 const MAX_DEPTH = 8;
+const COIN_ITEM_ID = 500;
+const GOLD_PER_COIN = 0.0001;
 type DbClient = typeof db;
 export type DbTx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
@@ -59,6 +62,10 @@ interface CraftBlueprint {
   products: ProductRow[];
   subcraftsByItemId: SubcraftMap;
 }
+type PriceRow = Pick<
+  typeof prices.$inferSelect,
+  "itemId" | "avg24h" | "avg7d" | "avg30d"
+>;
 type ShoppingListRow = typeof shoppingLists.$inferSelect;
 type ShoppingListSourceRow = typeof shoppingListSources.$inferSelect;
 
@@ -183,6 +190,167 @@ function pickPreferredCraft<
   }
 
   return preferred;
+}
+
+function parseFinitePrice(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getMarketPrice(price: PriceRow | undefined): number {
+  return (
+    parseFinitePrice(price?.avg24h) ??
+    parseFinitePrice(price?.avg7d) ??
+    parseFinitePrice(price?.avg30d) ??
+    0
+  );
+}
+
+async function fetchLatestPriceMap(
+  dbClient: DbClient | DbTx,
+  itemIds: number[],
+): Promise<Map<number, PriceRow>> {
+  const uniqueItemIds = Array.from(new Set(itemIds));
+  if (!uniqueItemIds.length) return new Map();
+
+  const rows = await dbClient
+    .selectDistinctOn([prices.itemId], {
+      itemId: prices.itemId,
+      avg24h: prices.avg24h,
+      avg7d: prices.avg7d,
+      avg30d: prices.avg30d,
+    })
+    .from(prices)
+    .where(inArray(prices.itemId, uniqueItemIds))
+    .orderBy(prices.itemId, desc(prices.fetchedAt));
+
+  return new Map(rows.map((row) => [row.itemId, row]));
+}
+
+function collectBlueprintMaterialItemIds(blueprints: CraftBlueprint[]) {
+  const itemIds = new Set<number>();
+
+  for (const blueprint of blueprints) {
+    for (const material of blueprint.materials) {
+      itemIds.add(material.item.id);
+    }
+    for (const entries of Object.values(blueprint.subcraftsByItemId)) {
+      for (const entry of entries) {
+        for (const material of entry.materials) {
+          itemIds.add(material.item.id);
+        }
+      }
+    }
+  }
+
+  return Array.from(itemIds);
+}
+
+function getItemPrice(itemId: number, priceMap: Map<number, PriceRow>): number {
+  if (itemId === COIN_ITEM_ID) return GOLD_PER_COIN;
+  return getMarketPrice(priceMap.get(itemId));
+}
+
+function getCraftUnitCost(
+  entry: CraftEntry,
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  craftModeSet: Set<number>,
+  priceMap: Map<number, PriceRow>,
+  sourceItem: ItemRow | null,
+  visited = new Set<number>(),
+): number {
+  const produced =
+    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
+  const batchCost = entry.materials.reduce((sum, material) => {
+    if (isConsumedUpgradeGearMaterial(material.item, sourceItem)) return sum;
+
+    const subcraftEntries = subcraftMap[material.item.id];
+    const shouldCraft =
+      craftModeSet.has(material.item.id) &&
+      !!subcraftEntries?.length &&
+      !visited.has(material.item.id);
+    const unitCost = shouldCraft
+      ? getCheapestCraftUnitCost(
+          material.item.id,
+          subcraftMap,
+          craftModeSet,
+          priceMap,
+          sourceItem,
+          new Set([...visited, itemId]),
+        )
+      : getItemPrice(material.item.id, priceMap);
+
+    return sum + unitCost * material.amount;
+  }, 0);
+
+  return batchCost / produced;
+}
+
+function getCheapestCraftUnitCost(
+  itemId: number,
+  subcraftMap: SubcraftMap,
+  craftModeSet: Set<number>,
+  priceMap: Map<number, PriceRow>,
+  sourceItem: ItemRow | null,
+  visited = new Set<number>(),
+): number {
+  const entries = subcraftMap[itemId];
+  if (!entries?.length || visited.has(itemId)) {
+    return getItemPrice(itemId, priceMap);
+  }
+
+  return Math.min(
+    ...entries.map((entry) =>
+      getCraftUnitCost(
+        entry,
+        itemId,
+        subcraftMap,
+        craftModeSet,
+        priceMap,
+        sourceItem,
+        new Set([...visited, itemId]),
+      ),
+    ),
+  );
+}
+
+function pickCheapestCraft(
+  entries: CraftBlueprint[],
+  itemId: number,
+  craftModeSet: Set<number>,
+  priceMap: Map<number, PriceRow>,
+  sourceItem: ItemRow | null,
+): CraftBlueprint {
+  const firstEntry = entries[0];
+  if (!firstEntry) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "No craft entries available for cheapest craft selection.",
+    });
+  }
+
+  return entries.reduce((best, entry) => {
+    const bestCost = getCraftUnitCost(
+      best,
+      itemId,
+      best.subcraftsByItemId,
+      craftModeSet,
+      priceMap,
+      sourceItem,
+    );
+    const entryCost = getCraftUnitCost(
+      entry,
+      itemId,
+      entry.subcraftsByItemId,
+      craftModeSet,
+      priceMap,
+      sourceItem,
+    );
+    if (entryCost !== bestCost) return entryCost < bestCost ? entry : best;
+    return entry.craft.id < best.craft.id ? entry : best;
+  }, firstEntry);
 }
 
 export async function fetchCraftBlueprint(
@@ -330,6 +498,7 @@ function getMatchingAyanadName(name: string): string | null {
 async function resolveAyanadUpgradeBlueprint(
   dbClient: DbClient | DbTx,
   sourceItem: ItemRow | null,
+  craftModeSet: Set<number>,
 ): Promise<CraftBlueprint | null> {
   const ayanadItemName = sourceItem
     ? getMatchingAyanadName(sourceItem.name)
@@ -366,12 +535,19 @@ async function resolveAyanadUpgradeBlueprint(
       isConsumedUpgradeGearMaterial(material.item, sourceItem),
     ),
   );
-  const preferredBlueprints = (
-    upgradeBlueprints.length ? upgradeBlueprints : blueprints
-  ).sort((left, right) => left.craft.id - right.craft.id);
-  const preferredBlueprint = pickPreferredCraft(
-    preferredBlueprints,
+  const candidateBlueprints = upgradeBlueprints.length
+    ? upgradeBlueprints
+    : blueprints;
+  const priceMap = await fetchLatestPriceMap(
+    dbClient,
+    collectBlueprintMaterialItemIds(candidateBlueprints),
+  );
+  const preferredBlueprint = pickCheapestCraft(
+    candidateBlueprints,
     ayanadItem.id,
+    craftModeSet,
+    priceMap,
+    sourceItem,
   );
 
   return preferredBlueprint;
@@ -683,6 +859,7 @@ async function buildSourceSnapshot(
     const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
       tx,
       blueprint.item,
+      craftModeSet,
     );
     return buildSnapshotForSimulatorSource(
       blueprint,
@@ -696,6 +873,7 @@ async function buildSourceSnapshot(
     const ayanadBlueprint = await resolveAyanadUpgradeBlueprint(
       tx,
       blueprint.item,
+      craftModeSet,
     );
     return buildSnapshotForResealSimulatorSource(
       tx,
