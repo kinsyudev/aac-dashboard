@@ -366,8 +366,11 @@ async function resolveAyanadUpgradeBlueprint(
       isConsumedUpgradeGearMaterial(material.item, sourceItem),
     ),
   );
+  const preferredBlueprints = (
+    upgradeBlueprints.length ? upgradeBlueprints : blueprints
+  ).sort((left, right) => left.craft.id - right.craft.id);
   const preferredBlueprint = pickPreferredCraft(
-    upgradeBlueprints.length ? upgradeBlueprints : blueprints,
+    preferredBlueprints,
     ayanadItem.id,
   );
 
