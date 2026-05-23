@@ -798,10 +798,6 @@ function ShoplistDetail({
     () => new Map(manaSealCraftQuery.data?.prices.map((p) => [p.itemId, p])),
     [manaSealCraftQuery.data],
   );
-  const priceMap: PriceMap = useMemo(
-    () => new Map([...basePriceMap, ...manaSealPriceMap]),
-    [basePriceMap, manaSealPriceMap],
-  );
 
   const craftModeSet = useMemo(() => {
     const searchModes = (sub ?? "").split(",").filter(Boolean).map(Number);
@@ -860,6 +856,14 @@ function ShoplistDetail({
   const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(
     simulatorData?.item.name ?? null,
   );
+  const ayanadPriceMap: PriceMap = useMemo(
+    () => new Map(ayanadCraftData?.prices.map((p) => [p.itemId, p])),
+    [ayanadCraftData],
+  );
+  const priceMap: PriceMap = useMemo(
+    () => new Map([...basePriceMap, ...manaSealPriceMap, ...ayanadPriceMap]),
+    [ayanadPriceMap, basePriceMap, manaSealPriceMap],
+  );
   const simulatorMainCraft = useMemo(() => {
     if (!simulatorData?.crafts.length) return null;
     if (craftId != null) {
@@ -891,16 +895,34 @@ function ShoplistDetail({
     priceMap,
   ]);
   const ayanadCraft = useMemo(() => {
-    if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
+    if (
+      !ayanadCraftData?.crafts.length ||
+      ayanadItem == null ||
+      simulatorData == null
+    ) {
+      return null;
+    }
+    const upgradeCrafts = ayanadCraftData.crafts.filter((entry) =>
+      entry.materials.some(({ item }) =>
+        isConsumedUpgradeGearMaterial(item, simulatorData.item),
+      ),
+    );
     return pickCheapestCraftForItem(
-      ayanadCraftData.crafts,
+      upgradeCrafts.length ? upgradeCrafts : ayanadCraftData.crafts,
       ayanadItem.id,
       ayanadCraftData.subcraftsByItemId,
       priceMap,
       overrideMap,
       craftModes,
     );
-  }, [ayanadCraftData, ayanadItem, craftModes, overrideMap, priceMap]);
+  }, [
+    ayanadCraftData,
+    ayanadItem,
+    craftModes,
+    overrideMap,
+    priceMap,
+    simulatorData,
+  ]);
 
   const craftSubcraftMap = craftData?.subcraftsByItemId ?? {};
 

@@ -358,10 +358,16 @@ async function resolveAyanadUpgradeBlueprint(
     dbClient,
     supportedCrafts.map((craft) => craft.id),
   );
+  const blueprints = supportedCrafts
+    .map((craft) => blueprintMap.get(craft.id))
+    .filter((blueprint): blueprint is CraftBlueprint => blueprint != null);
+  const upgradeBlueprints = blueprints.filter((blueprint) =>
+    blueprint.materials.some((material) =>
+      isConsumedUpgradeGearMaterial(material.item, sourceItem),
+    ),
+  );
   const preferredBlueprint = pickPreferredCraft(
-    supportedCrafts
-      .map((craft) => blueprintMap.get(craft.id))
-      .filter((blueprint): blueprint is CraftBlueprint => blueprint != null),
+    upgradeBlueprints.length ? upgradeBlueprints : blueprints,
     ayanadItem.id,
   );
 

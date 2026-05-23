@@ -648,6 +648,10 @@ function SimulatorDetail() {
     [manaSealCraftQuery.data],
   );
   const { ayanadItem, ayanadCraftData } = useAyanadUpgradeData(data.item.name);
+  const ayanadPriceMap: PriceMap = useMemo(
+    () => new Map(ayanadCraftData?.prices.map((p) => [p.itemId, p])),
+    [ayanadCraftData],
+  );
   const ayanadPriceQuery = useQuery({
     ...trpc.items.price.queryOptions(ayanadItem?.id ?? -1),
     enabled: ayanadItem?.id != null,
@@ -679,17 +683,33 @@ function SimulatorDetail() {
   }, [data, modes, overrideMap, priceMap]);
 
   const ayanadCraft = useMemo(() => {
-    if (!ayanadCraftData?.crafts.length || ayanadItem == null) return null;
+    if (!ayanadCraftData?.crafts.length || ayanadItem == null || !equip) {
+      return null;
+    }
     const subcraftMap = ayanadCraftData.subcraftsByItemId;
+    const upgradeCrafts = ayanadCraftData.crafts.filter((entry) =>
+      entry.materials.some(({ item }) =>
+        isConsumedUpgradeGearMaterial(item, data.item, equip),
+      ),
+    );
     return pickCheapestCraftForItem(
-      ayanadCraftData.crafts,
+      upgradeCrafts.length ? upgradeCrafts : ayanadCraftData.crafts,
       ayanadItem.id,
       subcraftMap,
-      priceMap,
+      new Map([...priceMap, ...ayanadPriceMap]),
       overrideMap,
       modes,
     );
-  }, [ayanadCraftData, ayanadItem, modes, overrideMap, priceMap]);
+  }, [
+    ayanadCraftData,
+    ayanadItem,
+    ayanadPriceMap,
+    data.item,
+    equip,
+    modes,
+    overrideMap,
+    priceMap,
+  ]);
   const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;
   const manaSealCraft = useMemo(() => {
     if (!manaSealCraftQuery.data?.crafts.length || manaSealItem == null) {
@@ -712,19 +732,31 @@ function SimulatorDetail() {
   ]);
 
   const recommendedModes = useMemo(() => {
-    if (!mainCraft) return {};
+    if (!mainCraft || !equip) return {};
     const materials = [
       ...mainCraft.materials,
       ...(manaSealCraft?.materials ?? []),
+      ...(ayanadCraft?.materials.filter(
+        ({ item }) => !isConsumedUpgradeGearMaterial(item, data.item, equip),
+      ) ?? []),
     ];
     const subcraftMap = {
       ...data.subcraftsByItemId,
       ...(manaSealCraftQuery.data?.subcraftsByItemId ?? {}),
+      ...(ayanadCraftData?.subcraftsByItemId ?? {}),
     };
-    const prices = new Map([...priceMap, ...manaSealPriceMap]);
+    const prices = new Map([
+      ...priceMap,
+      ...manaSealPriceMap,
+      ...ayanadPriceMap,
+    ]);
     return buildRecommendedModes(materials, subcraftMap, prices, overrideMap);
   }, [
+    ayanadCraft,
+    ayanadCraftData,
+    ayanadPriceMap,
     data,
+    equip,
     mainCraft,
     manaSealCraft,
     manaSealCraftQuery.data,
