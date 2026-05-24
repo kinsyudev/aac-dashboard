@@ -902,6 +902,7 @@ function ShoplistDetail({
     ) {
       return null;
     }
+
     const upgradeCrafts = ayanadCraftData.crafts.filter((entry) =>
       entry.materials.some(({ item }) =>
         isConsumedUpgradeGearMaterial(item, simulatorData.item),
