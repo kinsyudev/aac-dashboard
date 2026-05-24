@@ -3,11 +3,14 @@ import { test } from "node:test";
 
 import {
   compareCurrentItem,
+  compareCurrentStrategy,
+  estimateBaseItemCost,
   estimateExpectedRerolls,
   getAvailableStatIds,
   getPlannerStats,
   GRADES,
   inferSubtype,
+  planOptimalStrategy,
   planTargetRoute,
 } from "./costume-planner.ts";
 
@@ -216,6 +219,74 @@ void test("current item comparison recommends continue when target stats are alr
   assert.equal(target.subtype.status, "inferred");
   assert.equal(result.recommendation, "continue");
   assert.ok(result.continueCost.totalCost < result.restartCost.totalCost);
+});
+
+void test("costume base item cost values 200 prestige at one tenth Misagon crystal", () => {
+  assert.equal(
+    estimateBaseItemCost({
+      kind: "costume",
+      prices: { misagonsCrystal: 5 },
+    }),
+    100,
+  );
+});
+
+void test("undergarment base item cost defaults to 155g", () => {
+  assert.equal(
+    estimateBaseItemCost({
+      kind: "undergarment",
+      prices,
+    }),
+    155,
+  );
+});
+
+void test("restart-aware strategy includes base item cost in build from scratch", () => {
+  const strategy = planOptimalStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+  });
+
+  assert.equal(strategy.baseItemCost, 100);
+  assert.ok(strategy.targetCost.totalCost > strategy.baseItemCost);
+});
+
+void test("restart-aware comparison restarts bad upgraded states when rerolls are expensive", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "legendary",
+      progress: 0,
+      statIds: ["physical-defense", "max-health"],
+    },
+    prices: { ...prices, serendipityStone: 5000 },
+  });
+
+  assert.equal(strategy.recommendation, "restart");
+});
+
+void test("restart-aware comparison continues when target stats are already kept", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["ranged-attack"],
+    },
+    prices: { ...prices, serendipityStone: 5000 },
+  });
+
+  assert.equal(strategy.recommendation, "continue");
+  assert.ok(strategy.continueCost.totalCost < strategy.restartCost.totalCost);
 });
 
 function assertStatPool(

@@ -49,6 +49,10 @@ export interface RerollEstimate {
   expectedCost: number;
 }
 
+export interface BaseItemCostOptions {
+  honorGoldPerThousand?: number;
+}
+
 export interface CostBreakdown {
   materialCost: number;
   craftGold: number;
@@ -71,6 +75,27 @@ export interface TargetRoute {
   checkpoints: RouteCheckpoint[];
 }
 
+export type StrategyAction =
+  | "reroll"
+  | "synth"
+  | "continue"
+  | "restart"
+  | "complete";
+
+export interface StrategyCheckpoint {
+  grade: Grade;
+  action: StrategyAction;
+  label: string;
+  expectedCost: number;
+  restartCost?: number;
+}
+
+export interface OptimalStrategyRoute extends TargetRoute {
+  baseItemCost: number;
+  targetCost: CostBreakdown;
+  strategyCheckpoints: StrategyCheckpoint[];
+}
+
 export interface CurrentItemInput {
   grade: Grade;
   progress: number;
@@ -84,6 +109,11 @@ export interface CurrentComparison {
   restartCost: CostBreakdown;
   subtype: SubtypeInference;
   checkpoints: RouteCheckpoint[];
+}
+
+export interface CurrentStrategyComparison extends CurrentComparison {
+  baseItemCost: number;
+  strategyCheckpoints: StrategyCheckpoint[];
 }
 
 const statById = new Map(PLANNER_STATS.map((stat) => [stat.id, stat]));
@@ -167,6 +197,21 @@ export function estimateExpectedRerolls({
   };
 }
 
+export function estimateBaseItemCost({
+  honorGoldPerThousand = 10,
+  kind,
+  prices,
+}: {
+  kind: GearKind;
+  prices: PlannerPrices;
+} & BaseItemCostOptions): number {
+  if (kind === "costume") {
+    return getMaterialPrice("misagonsCrystal", prices) * 20;
+  }
+
+  return 15 + 14 * honorGoldPerThousand;
+}
+
 export function planTargetRoute({
   desiredStatIds,
   kind,
@@ -238,6 +283,48 @@ export function planTargetRoute({
       expectedRerolls,
       materials: synthesis.materials,
     },
+  };
+}
+
+export function planOptimalStrategy({
+  desiredStatIds,
+  honorGoldPerThousand,
+  kind,
+  prices,
+  targetGrade,
+  targetProgress,
+}: {
+  kind: GearKind;
+  targetGrade: Grade;
+  targetProgress: number;
+  desiredStatIds: string[];
+  prices: PlannerPrices;
+} & BaseItemCostOptions): OptimalStrategyRoute {
+  const route = planTargetRoute({
+    kind,
+    targetGrade,
+    targetProgress,
+    desiredStatIds,
+    prices,
+  });
+  const baseItemCost = estimateBaseItemCost({
+    kind,
+    prices,
+    honorGoldPerThousand,
+  });
+  const targetCost = addFlatCost(route.targetCost, baseItemCost);
+
+  return {
+    ...route,
+    baseItemCost,
+    targetCost,
+    strategyCheckpoints: buildStrategyCheckpoints({
+      baseRoute: route,
+      baseItemCost,
+      serendipityPrice: getMaterialPrice("serendipityStone", prices),
+      targetGrade,
+      targetCost,
+    }),
   };
 }
 
@@ -327,6 +414,58 @@ export function compareCurrentItem({
   };
 }
 
+export function compareCurrentStrategy({
+  current,
+  desiredStatIds,
+  honorGoldPerThousand,
+  kind,
+  prices,
+  targetGrade,
+  targetProgress,
+}: {
+  kind: GearKind;
+  targetGrade: Grade;
+  targetProgress: number;
+  desiredStatIds: string[];
+  current: CurrentItemInput;
+  prices: PlannerPrices;
+} & BaseItemCostOptions): CurrentStrategyComparison {
+  const comparison = compareCurrentItem({
+    kind,
+    targetGrade,
+    targetProgress,
+    desiredStatIds,
+    current,
+    prices,
+  });
+  const baseItemCost = estimateBaseItemCost({
+    kind,
+    prices,
+    honorGoldPerThousand,
+  });
+  const restartCost = addFlatCost(comparison.restartCost, baseItemCost);
+  const recommendation =
+    comparison.continueCost.totalCost <= restartCost.totalCost
+      ? "continue"
+      : "restart";
+
+  return {
+    ...comparison,
+    recommendation,
+    restartCost,
+    baseItemCost,
+    strategyCheckpoints: buildCurrentStrategyCheckpoints({
+      comparison: {
+        ...comparison,
+        recommendation,
+        restartCost,
+      },
+      current,
+      serendipityPrice: getMaterialPrice("serendipityStone", prices),
+    }),
+  };
+}
+
 function buildCostBreakdown({
   craftGold,
   expectedRerolls,
@@ -351,6 +490,92 @@ function buildCostBreakdown({
     salvageCredit,
     totalCost: materialCost + craftGold + rerollCost - salvageCredit,
   };
+}
+
+function addFlatCost(cost: CostBreakdown, amount: number): CostBreakdown {
+  return {
+    ...cost,
+    totalCost: cost.totalCost + amount,
+  };
+}
+
+function buildStrategyCheckpoints({
+  baseItemCost,
+  baseRoute,
+  serendipityPrice,
+  targetGrade,
+  targetCost,
+}: {
+  baseRoute: TargetRoute;
+  baseItemCost: number;
+  serendipityPrice: number;
+  targetGrade: Grade;
+  targetCost: CostBreakdown;
+}): StrategyCheckpoint[] {
+  const checkpoints: StrategyCheckpoint[] = [
+    {
+      grade: "grand",
+      action: "continue",
+      label: `Start with a fresh base item valued at ${formatGold(baseItemCost)}.`,
+      expectedCost: targetCost.totalCost,
+    },
+  ];
+
+  for (const checkpoint of baseRoute.checkpoints) {
+    checkpoints.push({
+      grade: checkpoint.grade,
+      action: checkpoint.expectedRerolls > 0 ? "reroll" : "synth",
+      label: checkpoint.action,
+      expectedCost: checkpoint.expectedRerolls * serendipityPrice,
+    });
+  }
+
+  checkpoints.push({
+    grade: targetGrade,
+    action: "complete",
+    label: "Finish synthesis to the selected target.",
+    expectedCost: targetCost.totalCost,
+  });
+
+  return checkpoints;
+}
+
+function buildCurrentStrategyCheckpoints({
+  comparison,
+  current,
+  serendipityPrice,
+}: {
+  comparison: CurrentComparison;
+  current: CurrentItemInput;
+  serendipityPrice: number;
+}): StrategyCheckpoint[] {
+  const checkpoints: StrategyCheckpoint[] = [
+    {
+      grade: current.grade,
+      action: comparison.recommendation,
+      label:
+        comparison.recommendation === "continue"
+          ? "Continue this item; its expected remaining cost is lower than salvaging into a fresh start."
+          : "Salvage this item and restart; the fresh route is cheaper in expectation after salvage credit.",
+      expectedCost:
+        comparison.recommendation === "continue"
+          ? comparison.continueCost.totalCost
+          : comparison.restartCost.totalCost,
+      restartCost: comparison.restartCost.totalCost,
+    },
+  ];
+
+  for (const checkpoint of comparison.checkpoints) {
+    checkpoints.push({
+      grade: checkpoint.grade,
+      action: checkpoint.expectedRerolls > 0 ? "reroll" : "synth",
+      label: checkpoint.action,
+      expectedCost: checkpoint.expectedRerolls * serendipityPrice,
+      restartCost: comparison.restartCost.totalCost,
+    });
+  }
+
+  return checkpoints;
 }
 
 function getSynthesisDifference(
@@ -489,4 +714,10 @@ function formatStatList(statIds: string[]): string {
   return statIds
     .map((statId) => statById.get(statId)?.label ?? statId)
     .join(", ");
+}
+
+function formatGold(value: number): string {
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}g`;
 }

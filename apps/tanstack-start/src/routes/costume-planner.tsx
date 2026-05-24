@@ -23,12 +23,12 @@ import type {
   PlannerPrices,
 } from "~/lib/costume-planner";
 import {
-  compareCurrentItem,
+  compareCurrentStrategy,
   getPlannerStats,
   GRADES,
   MATERIAL_LABELS,
   MATERIAL_PRICE_LOOKUP_NAMES,
-  planTargetRoute,
+  planOptimalStrategy,
   PRICE_LOOKUP_ITEM_NAMES,
 } from "~/lib/costume-planner";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
@@ -73,8 +73,10 @@ function CostumePlannerPage() {
   const [currentStats, setCurrentStats] = useState<string[]>([]);
   const [serendipityOverride, setSerendipityOverride] = useState("");
   const [currentItemValue, setCurrentItemValue] = useState("");
+  const [honorGoldPerThousand, setHonorGoldPerThousand] = useState("10");
   const statOptions = useMemo(() => getPlannerStats(kind), [kind]);
   const currentStatOptions = statOptions;
+  const honorRate = parseOptionalNumber(honorGoldPerThousand) ?? 10;
   const prices = useMemo<PlannerPrices>(() => {
     const byName = new Map(priceRows.map((row) => [row.item.name, row]));
     const next: PlannerPrices = {};
@@ -101,20 +103,21 @@ function CostumePlannerPage() {
   const route = useMemo(
     () =>
       targetStats.length > 0
-        ? planTargetRoute({
+        ? planOptimalStrategy({
             kind,
             targetGrade,
             targetProgress,
             desiredStatIds: targetStats,
             prices,
+            honorGoldPerThousand: honorRate,
           })
         : null,
-    [kind, prices, targetGrade, targetProgress, targetStats],
+    [honorRate, kind, prices, targetGrade, targetProgress, targetStats],
   );
   const comparison = useMemo(() => {
     if (!currentEnabled || targetStats.length === 0) return null;
 
-    return compareCurrentItem({
+    return compareCurrentStrategy({
       kind,
       targetGrade,
       targetProgress,
@@ -126,6 +129,7 @@ function CostumePlannerPage() {
         currentItemValue: parseOptionalNumber(currentItemValue) ?? undefined,
       },
       prices,
+      honorGoldPerThousand: honorRate,
     });
   }, [
     currentEnabled,
@@ -133,16 +137,28 @@ function CostumePlannerPage() {
     currentItemValue,
     currentProgress,
     currentStats,
+    honorRate,
     kind,
     prices,
     targetGrade,
     targetProgress,
     targetStats,
   ]);
-  const activeCost = comparison?.continueCost ?? route?.targetCost ?? null;
+  const activeCost = comparison
+    ? comparison.recommendation === "restart"
+      ? comparison.restartCost
+      : comparison.continueCost
+    : (route?.targetCost ?? null);
+  const activeBaseItemCost = comparison
+    ? comparison.recommendation === "restart"
+      ? comparison.baseItemCost
+      : 0
+    : (route?.baseItemCost ?? 0);
   const restartCost = comparison?.restartCost ?? null;
   const subtype = comparison?.subtype ?? route?.subtype ?? null;
   const conflict = subtype?.status === "conflict";
+  const strategyCheckpoints =
+    comparison?.strategyCheckpoints ?? route?.strategyCheckpoints ?? [];
 
   function resetForKind(nextKind: GearKind) {
     setKind(nextKind);
@@ -154,7 +170,7 @@ function CostumePlannerPage() {
     <main className="container py-16">
       <div className="mb-8 flex max-w-4xl flex-col gap-3">
         <p className="text-primary text-sm font-semibold tracking-[0.2em] uppercase">
-          ArcheAge Classic 3.5
+          ArcheAge Classic
         </p>
         <h1 className="text-3xl font-bold tracking-tight">
           Costume and Undergarment Planner
@@ -177,7 +193,7 @@ function CostumePlannerPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-4">
                 <Field label="Kind">
                   <select
                     value={kind}
@@ -213,6 +229,16 @@ function CostumePlannerPage() {
                     value={targetProgress}
                     onChange={(event) =>
                       setTargetProgress(clampNumber(event.target.value, 0, 100))
+                    }
+                  />
+                </Field>
+                <Field label="Honor gold / 1k">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={honorGoldPerThousand}
+                    onChange={(event) =>
+                      setHonorGoldPerThousand(event.target.value)
                     }
                   />
                 </Field>
@@ -358,6 +384,10 @@ function CostumePlannerPage() {
                     label="Salvage credit"
                     value={comparison.restartCost.salvageCredit}
                   />
+                  <CostLine
+                    label="Fresh base item"
+                    value={comparison.baseItemCost}
+                  />
                 </div>
               ) : route ? (
                 <div className="flex flex-col gap-3">
@@ -365,6 +395,10 @@ function CostumePlannerPage() {
                   <CostLine
                     label="Expected total"
                     value={route.targetCost.totalCost}
+                  />
+                  <CostLine
+                    label="Fresh base item"
+                    value={route.baseItemCost}
                   />
                 </div>
               ) : (
@@ -384,6 +418,12 @@ function CostumePlannerPage() {
                 <CostLine label="Materials" value={activeCost.materialCost} />
                 <CostLine label="Craft gold" value={activeCost.craftGold} />
                 <CostLine label="Rerolls" value={activeCost.rerollCost} />
+                {activeBaseItemCost > 0 ? (
+                  <CostLine
+                    label="Fresh base item"
+                    value={activeBaseItemCost}
+                  />
+                ) : null}
                 <div className="text-muted-foreground text-xs">
                   {formatNumber(activeCost.expectedRerolls)} expected
                   serendipity stones
@@ -404,6 +444,10 @@ function CostumePlannerPage() {
                 />
                 <CostLine label="Rerolls" value={restartCost.rerollCost} />
                 <CostLine
+                  label="Fresh base item"
+                  value={comparison?.baseItemCost ?? 0}
+                />
+                <CostLine
                   label="Salvage credit"
                   value={restartCost.salvageCredit}
                 />
@@ -417,25 +461,33 @@ function CostumePlannerPage() {
         <section className="mt-6 grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Upgrade checkpoints</CardTitle>
+              <CardTitle>Strategy checkpoints</CardTitle>
             </CardHeader>
             <CardContent>
-              {route.checkpoints.length > 0 ? (
+              {strategyCheckpoints.length > 0 ? (
                 <ul className="divide-y">
-                  {route.checkpoints.map((checkpoint) => (
+                  {strategyCheckpoints.map((checkpoint, index) => (
                     <li
-                      key={`${checkpoint.grade}-${checkpoint.action}`}
+                      key={`${checkpoint.grade}-${checkpoint.action}-${index}`}
                       className="py-3"
                     >
-                      <p className="font-medium">
-                        {formatGrade(checkpoint.grade)}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">
+                          {formatGrade(checkpoint.grade)}
+                        </p>
+                        <Badge variant="secondary" className="capitalize">
+                          {checkpoint.action}
+                        </Badge>
+                      </div>
                       <p className="text-muted-foreground text-sm">
-                        {checkpoint.action}
+                        {checkpoint.label}
                       </p>
                       <p className="text-muted-foreground text-xs">
-                        {formatNumber(checkpoint.expectedRerolls)} expected
-                        rerolls
+                        {formatGold(checkpoint.expectedCost)} expected
+                        checkpoint cost
+                        {checkpoint.restartCost != null
+                          ? `; restart is ${formatGold(checkpoint.restartCost)}`
+                          : ""}
                       </p>
                     </li>
                   ))}
