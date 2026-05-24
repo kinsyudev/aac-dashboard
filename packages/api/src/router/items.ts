@@ -88,6 +88,43 @@ export const itemsRouter = {
       .orderBy(items.name);
   }),
 
+  byExactNames: memberProcedure
+    .input(z.array(z.string().min(1)).max(50))
+    .query(async ({ ctx, input }) => {
+      const names = [...new Set(input.map((name) => name.trim()))].filter(
+        Boolean,
+      );
+      if (names.length === 0) return [];
+
+      const itemRows = await ctx.db
+        .select(getTableColumns(items))
+        .from(items)
+        .where(inArray(items.name, names))
+        .orderBy(items.name);
+      const itemIds = itemRows.map((item) => item.id);
+      const latestPrices =
+        itemIds.length > 0
+          ? await ctx.db
+              .selectDistinctOn([prices.itemId], {
+                itemId: prices.itemId,
+                avg24h: prices.avg24h,
+                avg7d: prices.avg7d,
+                avg30d: prices.avg30d,
+              })
+              .from(prices)
+              .where(inArray(prices.itemId, itemIds))
+              .orderBy(prices.itemId, desc(prices.fetchedAt))
+          : [];
+      const priceMap = new Map(
+        latestPrices.map((price) => [price.itemId, price]),
+      );
+
+      return itemRows.map((item) => ({
+        item,
+        price: priceMap.get(item.id) ?? null,
+      }));
+    }),
+
   search: memberProcedure.input(z.string().min(2)).query(({ ctx, input }) => {
     return ctx.db
       .select({

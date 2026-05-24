@@ -15,6 +15,7 @@ import { Route as ShoplistRouteImport } from './routes/shoplist'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ItemRouteImport } from './routes/item'
 import { Route as CraftRouteImport } from './routes/craft'
+import { Route as CostumePlannerRouteImport } from './routes/costume-planner'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SimulatorIndexRouteImport } from './routes/simulator.index'
 import { Route as ShoplistsIndexRouteImport } from './routes/shoplists.index'
@@ -61,6 +62,11 @@ const ItemRoute = ItemRouteImport.update({
 const CraftRoute = CraftRouteImport.update({
   id: '/craft',
   path: '/craft',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CostumePlannerRoute = CostumePlannerRouteImport.update({
+  id: '/costume-planner',
+  path: '/costume-planner',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -151,6 +157,7 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/costume-planner': typeof CostumePlannerRoute
   '/craft': typeof CraftRouteWithChildren
   '/item': typeof ItemRouteWithChildren
   '/profile': typeof ProfileRoute
@@ -176,6 +183,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/costume-planner': typeof CostumePlannerRoute
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
   '/auth/error': typeof AuthErrorRoute
@@ -198,6 +206,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/costume-planner': typeof CostumePlannerRoute
   '/craft': typeof CraftRouteWithChildren
   '/item': typeof ItemRouteWithChildren
   '/profile': typeof ProfileRoute
@@ -225,6 +234,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/costume-planner'
     | '/craft'
     | '/item'
     | '/profile'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/costume-planner'
     | '/profile'
     | '/shoplist'
     | '/auth/error'
@@ -271,6 +282,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/costume-planner'
     | '/craft'
     | '/item'
     | '/profile'
@@ -297,6 +309,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CostumePlannerRoute: typeof CostumePlannerRoute
   CraftRoute: typeof CraftRouteWithChildren
   ItemRoute: typeof ItemRouteWithChildren
   ProfileRoute: typeof ProfileRoute
@@ -353,6 +366,13 @@ declare module '@tanstack/react-router' {
       path: '/craft'
       fullPath: '/craft'
       preLoaderRoute: typeof CraftRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/costume-planner': {
+      id: '/costume-planner'
+      path: '/costume-planner'
+      fullPath: '/costume-planner'
+      preLoaderRoute: typeof CostumePlannerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -535,6 +555,7 @@ const SimulatorRouteWithChildren = SimulatorRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CostumePlannerRoute: CostumePlannerRoute,
   CraftRoute: CraftRouteWithChildren,
   ItemRoute: ItemRouteWithChildren,
   ProfileRoute: ProfileRoute,

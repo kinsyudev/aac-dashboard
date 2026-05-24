@@ -59,6 +59,12 @@ function HomePage() {
             to="/item"
             cta="Browse items"
           />
+          <DashboardCard
+            title="Costume Planner"
+            description="Plan costume and undergarment stat routes, expected reroll costs, and restart decisions."
+            to="/costume-planner"
+            cta="Plan a costume"
+          />
           {viewer?.canAccessAdmin ? (
             <DashboardCard
               title="Simulator"
@@ -94,7 +100,13 @@ function DashboardCard({
   cta: string;
   description: string;
   title: string;
-  to: "/craft" | "/item" | "/simulator" | "/shoplists" | "/profile";
+  to:
+    | "/craft"
+    | "/item"
+    | "/costume-planner"
+    | "/simulator"
+    | "/shoplists"
+    | "/profile";
 }) {
   return (
     <Link
