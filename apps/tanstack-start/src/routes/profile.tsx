@@ -5,7 +5,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import type { Proficiency } from "@acme/db/schema";
 import { Button } from "@acme/ui/button";
@@ -14,6 +14,7 @@ import { toast } from "@acme/ui/toast";
 
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
+import { serializeCostumePlannerSearch } from "~/lib/costume-planner-state";
 import { getRank, PROFICIENCY_CATEGORIES } from "~/lib/proficiency";
 import { useTRPC } from "~/lib/trpc";
 
@@ -37,6 +38,9 @@ export const Route = createFileRoute("/profile")({
     void queryClient.prefetchQuery(
       trpc.profile.getProficiencies.queryOptions(),
     );
+    void queryClient.prefetchQuery(
+      trpc.profile.listCostumePlannerLoadouts.queryOptions(),
+    );
   },
   component: RouteComponent,
 });
@@ -53,6 +57,15 @@ function RouteComponent() {
         </p>
         <Suspense fallback={<p>Loading...</p>}>
           <ProficiencyEditor />
+        </Suspense>
+      </section>
+      <section className="mb-12">
+        <h2 className="mb-4 text-xl font-semibold">Costume Planner Loadouts</h2>
+        <p className="text-muted-foreground mb-6 text-sm">
+          Open or remove saved costume and undergarment planner snapshots.
+        </p>
+        <Suspense fallback={<p>Loading...</p>}>
+          <CostumePlannerLoadouts />
         </Suspense>
       </section>
       <section>
@@ -79,6 +92,103 @@ function formatDiff(custom: number, market: number) {
     pct: `${sign}${pct.toFixed(1)}%`,
     positive: diff <= 0,
   };
+}
+
+function CostumePlannerLoadouts() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const { data: loadouts } = useSuspenseQuery(
+    trpc.profile.listCostumePlannerLoadouts.queryOptions(),
+  );
+
+  const deleteLoadout = useMutation(
+    trpc.profile.deleteCostumePlannerLoadout.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.profile.listCostumePlannerLoadouts.pathFilter(),
+        );
+        toast.success("Loadout deleted.");
+      },
+      onError: () => toast.error("Failed to delete loadout."),
+    }),
+  );
+
+  if (loadouts.length === 0) {
+    return (
+      <p className="text-muted-foreground text-sm">
+        No saved costume planner loadouts.
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b">
+            <th className="text-muted-foreground px-4 py-3 text-left font-medium">
+              Name
+            </th>
+            <th className="text-muted-foreground px-4 py-3 text-left font-medium">
+              Kind
+            </th>
+            <th className="text-muted-foreground px-4 py-3 text-left font-medium">
+              Updated
+            </th>
+            <th className="px-4 py-3" />
+          </tr>
+        </thead>
+        <tbody>
+          {loadouts.map((loadout) => (
+            <tr key={loadout.id} className="border-b last:border-0">
+              <td className="px-4 py-3 font-medium">{loadout.name}</td>
+              <td className="px-4 py-3">{formatPlannerKind(loadout.kind)}</td>
+              <td className="text-muted-foreground px-4 py-3">
+                {formatDate(loadout.updatedAt)}
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center justify-end gap-2">
+                  <Button size="sm" variant="outline" asChild>
+                    <Link
+                      to="/costume-planner"
+                      search={serializeCostumePlannerSearch(loadout.state)}
+                    >
+                      Open
+                    </Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => deleteLoadout.mutate(loadout.id)}
+                    loading={
+                      deleteLoadout.isPending &&
+                      deleteLoadout.variables === loadout.id
+                    }
+                    loadingText="Deleting..."
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatPlannerKind(kind: "costume" | "undergarment") {
+  return kind === "costume" ? "Costume" : "Undergarment";
+}
+
+function formatDate(value: Date) {
+  return value.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function AddOverrideForm({ onAdded }: { onAdded: () => void }) {

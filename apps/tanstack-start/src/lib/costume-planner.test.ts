@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  DEFAULT_COSTUME_PLANNER_STATE,
+  normalizeCostumePlannerState,
+  parseCostumePlannerSearch,
+  serializeCostumePlannerSearch,
+} from "./costume-planner-state.ts";
+import {
   compareCurrentItem,
   compareCurrentStrategy,
   estimateBaseItemCost,
@@ -287,6 +293,66 @@ void test("restart-aware comparison continues when target stats are already kept
 
   assert.equal(strategy.recommendation, "continue");
   assert.ok(strategy.continueCost.totalCost < strategy.restartCost.totalCost);
+});
+
+void test("costume planner state defaults match the route defaults", () => {
+  assert.deepEqual(normalizeCostumePlannerState({}), {
+    ...DEFAULT_COSTUME_PLANNER_STATE,
+  });
+});
+
+void test("costume planner state clamps numbers and filters stats for selected kind", () => {
+  assert.deepEqual(
+    normalizeCostumePlannerState({
+      kind: "undergarment",
+      targetProgress: 150,
+      currentProgress: -10,
+      targetStats: [
+        "move-speed",
+        "ranged-attack",
+        "ranged-critical-damage",
+        "ranged-skill-damage",
+        "ranged-critical-rate",
+        "defense-penetration",
+        "melee-attack",
+      ],
+      currentStats: ["stealth-detection", "max-health"],
+    }),
+    {
+      ...DEFAULT_COSTUME_PLANNER_STATE,
+      kind: "undergarment",
+      targetProgress: 100,
+      currentProgress: 0,
+      targetStats: [
+        "ranged-attack",
+        "ranged-skill-damage",
+        "ranged-critical-rate",
+        "defense-penetration",
+        "melee-attack",
+      ],
+      currentStats: ["max-health"],
+    },
+  );
+});
+
+void test("costume planner search serialization round-trips full planner state", () => {
+  const state = normalizeCostumePlannerState({
+    kind: "undergarment",
+    targetGrade: "legendary",
+    targetProgress: 75,
+    targetStats: ["ranged-attack", "ranged-critical-rate"],
+    currentEnabled: true,
+    currentGrade: "unique",
+    currentProgress: 25,
+    currentStats: ["max-health"],
+    serendipityOverride: "123.45",
+    currentItemValue: "88",
+    honorGoldPerThousand: "12.5",
+  });
+
+  const serialized = serializeCostumePlannerSearch(state);
+
+  assert.deepEqual(parseCostumePlannerSearch(serialized), state);
 });
 
 function assertStatPool(
