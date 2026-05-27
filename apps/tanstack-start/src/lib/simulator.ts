@@ -1,4 +1,4 @@
-import type { Piece, Tier } from "./salvage";
+import type { Piece, Tier } from "./salvage.ts";
 import {
   jewelrySalvageValuesByTier,
   piecesMap,
@@ -6,9 +6,11 @@ import {
   tiers,
   variantsByTier,
   weaponSalvageValuesByTier,
-} from "./salvage";
+} from "./salvage.ts";
 
 export type EquipCategory = "armor" | "weapon" | "jewelry";
+
+export const GLOWING_PROC_RATE = 1 / 20;
 
 export interface DetectedEquip {
   tier: Tier;
@@ -109,6 +111,10 @@ interface BaseSimulationResult {
   variants: number;
   /** Success rate as a fraction (e.g. 0.1429). */
   successRate: number;
+  /** Expected attempts represented by this strategy's success model. */
+  expectedAttempts: number;
+  /** Extra independent chance from Glowing proc, or 0 when disabled. */
+  glowingProcChance: number;
   /** Grand total cost for the strategy. */
   totalCost: number;
   /** Wisps from salvaging the final sealed ayanad piece. */
@@ -144,6 +150,8 @@ export interface SalvageLoopSimulationInput extends BaseSimulationInput {
   sealedUpgradeLabor: number;
   /** Mana wisps needed to recreate the base Epherium item for another attempt. */
   seedWispsPerAttempt: number;
+  /** Whether to include the independent 1/20 house-crafting Glowing proc. */
+  glowingProcEnabled?: boolean;
 }
 
 export interface SalvageLoopSimulationResult extends BaseSimulationResult {
@@ -152,6 +160,8 @@ export interface SalvageLoopSimulationResult extends BaseSimulationResult {
   costPerAttempt: number;
   /** Expected total cost of attempts to get one success. */
   expectedAttemptsCost: number;
+  /** Expected failed sealed craft attempts before one success. */
+  failedAttempts: number;
   /** Wisps recovered per failed attempt (salvage at rngTier). */
   failSalvageWisps: number;
   /** Gross gold value of a failed salvage. */
@@ -187,6 +197,8 @@ export interface ResealLoopSimulationInput extends BaseSimulationInput {
   sealedUpgradeCost: number;
   /** Labor for the upgrade craft step after rolling the correct variant. */
   sealedUpgradeLabor: number;
+  /** Whether to include the independent 1/20 house-crafting Glowing proc. */
+  glowingProcEnabled?: boolean;
 }
 
 export interface ResealLoopSimulationResult extends BaseSimulationResult {
@@ -218,23 +230,40 @@ function getFinalRevenue(input: BaseSimulationInput) {
   return { salvageWisps, revenueSalvage, revenueSell };
 }
 
+export function getEffectiveCraftSuccessRate(
+  variants: number,
+  procRate: number,
+): number {
+  const variantSuccessRate = 1 / variants;
+  if (procRate <= 0) return variantSuccessRate;
+  return 1 - (1 - variantSuccessRate) * (1 - procRate);
+}
+
+function getGlowingProcChance(enabled: boolean | undefined): number {
+  return enabled ? GLOWING_PROC_RATE : 0;
+}
+
 function getBaseResult(
   input: BaseSimulationInput,
   totalCost: number,
   totalLabor: number,
+  successRate = 1 / variantsByTier[input.rngTier],
+  expectedAttempts = 1 / successRate,
+  glowingProcChance = 0,
 ): BaseSimulationResult {
   const variants = variantsByTier[input.rngTier];
-  const successRate = 1 / variants;
   const { salvageWisps, revenueSalvage, revenueSell } = getFinalRevenue(input);
 
   const profitSalvage = revenueSalvage - totalCost;
   const profitSell = revenueSell - totalCost;
-  const expectedValueSalvage = profitSalvage / variants;
-  const expectedValueSell = profitSell / variants;
+  const expectedValueSalvage = profitSalvage / expectedAttempts;
+  const expectedValueSell = profitSell / expectedAttempts;
 
   return {
     variants,
     successRate,
+    expectedAttempts,
+    glowingProcChance,
     totalCost,
     salvageWisps,
     revenueSalvage,
@@ -254,7 +283,12 @@ export function computeSalvageLoopSimulation(
   input: SalvageLoopSimulationInput,
 ): SalvageLoopSimulationResult {
   const variants = variantsByTier[input.rngTier];
-  const expectedAttempts = variants;
+  const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
+  const successRate = getEffectiveCraftSuccessRate(
+    variants,
+    glowingProcChance,
+  );
+  const expectedAttempts = 1 / successRate;
   const failedAttempts = expectedAttempts - 1;
 
   const expectedAttemptsCost = input.costPerAttempt * expectedAttempts;
@@ -284,9 +318,17 @@ export function computeSalvageLoopSimulation(
 
   return {
     strategy: "salvage",
-    ...getBaseResult(input, totalCost, totalLabor),
+    ...getBaseResult(
+      input,
+      totalCost,
+      totalLabor,
+      successRate,
+      expectedAttempts,
+      glowingProcChance,
+    ),
     costPerAttempt: input.costPerAttempt,
     expectedAttemptsCost,
+    failedAttempts,
     failSalvageWisps,
     failRecoveryPerAttempt,
     totalFailRecovery,
@@ -302,7 +344,13 @@ export function computeResealLoopSimulation(
   input: ResealLoopSimulationInput,
 ): ResealLoopSimulationResult {
   const variants = variantsByTier[input.rngTier];
-  const failedRetries = variants - 1;
+  const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
+  const successRate = getEffectiveCraftSuccessRate(
+    variants,
+    glowingProcChance,
+  );
+  const expectedAttempts = variants;
+  const failedRetries = (1 - successRate) * variants;
   const initialSetupCost = input.initialSeedCost + input.initialSealedCraftCost;
   const totalManaSealRetryCost = input.manaSealCost * failedRetries;
   const totalCost =
@@ -315,7 +363,14 @@ export function computeResealLoopSimulation(
 
   return {
     strategy: "reseal",
-    ...getBaseResult(input, totalCost, totalLabor),
+    ...getBaseResult(
+      input,
+      totalCost,
+      totalLabor,
+      successRate,
+      expectedAttempts,
+      glowingProcChance,
+    ),
     failedRetries,
     initialSeedCost: input.initialSeedCost,
     initialSealedCraftCost: input.initialSealedCraftCost,

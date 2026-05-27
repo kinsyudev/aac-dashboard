@@ -5,6 +5,7 @@ import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
+import { Checkbox } from "@acme/ui/checkbox";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
 import type {
@@ -136,6 +137,12 @@ interface ResealStrategyData {
 
 function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
+  });
 }
 
 function serializePriceMap(map: PriceMap) {
@@ -498,7 +505,7 @@ function collectCraftExecutionsForItem(
   );
   const produced =
     entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
-  const batches = Math.ceil(requiredUnits / produced);
+  const batches = requiredUnits / produced;
 
   const existing = acc.get(entry.craft.id);
   if (existing) existing.batches += batches;
@@ -570,7 +577,7 @@ function addSelectedCraftExecutionForUnits(
 ): number {
   const produced =
     entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
-  const batches = Math.ceil(requiredUnits / produced);
+  const batches = requiredUnits / produced;
   addCraftExecution(entry.craft, batches, proficiencyMap, acc);
   return batches;
 }
@@ -605,6 +612,7 @@ function SimulatorDetail() {
   const [localSalePrice, setLocalSalePrice] = useState("");
   const [activeStrategy, setActiveStrategy] =
     useState<SimulatorStrategy>("reseal");
+  const [glowingProcEnabled, setGlowingProcEnabled] = useState(false);
   const [debugCopyState, setDebugCopyState] = useState<string | null>(null);
 
   const priceMap: PriceMap = useMemo(
@@ -887,6 +895,7 @@ function SimulatorDetail() {
       laborPerAttempt,
       sealedUpgradeLabor,
       seedWispsPerAttempt,
+      glowingProcEnabled,
     });
 
     let reseal: ResealStrategyData = {
@@ -949,6 +958,7 @@ function SimulatorDetail() {
                 manaSealLabor,
                 sealedUpgradeCost,
                 sealedUpgradeLabor,
+                glowingProcEnabled,
               })
             : null,
         sealName: manaSealName,
@@ -989,6 +999,7 @@ function SimulatorDetail() {
     proficiencyMap,
     wisp,
     effectiveSalePrice,
+    glowingProcEnabled,
     ayanadCraft,
     ayanadSubcraftMap,
     manaSealCraft,
@@ -1018,7 +1029,8 @@ function SimulatorDetail() {
       attemptMaterials,
       upgradeMaterials,
     } = simulationData.base;
-    const attemptBatches = detailStrategy === "reseal" ? 1 : result.variants;
+    const attemptBatches =
+      detailStrategy === "reseal" ? 1 : result.expectedAttempts;
 
     if (chain.keyMaterialId) {
       collectCraftExecutionsForItem(
@@ -1244,6 +1256,7 @@ function SimulatorDetail() {
             ),
           }
         : null,
+      glowingProcEnabled,
       salvage: simulationData?.salvage ?? null,
       reseal: {
         result: reseal ?? null,
@@ -1263,7 +1276,8 @@ function SimulatorDetail() {
                 reseal.sealedUpgradeCost,
               totalEvSalvage: reseal.revenueSalvage - reseal.totalCost,
               evPerAttemptSalvage:
-                (reseal.revenueSalvage - reseal.totalCost) / reseal.variants,
+                (reseal.revenueSalvage - reseal.totalCost) /
+                reseal.expectedAttempts,
               silverPerLaborSalvage:
                 ((reseal.revenueSalvage - reseal.totalCost) * 100) /
                 reseal.totalLabor,
@@ -1329,7 +1343,7 @@ function SimulatorDetail() {
                     craft: mainCraft.craft.id,
                     qty: 1,
                     simItem: item.id,
-                    attempts: simulationData.reseal.result.failedRetries,
+                    attempts: simulationData.reseal.result.variants - 1,
                     strategy: "reseal",
                     sub: exportModes,
                   }}
@@ -1371,6 +1385,27 @@ function SimulatorDetail() {
           </span>
         </div>
       )}
+
+      {simulationData ? (
+        <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+          <Checkbox
+            checked={glowingProcEnabled}
+            onCheckedChange={(checked) =>
+              setGlowingProcEnabled(checked === true)
+            }
+            aria-label="Glowing proc"
+            className="mt-0.5"
+          />
+          <span className="flex min-w-0 flex-col gap-1">
+            <span className="text-sm font-medium">Glowing proc</span>
+            <span className="text-muted-foreground text-xs">
+              Adds an independent 1/20 house-crafting chance to make a sealed
+              Delphinad craft upgradable. Shoplist exports keep the existing
+              full attempt counts.
+            </span>
+          </span>
+        </label>
+      ) : null}
 
       {ayanadItem && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
@@ -1432,9 +1467,15 @@ function SimulatorDetail() {
               )}
               {detailResult && (
                 <p className="text-muted-foreground text-sm">
-                  Expected attempts:{" "}
+                  {detailStrategy === "reseal"
+                    ? "Expected failed retries: "
+                    : "Expected attempts: "}
                   <span className="text-foreground font-medium">
-                    ×{detailResult.variants}
+                    ×
+                    {detailStrategy === "reseal" &&
+                    "failedRetries" in detailResult
+                      ? formatCount(detailResult.failedRetries)
+                      : formatCount(detailResult.expectedAttempts)}
                   </span>
                 </p>
               )}
@@ -1464,10 +1505,10 @@ function SimulatorDetail() {
                 <div className="text-muted-foreground flex items-center gap-3 tabular-nums">
                   {craft.laborPerBatch > 0 && (
                     <span>
-                      {(craft.laborPerBatch * craft.batches).toLocaleString()}L
+                      {formatCount(craft.laborPerBatch * craft.batches)}L
                     </span>
                   )}
-                  <span>×{craft.batches.toLocaleString()}</span>
+                  <span>×{formatCount(craft.batches)}</span>
                 </div>
               </li>
             ))}
@@ -1776,14 +1817,22 @@ function StrategySummaryCard({
   title: string;
   result: SimulationResult;
 }) {
+  const successLabel =
+    result.glowingProcChance > 0
+      ? `${pct(result.successRate)} success`
+      : `1/${result.variants} (${pct(result.successRate)})`;
+
   return (
     <div className="rounded-md border p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="font-semibold">{title}</h3>
-        <span className="text-muted-foreground text-sm">
-          1/{result.variants} ({pct(result.successRate)})
-        </span>
+        <span className="text-muted-foreground text-sm">{successLabel}</span>
       </div>
+      {result.glowingProcChance > 0 ? (
+        <p className="text-muted-foreground mb-3 text-xs">
+          Includes {pct(result.glowingProcChance)} Glowing proc chance.
+        </p>
+      ) : null}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Total cost" value={gold(result.totalCost)} />
         <StatCard
@@ -1814,7 +1863,7 @@ function SalvageLoopDetails({
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       <StatCard label="Cost per attempt" value={gold(result.costPerAttempt)} />
       <StatCard
-        label={`Expected attempts (×${result.variants})`}
+        label={`Expected attempts (×${formatCount(result.expectedAttempts)})`}
         value={gold(result.expectedAttemptsCost)}
       />
       <StatCard
@@ -1845,20 +1894,20 @@ function SalvageLoopDetails({
         value={gold(result.sealedUpgradeCost)}
       />
       <StatCard
-        label={`Net fail recovery (×${result.variants - 1})`}
-        value={`${result.failSurplusWisps} × ${result.variants - 1} = ${gold(result.totalFailNetRecovery)}`}
+        label={`Net fail recovery (×${formatCount(result.failedAttempts)})`}
+        value={`${result.failSurplusWisps} × ${formatCount(result.failedAttempts)} = ${gold(result.totalFailNetRecovery)}`}
         variant="positive"
       />
       <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
       <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
       <StatCard
-        label={`Total EV (salvage ×${result.variants})`}
+        label={`Total EV (salvage ×${formatCount(result.expectedAttempts)})`}
         value={gold(result.profitSalvage)}
         variant={resultVariant(result.profitSalvage)}
       />
       <StatCard label="Revenue (sell)" value={gold(result.revenueSell)} />
       <StatCard
-        label={`Total EV (sell ×${result.variants})`}
+        label={`Total EV (sell ×${formatCount(result.expectedAttempts)})`}
         value={gold(result.profitSell)}
         variant={resultVariant(result.profitSell)}
       />
@@ -1892,7 +1941,7 @@ function ResealLoopDetails({
       />
       <StatCard label="Initial setup" value={gold(result.initialSetupCost)} />
       <StatCard
-        label={`Failed retries (×${result.failedRetries})`}
+        label={`Mana seal retries (×${formatCount(result.failedRetries)})`}
         value={gold(result.totalManaSealRetryCost)}
       />
       <StatCard label="Mana seal per fail" value={gold(result.manaSealCost)} />
@@ -1915,12 +1964,12 @@ function ResealLoopDetails({
         variant={resultVariant(result.expectedValueSell)}
       />
       <StatCard
-        label={`Total EV (salvage ×${result.variants})`}
+        label={`Total EV (salvage ×${formatCount(result.expectedAttempts)})`}
         value={gold(result.profitSalvage)}
         variant={resultVariant(result.profitSalvage)}
       />
       <StatCard
-        label={`Total EV (sell ×${result.variants})`}
+        label={`Total EV (sell ×${formatCount(result.expectedAttempts)})`}
         value={gold(result.profitSell)}
         variant={resultVariant(result.profitSell)}
       />
