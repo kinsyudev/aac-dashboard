@@ -284,10 +284,7 @@ export function computeSalvageLoopSimulation(
 ): SalvageLoopSimulationResult {
   const variants = variantsByTier[input.rngTier];
   const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
-  const successRate = getEffectiveCraftSuccessRate(
-    variants,
-    glowingProcChance,
-  );
+  const successRate = getEffectiveCraftSuccessRate(variants, glowingProcChance);
   const expectedAttempts = 1 / successRate;
   const failedAttempts = expectedAttempts - 1;
 
@@ -345,10 +342,7 @@ export function computeResealLoopSimulation(
 ): ResealLoopSimulationResult {
   const variants = variantsByTier[input.rngTier];
   const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
-  const successRate = getEffectiveCraftSuccessRate(
-    variants,
-    glowingProcChance,
-  );
+  const successRate = getEffectiveCraftSuccessRate(variants, glowingProcChance);
   const expectedAttempts = variants;
   const failedRetries = (1 - successRate) * variants;
   const initialSetupCost = input.initialSeedCost + input.initialSealedCraftCost;

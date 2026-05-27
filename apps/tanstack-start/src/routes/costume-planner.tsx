@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { cn } from "@acme/ui";
 import { Badge } from "@acme/ui/badge";
@@ -15,6 +15,7 @@ import {
 } from "@acme/ui/card";
 import { Checkbox } from "@acme/ui/checkbox";
 import { Input } from "@acme/ui/input";
+import { toast } from "@acme/ui/toast";
 
 import type {
   GearKind,
@@ -22,6 +23,7 @@ import type {
   PlannerMaterialId,
   PlannerPrices,
 } from "~/lib/costume-planner";
+import type { CostumePlannerState } from "~/lib/costume-planner-state";
 import {
   compareCurrentStrategy,
   getPlannerStats,
@@ -31,11 +33,18 @@ import {
   planOptimalStrategy,
   PRICE_LOOKUP_ITEM_NAMES,
 } from "~/lib/costume-planner";
+import {
+  normalizeCostumePlannerState,
+  parseCostumePlannerSearch,
+  serializeCostumePlannerSearch,
+} from "~/lib/costume-planner-state";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/costume-planner")({
+  validateSearch: (search) =>
+    serializeCostumePlannerSearch(parseCostumePlannerSearch(search)),
   head: () => ({
     meta: buildMetaTags({
       title: buildPageTitle("Costume Planner"),
@@ -43,9 +52,15 @@ export const Route = createFileRoute("/costume-planner")({
         "Plan ArcheAge Classic costume and undergarment upgrades, expected reroll cost, and restart decisions.",
     }),
   }),
-  loader: ({ context }) => {
+  loader: async ({ context }) => {
+    await context.queryClient.fetchQuery(
+      context.trpc.auth.requireMember.queryOptions(),
+    );
     void context.queryClient.prefetchQuery(
       context.trpc.items.byExactNames.queryOptions(PRICE_LOOKUP_ITEM_NAMES),
+    );
+    void context.queryClient.prefetchQuery(
+      context.trpc.profile.listCostumePlannerLoadouts.queryOptions(),
     );
   },
   component: CostumePlannerPage,
@@ -53,27 +68,35 @@ export const Route = createFileRoute("/costume-planner")({
 
 function CostumePlannerPage() {
   const trpc = useTRPC();
+  const navigate = useNavigate({ from: "/costume-planner" });
+  const queryClient = useQueryClient();
+  const search = Route.useSearch();
   const { overrideMap } = useUserData();
   const { data: priceRows = [] } = useQuery(
     trpc.items.byExactNames.queryOptions(PRICE_LOOKUP_ITEM_NAMES),
   );
-  const [kind, setKind] = useState<GearKind>("costume");
-  const [targetGrade, setTargetGrade] = useState<Grade>("mythic");
-  const [targetProgress, setTargetProgress] = useState(100);
-  const [targetStats, setTargetStats] = useState<string[]>([
-    "ranged-attack",
-    "ranged-critical-damage",
-    "ranged-skill-damage",
-    "ranged-critical-rate",
-    "defense-penetration",
-  ]);
-  const [currentEnabled, setCurrentEnabled] = useState(false);
-  const [currentGrade, setCurrentGrade] = useState<Grade>("legendary");
-  const [currentProgress, setCurrentProgress] = useState(0);
-  const [currentStats, setCurrentStats] = useState<string[]>([]);
-  const [serendipityOverride, setSerendipityOverride] = useState("");
-  const [currentItemValue, setCurrentItemValue] = useState("");
-  const [honorGoldPerThousand, setHonorGoldPerThousand] = useState("10");
+  const { data: savedLoadouts = [] } = useQuery(
+    trpc.profile.listCostumePlannerLoadouts.queryOptions(),
+  );
+  const plannerState = useMemo(
+    () => parseCostumePlannerSearch(search),
+    [search],
+  );
+  const {
+    currentEnabled,
+    currentGrade,
+    currentItemValue,
+    currentProgress,
+    currentStats,
+    honorGoldPerThousand,
+    kind,
+    serendipityOverride,
+    targetGrade,
+    targetProgress,
+    targetStats,
+  } = plannerState;
+  const [selectedLoadoutId, setSelectedLoadoutId] = useState("");
+  const [loadoutName, setLoadoutName] = useState("");
   const statOptions = useMemo(() => getPlannerStats(kind), [kind]);
   const currentStatOptions = statOptions;
   const honorRate = parseOptionalNumber(honorGoldPerThousand) ?? 10;
@@ -159,11 +182,97 @@ function CostumePlannerPage() {
   const conflict = subtype?.status === "conflict";
   const strategyCheckpoints =
     comparison?.strategyCheckpoints ?? route?.strategyCheckpoints ?? [];
+  const createLoadout = useMutation(
+    trpc.profile.createCostumePlannerLoadout.mutationOptions({
+      onSuccess: async (created) => {
+        await queryClient.invalidateQueries(
+          trpc.profile.listCostumePlannerLoadouts.pathFilter(),
+        );
+        setSelectedLoadoutId(created.id);
+        setLoadoutName(created.name);
+        toast.success("Loadout saved.");
+      },
+      onError: () => toast.error("Failed to save loadout."),
+    }),
+  );
+  const updateLoadout = useMutation(
+    trpc.profile.updateCostumePlannerLoadout.mutationOptions({
+      onSuccess: async (updated) => {
+        await queryClient.invalidateQueries(
+          trpc.profile.listCostumePlannerLoadouts.pathFilter(),
+        );
+        setSelectedLoadoutId(updated.id);
+        setLoadoutName(updated.name);
+        toast.success("Loadout updated.");
+      },
+      onError: () => toast.error("Failed to update loadout."),
+    }),
+  );
+  const selectedLoadout =
+    savedLoadouts.find((loadout) => loadout.id === selectedLoadoutId) ?? null;
 
   function resetForKind(nextKind: GearKind) {
-    setKind(nextKind);
-    setTargetStats([]);
-    setCurrentStats([]);
+    updatePlannerState({ kind: nextKind, targetStats: [], currentStats: [] });
+  }
+
+  function updatePlannerState(patch: Partial<CostumePlannerState>) {
+    void navigate({
+      search: (prev) =>
+        serializeCostumePlannerSearch({
+          ...parseCostumePlannerSearch(prev),
+          ...patch,
+        }),
+    });
+  }
+
+  function replacePlannerState(nextState: Partial<CostumePlannerState>) {
+    void navigate({
+      search: serializeCostumePlannerSearch(
+        normalizeCostumePlannerState(nextState),
+      ),
+    });
+  }
+
+  function saveAsNewLoadout() {
+    const name = loadoutName.trim();
+    if (!name) {
+      toast.error("Enter a loadout name.");
+      return;
+    }
+
+    createLoadout.mutate({ name, state: plannerState });
+  }
+
+  function updateSelectedLoadout() {
+    const trimmedName = loadoutName.trim();
+    const name =
+      trimmedName.length > 0
+        ? trimmedName
+        : (selectedLoadout?.name ?? "").trim();
+    if (!selectedLoadoutId || !name) {
+      toast.error("Select a saved loadout to update.");
+      return;
+    }
+
+    updateLoadout.mutate({ id: selectedLoadoutId, name, state: plannerState });
+  }
+
+  function loadSelectedLoadout() {
+    if (!selectedLoadout) {
+      toast.error("Select a saved loadout to load.");
+      return;
+    }
+
+    replacePlannerState(selectedLoadout.state);
+    setLoadoutName(selectedLoadout.name);
+    toast.success("Loadout loaded.");
+  }
+
+  function copyShareLink() {
+    void navigator.clipboard.writeText(window.location.href).then(
+      () => toast.success("Share link copied."),
+      () => toast.error("Failed to copy share link."),
+    );
   }
 
   return (
@@ -210,7 +319,9 @@ function CostumePlannerPage() {
                   <select
                     value={targetGrade}
                     onChange={(event) =>
-                      setTargetGrade(event.target.value as Grade)
+                      updatePlannerState({
+                        targetGrade: event.target.value as Grade,
+                      })
                     }
                     className={selectClassName}
                   >
@@ -228,7 +339,9 @@ function CostumePlannerPage() {
                     max={100}
                     value={targetProgress}
                     onChange={(event) =>
-                      setTargetProgress(clampNumber(event.target.value, 0, 100))
+                      updatePlannerState({
+                        targetProgress: clampNumber(event.target.value, 0, 100),
+                      })
                     }
                   />
                 </Field>
@@ -238,7 +351,9 @@ function CostumePlannerPage() {
                     min={0}
                     value={honorGoldPerThousand}
                     onChange={(event) =>
-                      setHonorGoldPerThousand(event.target.value)
+                      updatePlannerState({
+                        honorGoldPerThousand: event.target.value,
+                      })
                     }
                   />
                 </Field>
@@ -248,7 +363,9 @@ function CostumePlannerPage() {
                 options={statOptions}
                 selected={targetStats}
                 onToggle={(statId) =>
-                  setTargetStats((prev) => toggleStat(prev, statId))
+                  updatePlannerState({
+                    targetStats: toggleStat(targetStats, statId),
+                  })
                 }
                 max={5}
               />
@@ -270,7 +387,9 @@ function CostumePlannerPage() {
                 <Button
                   type="button"
                   variant={currentEnabled ? "default" : "outline"}
-                  onClick={() => setCurrentEnabled((value) => !value)}
+                  onClick={() =>
+                    updatePlannerState({ currentEnabled: !currentEnabled })
+                  }
                 >
                   {currentEnabled ? "Enabled" : "Enable"}
                 </Button>
@@ -283,7 +402,9 @@ function CostumePlannerPage() {
                     <select
                       value={currentGrade}
                       onChange={(event) =>
-                        setCurrentGrade(event.target.value as Grade)
+                        updatePlannerState({
+                          currentGrade: event.target.value as Grade,
+                        })
                       }
                       className={selectClassName}
                     >
@@ -301,9 +422,13 @@ function CostumePlannerPage() {
                       max={100}
                       value={currentProgress}
                       onChange={(event) =>
-                        setCurrentProgress(
-                          clampNumber(event.target.value, 0, 100),
-                        )
+                        updatePlannerState({
+                          currentProgress: clampNumber(
+                            event.target.value,
+                            0,
+                            100,
+                          ),
+                        })
                       }
                     />
                   </Field>
@@ -314,7 +439,9 @@ function CostumePlannerPage() {
                       placeholder="Market"
                       value={serendipityOverride}
                       onChange={(event) =>
-                        setSerendipityOverride(event.target.value)
+                        updatePlannerState({
+                          serendipityOverride: event.target.value,
+                        })
                       }
                     />
                   </Field>
@@ -325,7 +452,9 @@ function CostumePlannerPage() {
                       placeholder="Optional"
                       value={currentItemValue}
                       onChange={(event) =>
-                        setCurrentItemValue(event.target.value)
+                        updatePlannerState({
+                          currentItemValue: event.target.value,
+                        })
                       }
                     />
                   </Field>
@@ -335,7 +464,9 @@ function CostumePlannerPage() {
                   options={currentStatOptions}
                   selected={currentStats}
                   onToggle={(statId) =>
-                    setCurrentStats((prev) => toggleStat(prev, statId))
+                    updatePlannerState({
+                      currentStats: toggleStat(currentStats, statId),
+                    })
                   }
                   max={5}
                 />
@@ -345,6 +476,77 @@ function CostumePlannerPage() {
         </div>
 
         <aside className="flex flex-col gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Saved loadouts</CardTitle>
+              <CardDescription>
+                Save named costume and undergarment planner snapshots.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <Field label="Loadout">
+                <select
+                  value={selectedLoadoutId}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    const nextLoadout =
+                      savedLoadouts.find((loadout) => loadout.id === nextId) ??
+                      null;
+                    setSelectedLoadoutId(nextId);
+                    setLoadoutName(nextLoadout?.name ?? "");
+                  }}
+                  className={selectClassName}
+                >
+                  <option value="">Select saved loadout</option>
+                  {savedLoadouts.map((loadout) => (
+                    <option key={loadout.id} value={loadout.id}>
+                      {loadout.name} ({formatKind(loadout.kind)})
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Name">
+                <Input
+                  value={loadoutName}
+                  maxLength={120}
+                  placeholder="e.g. Ranged mythic costume"
+                  onChange={(event) => setLoadoutName(event.target.value)}
+                />
+              </Field>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  onClick={saveAsNewLoadout}
+                  loading={createLoadout.isPending}
+                  loadingText="Saving..."
+                >
+                  Save as new
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!selectedLoadoutId}
+                  onClick={updateSelectedLoadout}
+                  loading={updateLoadout.isPending}
+                  loadingText="Updating..."
+                >
+                  Update saved
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!selectedLoadoutId}
+                  onClick={loadSelectedLoadout}
+                >
+                  Load
+                </Button>
+                <Button type="button" variant="outline" onClick={copyShareLink}>
+                  Copy share link
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Recommendation</CardTitle>
@@ -662,6 +864,10 @@ function clampNumber(value: string, min: number, max: number): number {
 
 function formatGrade(grade: Grade): string {
   return capitalize(grade);
+}
+
+function formatKind(kind: GearKind): string {
+  return kind === "costume" ? "Costume" : "Undergarment";
 }
 
 function capitalize(value: string): string {

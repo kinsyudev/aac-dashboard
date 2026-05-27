@@ -273,3 +273,36 @@ export const userProficienciesRelations = relations(
     }),
   }),
 );
+
+export const userCostumePlannerLoadouts = pgTable(
+  "user_costume_planner_loadouts",
+  (t) => ({
+    id: t.uuid().primaryKey().defaultRandom(),
+    userId: t
+      .text()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: t.text().notNull(),
+    kind: t.text().notNull(),
+    state: t.jsonb().$type<Record<string, unknown>>().notNull(),
+    createdAt: t.timestamp().notNull().defaultNow(),
+    updatedAt: t.timestamp().notNull().defaultNow(),
+  }),
+  (table) => [
+    index("idx_user_costume_planner_loadouts_user").on(table.userId),
+    index("idx_user_costume_planner_loadouts_user_kind").on(
+      table.userId,
+      table.kind,
+    ),
+  ],
+);
+
+export const userCostumePlannerLoadoutsRelations = relations(
+  userCostumePlannerLoadouts,
+  ({ one }) => ({
+    user: one(user, {
+      fields: [userCostumePlannerLoadouts.userId],
+      references: [user.id],
+    }),
+  }),
+);
