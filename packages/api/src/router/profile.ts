@@ -39,6 +39,12 @@ const costumePlannerStateSchema = z.object({
   serendipityOverride: z.string(),
   currentItemValue: z.string(),
   honorGoldPerThousand: z.string(),
+  craftedSerendipities: z.boolean().default(false),
+  boundSynthiumForEpicPlus: z.boolean().default(false),
+  serendipityCraftModes: z
+    .record(z.string(), z.enum(["buy", "craft"]))
+    .default({}),
+  serendipitySelectedCrafts: z.record(z.string(), z.number().int()).default({}),
 });
 
 const loadoutNameSchema = z.string().trim().min(1).max(120);

@@ -20,12 +20,27 @@ import { toast } from "@acme/ui/toast";
 import type {
   GearKind,
   Grade,
+  MaterialPricingOptions,
   PlannerMaterialId,
   PlannerPrices,
 } from "~/lib/costume-planner";
 import type { CostumePlannerState } from "~/lib/costume-planner-state";
+import type {
+  ModesMap,
+  PriceMap,
+  SelectedCraftMap,
+} from "~/lib/craft-optimizer";
+import { ItemIcon } from "~/component/item-icon";
+import {
+  CraftModeToggle,
+  RecipeCardShell,
+  RecipeCollapseToggle,
+  RecipeHeader,
+  RecipeItemRow,
+} from "~/component/recipe-breakdown";
 import {
   compareCurrentStrategy,
+  getBoundRadiantSynthiumStonePrice,
   getPlannerStats,
   GRADES,
   MATERIAL_LABELS,
@@ -38,9 +53,20 @@ import {
   parseCostumePlannerSearch,
   serializeCostumePlannerSearch,
 } from "~/lib/costume-planner-state";
+import {
+  computeManualCraftMetrics,
+  getItemPrice,
+  getSelectedEntry,
+  MAX_CRAFT_DEPTH,
+} from "~/lib/craft-optimizer";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
+
+const SERENDIPITY_ITEM_ID = 8001000;
+const SERENDIPITY_CRAFT_ID = 9000059;
+const COIN_ITEM_ID = 500;
+const COIN_GOLD_VALUE = 1 / 10000;
 
 export const Route = createFileRoute("/costume-planner")({
   validateSearch: (search) =>
@@ -71,7 +97,7 @@ function CostumePlannerPage() {
   const navigate = useNavigate({ from: "/costume-planner" });
   const queryClient = useQueryClient();
   const search = Route.useSearch();
-  const { overrideMap } = useUserData();
+  const { overrideMap, proficiencyMap } = useUserData();
   const { data: priceRows = [] } = useQuery(
     trpc.items.byExactNames.queryOptions(PRICE_LOOKUP_ITEM_NAMES),
   );
@@ -88,18 +114,65 @@ function CostumePlannerPage() {
     currentItemValue,
     currentProgress,
     currentStats,
+    boundSynthiumForEpicPlus,
+    craftedSerendipities,
     honorGoldPerThousand,
     kind,
     serendipityOverride,
+    serendipityCraftModes,
+    serendipitySelectedCrafts,
     targetGrade,
     targetProgress,
     targetStats,
   } = plannerState;
+  const serendipityCraftQuery = useQuery({
+    ...trpc.crafts.forItem.queryOptions(SERENDIPITY_ITEM_ID),
+    enabled: craftedSerendipities,
+  });
   const [selectedLoadoutId, setSelectedLoadoutId] = useState("");
   const [loadoutName, setLoadoutName] = useState("");
   const statOptions = useMemo(() => getPlannerStats(kind), [kind]);
   const currentStatOptions = statOptions;
   const honorRate = parseOptionalNumber(honorGoldPerThousand) ?? 10;
+  const serendipityCraftData = serendipityCraftQuery.data ?? null;
+  const serendipityPriceMap = useMemo<PriceMap>(
+    () => buildPriceMap(serendipityCraftData?.prices ?? []),
+    [serendipityCraftData],
+  );
+  const serendipityCraftEntry = useMemo(
+    () =>
+      serendipityCraftData?.crafts.find(
+        (entry) => entry.craft.id === SERENDIPITY_CRAFT_ID,
+      ) ?? null,
+    [serendipityCraftData],
+  );
+  const serendipityCraftCost = useMemo(() => {
+    if (!craftedSerendipities || !serendipityCraftEntry) return null;
+
+    return computeManualCraftMetrics(
+      serendipityCraftEntry,
+      SERENDIPITY_ITEM_ID,
+      0,
+      {
+        subcraftMap: serendipityCraftData?.subcraftsByItemId ?? {},
+        priceMap: serendipityPriceMap,
+        overrideMap,
+        proficiencyMap,
+        maxDepth: MAX_CRAFT_DEPTH,
+      },
+      serendipityCraftModes,
+      serendipitySelectedCrafts,
+    ).costPerUnit;
+  }, [
+    craftedSerendipities,
+    overrideMap,
+    proficiencyMap,
+    serendipityCraftData,
+    serendipityCraftEntry,
+    serendipityCraftModes,
+    serendipityPriceMap,
+    serendipitySelectedCrafts,
+  ]);
   const prices = useMemo<PlannerPrices>(() => {
     const byName = new Map(priceRows.map((row) => [row.item.name, row]));
     const next: PlannerPrices = {};
@@ -117,12 +190,22 @@ function CostumePlannerPage() {
     }
 
     const customSerendipity = parseOptionalNumber(serendipityOverride);
-    if (customSerendipity != null) {
+    if (!craftedSerendipities && customSerendipity != null) {
       next.serendipityStone = customSerendipity;
     }
 
     return next;
-  }, [overrideMap, priceRows, serendipityOverride]);
+  }, [craftedSerendipities, overrideMap, priceRows, serendipityOverride]);
+  const materialPricing = useMemo<MaterialPricingOptions>(
+    () => ({
+      boundSynthiumForEpicPlus,
+      serendipityStonePrice:
+        craftedSerendipities && serendipityCraftCost != null
+          ? serendipityCraftCost
+          : undefined,
+    }),
+    [boundSynthiumForEpicPlus, craftedSerendipities, serendipityCraftCost],
+  );
   const route = useMemo(
     () =>
       targetStats.length > 0
@@ -133,9 +216,18 @@ function CostumePlannerPage() {
             desiredStatIds: targetStats,
             prices,
             honorGoldPerThousand: honorRate,
+            materialPricing,
           })
         : null,
-    [honorRate, kind, prices, targetGrade, targetProgress, targetStats],
+    [
+      honorRate,
+      kind,
+      materialPricing,
+      prices,
+      targetGrade,
+      targetProgress,
+      targetStats,
+    ],
   );
   const comparison = useMemo(() => {
     if (!currentEnabled || targetStats.length === 0) return null;
@@ -153,6 +245,7 @@ function CostumePlannerPage() {
       },
       prices,
       honorGoldPerThousand: honorRate,
+      materialPricing,
     });
   }, [
     currentEnabled,
@@ -162,6 +255,7 @@ function CostumePlannerPage() {
     currentStats,
     honorRate,
     kind,
+    materialPricing,
     prices,
     targetGrade,
     targetProgress,
@@ -177,6 +271,8 @@ function CostumePlannerPage() {
       ? comparison.baseItemCost
       : 0
     : (route?.baseItemCost ?? 0);
+  const activeSerendipityUnitCost =
+    materialPricing.serendipityStonePrice ?? prices.serendipityStone ?? 0;
   const restartCost = comparison?.restartCost ?? null;
   const subtype = comparison?.subtype ?? route?.subtype ?? null;
   const conflict = subtype?.status === "conflict";
@@ -358,6 +454,51 @@ function CostumePlannerPage() {
                   />
                 </Field>
               </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <PlannerOptionToggle
+                  checked={craftedSerendipities}
+                  label="Crafted Serendipities"
+                  description="Use craft 9000059 for Serendipity Stone reroll cost."
+                  onToggle={() =>
+                    updatePlannerState({
+                      craftedSerendipities: !craftedSerendipities,
+                    })
+                  }
+                />
+                <PlannerOptionToggle
+                  checked={boundSynthiumForEpicPlus}
+                  label="Bound Synthium for Epic+"
+                  description="Price Radiant Synthium through the bound Radiant recipe."
+                  onToggle={() =>
+                    updatePlannerState({
+                      boundSynthiumForEpicPlus: !boundSynthiumForEpicPlus,
+                    })
+                  }
+                />
+              </div>
+
+              {craftedSerendipities ? (
+                <SerendipityRecipeSelector
+                  entry={serendipityCraftEntry}
+                  loading={serendipityCraftQuery.isLoading}
+                  priceMap={serendipityPriceMap}
+                  overrideMap={overrideMap}
+                  proficiencyMap={proficiencyMap}
+                  subcraftMap={serendipityCraftData?.subcraftsByItemId ?? {}}
+                  modes={serendipityCraftModes}
+                  selectedCrafts={serendipitySelectedCrafts}
+                  unitCost={serendipityCraftCost}
+                  setModes={(nextModes) =>
+                    updatePlannerState({ serendipityCraftModes: nextModes })
+                  }
+                  setSelectedCrafts={(nextSelectedCrafts) =>
+                    updatePlannerState({
+                      serendipitySelectedCrafts: nextSelectedCrafts,
+                    })
+                  }
+                />
+              ) : null}
 
               <StatPicker
                 options={statOptions}
@@ -620,6 +761,12 @@ function CostumePlannerPage() {
                 <CostLine label="Materials" value={activeCost.materialCost} />
                 <CostLine label="Craft gold" value={activeCost.craftGold} />
                 <CostLine label="Rerolls" value={activeCost.rerollCost} />
+                <CostLine
+                  label={
+                    craftedSerendipities ? "Crafted Serendipity" : "Serendipity"
+                  }
+                  value={activeSerendipityUnitCost}
+                />
                 {activeBaseItemCost > 0 ? (
                   <CostLine
                     label="Fresh base item"
@@ -724,7 +871,11 @@ function CostumePlannerPage() {
                       </div>
                       <p className="text-sm font-medium">
                         {formatGold(
-                          (prices[material.id] ?? 0) * material.amount,
+                          getPlannerMaterialUnitPrice(
+                            material.id,
+                            prices,
+                            materialPricing,
+                          ) * material.amount,
                         )}
                       </p>
                     </li>
@@ -746,12 +897,321 @@ function CostumePlannerPage() {
 const selectClassName =
   "border-input bg-background h-9 w-full rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]";
 
+interface PlannerRecipeItem {
+  id: number;
+  name: string;
+  icon?: string | null;
+}
+
+interface PlannerRecipeEntry {
+  craft: {
+    id: number;
+    name: string;
+    labor: number;
+    proficiency: string | null;
+  };
+  materials: { amount: number; item: PlannerRecipeItem }[];
+  products: { amount: number; item: { id: number } }[];
+}
+
+type PlannerSubcraftMap = Record<number, PlannerRecipeEntry[]>;
+
 function Field({ children, label }: { children: ReactNode; label: string }) {
   return (
     <label className="flex flex-col gap-2 text-sm font-medium">
       {label}
       {children}
     </label>
+  );
+}
+
+function PlannerOptionToggle({
+  checked,
+  description,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  description: string;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        "hover:bg-muted/60 flex min-h-16 items-start gap-3 rounded-md border px-3 py-2 text-left transition-colors",
+        checked && "border-primary bg-primary/10",
+      )}
+    >
+      <Checkbox checked={checked} tabIndex={-1} aria-hidden />
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-muted-foreground text-xs leading-5">
+          {description}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function SerendipityRecipeSelector({
+  entry,
+  loading,
+  modes,
+  overrideMap,
+  priceMap,
+  proficiencyMap,
+  selectedCrafts,
+  setModes,
+  setSelectedCrafts,
+  subcraftMap,
+  unitCost,
+}: {
+  entry: PlannerRecipeEntry | null;
+  loading: boolean;
+  priceMap: PriceMap;
+  overrideMap: Map<number, number>;
+  proficiencyMap: Map<string, number>;
+  subcraftMap: PlannerSubcraftMap;
+  modes: ModesMap;
+  selectedCrafts: SelectedCraftMap;
+  unitCost: number | null;
+  setModes: (modes: ModesMap) => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
+}) {
+  const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+
+  function toggleCollapsed(craftId: number) {
+    setCollapsedCraftIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(craftId)) next.delete(craftId);
+      else next.add(craftId);
+      return next;
+    });
+  }
+
+  if (loading) {
+    return (
+      <div className="text-muted-foreground rounded-md border p-3 text-sm">
+        Loading Serendipity recipe...
+      </div>
+    );
+  }
+
+  if (!entry) {
+    return (
+      <div className="text-destructive rounded-md border p-3 text-sm">
+        Serendipity Stone craft 9000059 is unavailable.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Serendipity craft cost</p>
+          <p className="text-muted-foreground text-xs">
+            Top-level craft is locked to craft 9000059.
+          </p>
+        </div>
+        <Badge variant="secondary">
+          {unitCost == null ? "No cost" : `${formatGold(unitCost)} each`}
+        </Badge>
+      </div>
+      <SerendipityRecipeTree
+        entry={entry}
+        producedItemId={SERENDIPITY_ITEM_ID}
+        priceMap={priceMap}
+        overrideMap={overrideMap}
+        proficiencyMap={proficiencyMap}
+        subcraftMap={subcraftMap}
+        modes={modes}
+        selectedCrafts={selectedCrafts}
+        setModes={setModes}
+        setSelectedCrafts={setSelectedCrafts}
+        collapsedCraftIds={collapsedCraftIds}
+        toggleCollapsed={toggleCollapsed}
+      />
+    </div>
+  );
+}
+
+function SerendipityRecipeTree({
+  collapsedCraftIds,
+  depth = 0,
+  entry,
+  modes,
+  overrideMap,
+  priceMap,
+  producedItemId,
+  proficiencyMap,
+  selectedCrafts,
+  setModes,
+  setSelectedCrafts,
+  subcraftMap,
+  toggleCollapsed,
+}: {
+  entry: PlannerRecipeEntry;
+  producedItemId: number;
+  priceMap: PriceMap;
+  overrideMap: Map<number, number>;
+  proficiencyMap: Map<string, number>;
+  subcraftMap: PlannerSubcraftMap;
+  modes: ModesMap;
+  selectedCrafts: SelectedCraftMap;
+  setModes: (modes: ModesMap) => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
+  collapsedCraftIds: Set<number>;
+  toggleCollapsed: (craftId: number) => void;
+  depth?: number;
+}) {
+  const isCollapsed = collapsedCraftIds.has(entry.craft.id);
+  const metrics = computeManualCraftMetrics(
+    entry,
+    producedItemId,
+    0,
+    {
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      proficiencyMap,
+      maxDepth: MAX_CRAFT_DEPTH,
+    },
+    modes,
+    selectedCrafts,
+    depth,
+  );
+
+  return (
+    <RecipeCardShell depth={depth}>
+      <RecipeHeader
+        depth={depth}
+        title={entry.craft.name}
+        proficiency={entry.craft.proficiency}
+        laborLabel={entry.craft.labor > 0 ? `${entry.craft.labor} labor` : null}
+        materialsLabel={formatGold(metrics.materialsCost)}
+        collapseToggle={
+          <RecipeCollapseToggle
+            collapsed={isCollapsed}
+            onToggle={() => toggleCollapsed(entry.craft.id)}
+          />
+        }
+      />
+      {isCollapsed ? null : (
+        <ul className="flex flex-col gap-1">
+          {entry.materials.map(({ amount, item }) => {
+            const subEntries =
+              depth < MAX_CRAFT_DEPTH ? (subcraftMap[item.id] ?? []) : [];
+            const isCraftable = subEntries.length > 0;
+            const mode = modes[item.id] ?? "buy";
+            const selectedSubEntry = isCraftable
+              ? getSelectedEntry(item.id, subcraftMap, selectedCrafts)
+              : null;
+            const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
+            const craftUnit = selectedSubEntry
+              ? computeManualCraftMetrics(
+                  selectedSubEntry,
+                  item.id,
+                  0,
+                  {
+                    subcraftMap,
+                    priceMap,
+                    overrideMap,
+                    proficiencyMap,
+                    maxDepth: MAX_CRAFT_DEPTH,
+                  },
+                  modes,
+                  selectedCrafts,
+                  depth + 1,
+                ).costPerUnit
+              : 0;
+            const unit =
+              mode === "craft" && selectedSubEntry ? craftUnit : buyUnit;
+            const lineTotal = unit * amount;
+
+            return (
+              <li key={item.id} className="flex flex-col gap-1">
+                <RecipeItemRow
+                  icon={<ItemIcon icon={item.icon ?? null} name={item.name} />}
+                  name={item.name}
+                  amount={amount}
+                  controls={
+                    isCraftable ? (
+                      <div className="flex items-center gap-2">
+                        {subEntries.length > 1 ? (
+                          <select
+                            value={selectedSubEntry?.craft.id ?? ""}
+                            onChange={(event) =>
+                              setSelectedCrafts({
+                                ...selectedCrafts,
+                                [item.id]: Number(event.target.value),
+                              })
+                            }
+                            className={cn(selectClassName, "h-8 w-40")}
+                          >
+                            {subEntries.map((subEntry) => (
+                              <option
+                                key={subEntry.craft.id}
+                                value={subEntry.craft.id}
+                              >
+                                {subEntry.craft.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : null}
+                        <CraftModeToggle
+                          mode={mode}
+                          onBuy={() => setModes({ ...modes, [item.id]: "buy" })}
+                          onCraft={() =>
+                            setModes({ ...modes, [item.id]: "craft" })
+                          }
+                        />
+                      </div>
+                    ) : null
+                  }
+                  value={
+                    <span className="text-muted-foreground shrink-0 tabular-nums">
+                      <span className="text-foreground/70">
+                        {formatGold(unit)}
+                      </span>
+                      {amount > 1 ? (
+                        <span className="text-foreground ml-1.5 font-medium">
+                          = {formatGold(lineTotal)}
+                        </span>
+                      ) : null}
+                    </span>
+                  }
+                />
+                {mode === "craft" && selectedSubEntry ? (
+                  <div className="border-muted-foreground/20 ml-3 border-l-2 pl-3">
+                    <SerendipityRecipeTree
+                      entry={selectedSubEntry}
+                      producedItemId={item.id}
+                      priceMap={priceMap}
+                      overrideMap={overrideMap}
+                      proficiencyMap={proficiencyMap}
+                      subcraftMap={subcraftMap}
+                      modes={modes}
+                      selectedCrafts={selectedCrafts}
+                      setModes={setModes}
+                      setSelectedCrafts={setSelectedCrafts}
+                      collapsedCraftIds={collapsedCraftIds}
+                      toggleCollapsed={toggleCollapsed}
+                      depth={depth + 1}
+                    />
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </RecipeCardShell>
   );
 }
 
@@ -848,6 +1308,45 @@ function getMarketPrice(
     parseOptionalNumber(price?.avg7d ?? "") ??
     parseOptionalNumber(price?.avg30d ?? "")
   );
+}
+
+function getPlannerMaterialUnitPrice(
+  materialId: PlannerMaterialId,
+  prices: PlannerPrices,
+  materialPricing: MaterialPricingOptions,
+): number {
+  if (
+    materialId === "radiantSynthiumStone" &&
+    materialPricing.boundSynthiumForEpicPlus
+  ) {
+    return getBoundRadiantSynthiumStonePrice(prices);
+  }
+  if (
+    materialId === "serendipityStone" &&
+    materialPricing.serendipityStonePrice != null
+  ) {
+    return materialPricing.serendipityStonePrice;
+  }
+  return prices[materialId] ?? 0;
+}
+
+function buildPriceMap(
+  prices: {
+    itemId: number;
+    avg24h: string | null;
+    avg7d: string | null;
+    avg30d: string | null;
+  }[],
+): PriceMap {
+  const priceMap: PriceMap = new Map(
+    prices.map((price) => [price.itemId, price]),
+  );
+  priceMap.set(COIN_ITEM_ID, {
+    avg24h: String(COIN_GOLD_VALUE),
+    avg7d: null,
+    avg30d: null,
+  });
+  return priceMap;
 }
 
 function parseOptionalNumber(value: string): number | null {

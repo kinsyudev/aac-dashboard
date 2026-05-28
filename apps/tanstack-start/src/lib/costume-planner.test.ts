@@ -126,6 +126,36 @@ void test("backstab rolls are available from grand for costumes and undergarment
   assert.ok(undergarmentGrand.includes("backstab-melee-damage"));
 });
 
+void test("only attack and healing power stats are exclusive to the selected subtype", () => {
+  const meleeCostumeArcane = getAvailableStatIds("costume", "arcane", "melee");
+  const meleeCostumeDivine = getAvailableStatIds("costume", "divine", "melee");
+  const meleeUndergarmentDivine = getAvailableStatIds(
+    "undergarment",
+    "divine",
+    "melee",
+  );
+
+  assert.ok(meleeCostumeArcane.includes("melee-attack"));
+  assert.equal(meleeCostumeArcane.includes("magic-attack"), false);
+  assert.equal(meleeCostumeArcane.includes("ranged-attack"), false);
+  assert.equal(meleeCostumeArcane.includes("healing-power"), false);
+
+  assert.ok(meleeCostumeDivine.includes("magic-critical-damage"));
+  assert.ok(meleeCostumeDivine.includes("ranged-critical-damage"));
+  assert.ok(meleeCostumeDivine.includes("critical-heal-bonus"));
+
+  assert.ok(meleeUndergarmentDivine.includes("magic-skill-damage"));
+  assert.ok(meleeUndergarmentDivine.includes("ranged-skill-damage"));
+  assert.ok(meleeUndergarmentDivine.includes("healing"));
+});
+
+void test("non-exclusive typed stats do not infer a planner subtype", () => {
+  assert.deepEqual(inferSubtype(["ranged-critical-damage"]), {
+    status: "any",
+    subtype: "any",
+  });
+});
+
 void test("infers ranged subtype from ranged offensive stats", () => {
   assert.deepEqual(inferSubtype(["ranged-attack", "ranged-critical-damage"]), {
     status: "inferred",
@@ -295,10 +325,79 @@ void test("restart-aware comparison continues when target stats are already kept
   assert.ok(strategy.continueCost.totalCost < strategy.restartCost.totalCost);
 });
 
+void test("crafted serendipity price replaces the market reroll price", () => {
+  const marketRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "arcane",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+  });
+  const craftedRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "arcane",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+    materialPricing: { serendipityStonePrice: 42 },
+  });
+
+  assert.equal(marketRoute.targetCost.rerollCost, 4800);
+  assert.equal(craftedRoute.targetCost.expectedRerolls, 16);
+  assert.equal(craftedRoute.targetCost.rerollCost, 672);
+});
+
+void test("bound synthium pricing changes radiant synthesis without changing lucid synthesis", () => {
+  const epicMarketRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "epic",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+  });
+  const epicBoundRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "epic",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+    materialPricing: { boundSynthiumForEpicPlus: true },
+  });
+  const mythicMarketRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+  });
+  const mythicBoundRoute = planTargetRoute({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+    materialPricing: { boundSynthiumForEpicPlus: true },
+  });
+
+  assert.equal(
+    epicBoundRoute.targetCost.materialCost,
+    epicMarketRoute.targetCost.materialCost,
+  );
+  assert.equal(
+    mythicMarketRoute.targetCost.materialCost -
+      mythicBoundRoute.targetCost.materialCost,
+    44 * (80 - 25),
+  );
+});
+
 void test("costume planner state defaults match the route defaults", () => {
   assert.deepEqual(normalizeCostumePlannerState({}), {
     ...DEFAULT_COSTUME_PLANNER_STATE,
   });
+  assert.equal(DEFAULT_COSTUME_PLANNER_STATE.craftedSerendipities, false);
+  assert.equal(DEFAULT_COSTUME_PLANNER_STATE.boundSynthiumForEpicPlus, false);
+  assert.deepEqual(DEFAULT_COSTUME_PLANNER_STATE.serendipityCraftModes, {});
+  assert.deepEqual(DEFAULT_COSTUME_PLANNER_STATE.serendipitySelectedCrafts, {});
 });
 
 void test("costume planner state clamps numbers and filters stats for selected kind", () => {
@@ -348,11 +447,32 @@ void test("costume planner search serialization round-trips full planner state",
     serendipityOverride: "123.45",
     currentItemValue: "88",
     honorGoldPerThousand: "12.5",
+    craftedSerendipities: true,
+    boundSynthiumForEpicPlus: true,
+    serendipityCraftModes: { 16323: "craft", 19410: "buy" },
+    serendipitySelectedCrafts: { 16323: 118, 19410: 4297 },
   });
 
   const serialized = serializeCostumePlannerSearch(state);
 
   assert.deepEqual(parseCostumePlannerSearch(serialized), state);
+  assert.deepEqual(serialized, {
+    k: "undergarment",
+    tg: "legendary",
+    tp: 75,
+    ts: "ranged-attack,ranged-critical-rate",
+    ce: true,
+    cg: "unique",
+    cp: 25,
+    cs: "max-health",
+    sp: "123.45",
+    cv: "88",
+    h: "12.5",
+    cse: true,
+    bse: true,
+    scm: "16323:craft,19410:buy",
+    scs: "16323:118,19410:4297",
+  });
 });
 
 function assertStatPool(

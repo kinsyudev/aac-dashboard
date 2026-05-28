@@ -53,6 +53,11 @@ export interface BaseItemCostOptions {
   honorGoldPerThousand?: number;
 }
 
+export interface MaterialPricingOptions {
+  boundSynthiumForEpicPlus?: boolean;
+  serendipityStonePrice?: number;
+}
+
 export interface CostBreakdown {
   materialCost: number;
   craftGold: number;
@@ -215,6 +220,7 @@ export function estimateBaseItemCost({
 export function planTargetRoute({
   desiredStatIds,
   kind,
+  materialPricing,
   prices,
   targetGrade,
   targetProgress,
@@ -224,10 +230,15 @@ export function planTargetRoute({
   targetProgress: number;
   desiredStatIds: string[];
   prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
 }): TargetRoute {
   const subtype = inferSubtype(desiredStatIds);
   const plannerSubtype = resolvePlannerSubtype(subtype);
-  const serendipityPrice = getMaterialPrice("serendipityStone", prices);
+  const serendipityPrice = getMaterialPrice(
+    "serendipityStone",
+    prices,
+    materialPricing,
+  );
   const kept: string[] = [];
   const checkpoints: RouteCheckpoint[] = [];
   let expectedRerolls = 0;
@@ -268,7 +279,11 @@ export function planTargetRoute({
     targetGrade,
     targetProgress,
   );
-  const materialCost = getMaterialCost(synthesis.materials, prices);
+  const materialCost = getMaterialCost(
+    synthesis.materials,
+    prices,
+    materialPricing,
+  );
   const rerollCost = expectedRerolls * serendipityPrice;
 
   return {
@@ -293,12 +308,14 @@ export function planOptimalStrategy({
   prices,
   targetGrade,
   targetProgress,
+  materialPricing,
 }: {
   kind: GearKind;
   targetGrade: Grade;
   targetProgress: number;
   desiredStatIds: string[];
   prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
 } & BaseItemCostOptions): OptimalStrategyRoute {
   const route = planTargetRoute({
     kind,
@@ -306,6 +323,7 @@ export function planOptimalStrategy({
     targetProgress,
     desiredStatIds,
     prices,
+    materialPricing,
   });
   const baseItemCost = estimateBaseItemCost({
     kind,
@@ -321,7 +339,11 @@ export function planOptimalStrategy({
     strategyCheckpoints: buildStrategyCheckpoints({
       baseRoute: route,
       baseItemCost,
-      serendipityPrice: getMaterialPrice("serendipityStone", prices),
+      serendipityPrice: getMaterialPrice(
+        "serendipityStone",
+        prices,
+        materialPricing,
+      ),
       targetGrade,
       targetCost,
     }),
@@ -335,6 +357,7 @@ export function compareCurrentItem({
   prices,
   targetGrade,
   targetProgress,
+  materialPricing,
 }: {
   kind: GearKind;
   targetGrade: Grade;
@@ -342,6 +365,7 @@ export function compareCurrentItem({
   desiredStatIds: string[];
   current: CurrentItemInput;
   prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
 }): CurrentComparison {
   const route = planTargetRoute({
     kind,
@@ -349,6 +373,7 @@ export function compareCurrentItem({
     targetProgress,
     desiredStatIds,
     prices,
+    materialPricing,
   });
   const plannerSubtype = resolvePlannerSubtype(route.subtype);
   const currentStatSet = new Set(current.statIds);
@@ -358,14 +383,22 @@ export function compareCurrentItem({
   const missingTargetStats = desiredStatIds.filter(
     (statId) => !currentStatSet.has(statId),
   );
-  const serendipityPrice = getMaterialPrice("serendipityStone", prices);
+  const serendipityPrice = getMaterialPrice(
+    "serendipityStone",
+    prices,
+    materialPricing,
+  );
   const synthesis = getSynthesisDifference(
     current.grade,
     current.progress,
     targetGrade,
     targetProgress,
   );
-  const materialCost = getMaterialCost(synthesis.materials, prices);
+  const materialCost = getMaterialCost(
+    synthesis.materials,
+    prices,
+    materialPricing,
+  );
   let expectedRerolls = 0;
 
   for (const statId of missingTargetStats) {
@@ -422,6 +455,7 @@ export function compareCurrentStrategy({
   prices,
   targetGrade,
   targetProgress,
+  materialPricing,
 }: {
   kind: GearKind;
   targetGrade: Grade;
@@ -429,6 +463,7 @@ export function compareCurrentStrategy({
   desiredStatIds: string[];
   current: CurrentItemInput;
   prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
 } & BaseItemCostOptions): CurrentStrategyComparison {
   const comparison = compareCurrentItem({
     kind,
@@ -437,6 +472,7 @@ export function compareCurrentStrategy({
     desiredStatIds,
     current,
     prices,
+    materialPricing,
   });
   const baseItemCost = estimateBaseItemCost({
     kind,
@@ -461,7 +497,11 @@ export function compareCurrentStrategy({
         restartCost,
       },
       current,
-      serendipityPrice: getMaterialPrice("serendipityStone", prices),
+      serendipityPrice: getMaterialPrice(
+        "serendipityStone",
+        prices,
+        materialPricing,
+      ),
     }),
   };
 }
@@ -666,10 +706,12 @@ function interpolateMilestones(
 function getMaterialCost(
   materials: PlannerMaterialAmount[],
   prices: PlannerPrices,
+  materialPricing?: MaterialPricingOptions,
 ): number {
   return materials.reduce(
     (sum, material) =>
-      sum + getMaterialPrice(material.id, prices) * material.amount,
+      sum +
+      getMaterialPrice(material.id, prices, materialPricing) * material.amount,
     0,
   );
 }
@@ -677,7 +719,21 @@ function getMaterialCost(
 function getMaterialPrice(
   materialId: PlannerMaterialId,
   prices: PlannerPrices,
+  materialPricing?: MaterialPricingOptions,
 ): number {
+  if (
+    materialId === "serendipityStone" &&
+    materialPricing?.serendipityStonePrice != null
+  ) {
+    return materialPricing.serendipityStonePrice;
+  }
+  if (
+    materialId === "radiantSynthiumStone" &&
+    materialPricing?.boundSynthiumForEpicPlus
+  ) {
+    return getBoundRadiantSynthiumStonePrice(prices);
+  }
+
   const direct = prices[materialId];
   if (direct != null) return direct;
 
@@ -695,6 +751,16 @@ function getMaterialPrice(
   }
 
   return 0;
+}
+
+export function getBoundRadiantSynthiumStonePrice(
+  prices: PlannerPrices,
+): number {
+  return (
+    getMaterialPrice("charcoalStabilizer", prices) * 5 +
+    getMaterialPrice("misagonsCrystal", prices) * 2 +
+    10
+  );
 }
 
 function resolvePlannerSubtype(subtype: SubtypeInference): PlannerSubtype {

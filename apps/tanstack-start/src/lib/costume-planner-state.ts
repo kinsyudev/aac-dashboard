@@ -13,6 +13,10 @@ export interface CostumePlannerState {
   serendipityOverride: string;
   currentItemValue: string;
   honorGoldPerThousand: string;
+  craftedSerendipities: boolean;
+  boundSynthiumForEpicPlus: boolean;
+  serendipityCraftModes: Record<number, "buy" | "craft">;
+  serendipitySelectedCrafts: Record<number, number>;
 }
 
 export interface CostumePlannerSearch {
@@ -27,6 +31,10 @@ export interface CostumePlannerSearch {
   sp?: string;
   cv?: string;
   h?: string;
+  cse?: true;
+  bse?: true;
+  scm?: string;
+  scs?: string;
 }
 
 export const DEFAULT_COSTUME_PLANNER_STATE: CostumePlannerState = {
@@ -47,6 +55,10 @@ export const DEFAULT_COSTUME_PLANNER_STATE: CostumePlannerState = {
   serendipityOverride: "",
   currentItemValue: "",
   honorGoldPerThousand: "10",
+  craftedSerendipities: false,
+  boundSynthiumForEpicPlus: false,
+  serendipityCraftModes: {},
+  serendipitySelectedCrafts: {},
 };
 
 const GEAR_KINDS = ["costume", "undergarment"] as const;
@@ -90,6 +102,12 @@ export function normalizeCostumePlannerState(
     honorGoldPerThousand:
       normalizeOptionalText(input.honorGoldPerThousand) ||
       DEFAULT_COSTUME_PLANNER_STATE.honorGoldPerThousand,
+    craftedSerendipities: input.craftedSerendipities === true,
+    boundSynthiumForEpicPlus: input.boundSynthiumForEpicPlus === true,
+    serendipityCraftModes: normalizeCraftModes(input.serendipityCraftModes),
+    serendipitySelectedCrafts: normalizeSelectedCrafts(
+      input.serendipitySelectedCrafts,
+    ),
   };
 }
 
@@ -110,6 +128,10 @@ export function parseCostumePlannerSearch(
     serendipityOverride: readString(params.sp),
     currentItemValue: readString(params.cv),
     honorGoldPerThousand: readString(params.h),
+    craftedSerendipities: readBoolean(params.cse),
+    boundSynthiumForEpicPlus: readBoolean(params.bse),
+    serendipityCraftModes: readCraftModes(params.scm),
+    serendipitySelectedCrafts: readSelectedCrafts(params.scs),
   });
 }
 
@@ -145,6 +167,14 @@ export function serializeCostumePlannerSearch(
   ) {
     result.h = state.honorGoldPerThousand;
   }
+  if (state.craftedSerendipities) result.cse = true;
+  if (state.boundSynthiumForEpicPlus) result.bse = true;
+  const serializedCraftModes = serializeCraftModes(state.serendipityCraftModes);
+  if (serializedCraftModes) result.scm = serializedCraftModes;
+  const serializedSelectedCrafts = serializeSelectedCrafts(
+    state.serendipitySelectedCrafts,
+  );
+  if (serializedSelectedCrafts) result.scs = serializedSelectedCrafts;
 
   return result;
 }
@@ -195,6 +225,36 @@ function readBoolean(value: unknown): boolean {
   return value === true || value === "true" || value === "1";
 }
 
+function readCraftModes(value: unknown): Record<number, "buy" | "craft"> {
+  if (typeof value !== "string") return {};
+  const modes: Record<number, "buy" | "craft"> = {};
+
+  for (const entry of value.split(",")) {
+    const [itemIdText, mode] = entry.split(":");
+    const itemId = Number.parseInt(itemIdText ?? "", 10);
+    if (!Number.isInteger(itemId)) continue;
+    if (mode !== "buy" && mode !== "craft") continue;
+    modes[itemId] = mode;
+  }
+
+  return modes;
+}
+
+function readSelectedCrafts(value: unknown): Record<number, number> {
+  if (typeof value !== "string") return {};
+  const selectedCrafts: Record<number, number> = {};
+
+  for (const entry of value.split(",")) {
+    const [itemIdText, craftIdText] = entry.split(":");
+    const itemId = Number.parseInt(itemIdText ?? "", 10);
+    const craftId = Number.parseInt(craftIdText ?? "", 10);
+    if (!Number.isInteger(itemId) || !Number.isInteger(craftId)) continue;
+    selectedCrafts[itemId] = craftId;
+  }
+
+  return selectedCrafts;
+}
+
 function normalizeOptionalText(value: string | undefined): string {
   return value?.trim() ?? "";
 }
@@ -221,4 +281,61 @@ function sameList(left: string[], right: string[]): boolean {
   return (
     left.length === right.length && left.every((item, i) => item === right[i])
   );
+}
+
+function normalizeCraftModes(
+  value: Record<number, "buy" | "craft"> | undefined,
+): Record<number, "buy" | "craft"> {
+  if (!value) return {};
+  const modes: Record<number, "buy" | "craft"> = {};
+
+  for (const [itemIdText, mode] of Object.entries(value)) {
+    const itemId = Number.parseInt(itemIdText, 10);
+    if (!Number.isInteger(itemId)) continue;
+    modes[itemId] = mode;
+  }
+
+  return modes;
+}
+
+function normalizeSelectedCrafts(
+  value: Record<number, number> | undefined,
+): Record<number, number> {
+  if (!value) return {};
+  const selectedCrafts: Record<number, number> = {};
+
+  for (const [itemIdText, craftId] of Object.entries(value)) {
+    const itemId = Number.parseInt(itemIdText, 10);
+    if (!Number.isInteger(itemId) || !Number.isInteger(craftId)) continue;
+    selectedCrafts[itemId] = craftId;
+  }
+
+  return selectedCrafts;
+}
+
+function serializeCraftModes(
+  modes: Record<number, "buy" | "craft">,
+): string | undefined {
+  const entries = Object.entries(modes)
+    .map(([itemId, mode]) => [Number(itemId), mode] as const)
+    .filter(([itemId]) => Number.isInteger(itemId))
+    .sort(([left], [right]) => left - right)
+    .map(([itemId, mode]) => `${itemId}:${mode}`);
+
+  return entries.length > 0 ? entries.join(",") : undefined;
+}
+
+function serializeSelectedCrafts(
+  selectedCrafts: Record<number, number>,
+): string | undefined {
+  const entries = Object.entries(selectedCrafts)
+    .map(([itemId, craftId]) => [Number(itemId), craftId] as const)
+    .filter(
+      ([itemId, craftId]) =>
+        Number.isInteger(itemId) && Number.isInteger(craftId),
+    )
+    .sort(([left], [right]) => left - right)
+    .map(([itemId, craftId]) => `${itemId}:${craftId}`);
+
+  return entries.length > 0 ? entries.join(",") : undefined;
 }
