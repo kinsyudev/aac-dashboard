@@ -1,5 +1,9 @@
 import type { GearKind, Grade } from "./costume-planner.ts";
-import { getPlannerStats, GRADES } from "./costume-planner.ts";
+import {
+  getAvailableStatIds,
+  getStatLineCount,
+  GRADES,
+} from "./costume-planner.ts";
 
 export interface CostumePlannerState {
   kind: GearKind;
@@ -62,7 +66,6 @@ export const DEFAULT_COSTUME_PLANNER_STATE: CostumePlannerState = {
 };
 
 const GEAR_KINDS = ["costume", "undergarment"] as const;
-const MAX_STATS = 5;
 
 export function normalizeCostumePlannerState(
   input: Partial<CostumePlannerState>,
@@ -70,12 +73,16 @@ export function normalizeCostumePlannerState(
   const kind = isGearKind(input.kind)
     ? input.kind
     : DEFAULT_COSTUME_PLANNER_STATE.kind;
+  const targetGrade = isGrade(input.targetGrade)
+    ? input.targetGrade
+    : DEFAULT_COSTUME_PLANNER_STATE.targetGrade;
+  const currentGrade = isGrade(input.currentGrade)
+    ? input.currentGrade
+    : DEFAULT_COSTUME_PLANNER_STATE.currentGrade;
 
   return {
     kind,
-    targetGrade: isGrade(input.targetGrade)
-      ? input.targetGrade
-      : DEFAULT_COSTUME_PLANNER_STATE.targetGrade,
+    targetGrade,
     targetProgress: clampNumber(
       input.targetProgress,
       0,
@@ -85,18 +92,17 @@ export function normalizeCostumePlannerState(
     targetStats: normalizeStats(
       input.targetStats ?? DEFAULT_COSTUME_PLANNER_STATE.targetStats,
       kind,
+      targetGrade,
     ),
     currentEnabled: input.currentEnabled === true,
-    currentGrade: isGrade(input.currentGrade)
-      ? input.currentGrade
-      : DEFAULT_COSTUME_PLANNER_STATE.currentGrade,
+    currentGrade,
     currentProgress: clampNumber(
       input.currentProgress,
       0,
       100,
       DEFAULT_COSTUME_PLANNER_STATE.currentProgress,
     ),
-    currentStats: normalizeStats(input.currentStats, kind),
+    currentStats: normalizeStats(input.currentStats, kind, currentGrade),
     serendipityOverride: normalizeOptionalText(input.serendipityOverride),
     currentItemValue: normalizeOptionalText(input.currentItemValue),
     honorGoldPerThousand:
@@ -179,8 +185,13 @@ export function serializeCostumePlannerSearch(
   return result;
 }
 
-function normalizeStats(value: string[] | undefined, kind: GearKind): string[] {
-  const allowed = new Set(getPlannerStats(kind).map((stat) => stat.id));
+function normalizeStats(
+  value: string[] | undefined,
+  kind: GearKind,
+  grade: Grade,
+): string[] {
+  const allowed = new Set(getAvailableStatIds(kind, grade, "any"));
+  const maxStats = getStatLineCount(kind, grade);
   const seen = new Set<string>();
   const stats: string[] = [];
 
@@ -188,7 +199,7 @@ function normalizeStats(value: string[] | undefined, kind: GearKind): string[] {
     if (!allowed.has(statId) || seen.has(statId)) continue;
     seen.add(statId);
     stats.push(statId);
-    if (stats.length >= MAX_STATS) break;
+    if (stats.length >= maxStats) break;
   }
 
   return stats;
