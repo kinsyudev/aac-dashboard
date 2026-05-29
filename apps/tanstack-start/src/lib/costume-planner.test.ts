@@ -13,11 +13,14 @@ import {
   estimateBaseItemCost,
   estimateExpectedRerolls,
   getAvailableStatIds,
+  getNextStatLineThreshold,
   getPlannerStats,
+  getStatLineCount,
   GRADES,
   inferSubtype,
   planOptimalStrategy,
   planTargetRoute,
+  STAT_LINE_THRESHOLDS,
 } from "./costume-planner.ts";
 
 const prices = {
@@ -288,6 +291,92 @@ void test("restart-aware strategy includes base item cost in build from scratch"
 
   assert.equal(strategy.baseItemCost, 100);
   assert.ok(strategy.targetCost.totalCost > strategy.baseItemCost);
+});
+
+void test("stat line thresholds apply to costumes and undergarments", () => {
+  assert.deepEqual(STAT_LINE_THRESHOLDS.costume, [
+    "grand",
+    "arcane",
+    "unique",
+    "divine",
+    "legendary",
+  ]);
+  assert.deepEqual(STAT_LINE_THRESHOLDS.undergarment, [
+    "grand",
+    "arcane",
+    "unique",
+    "divine",
+    "legendary",
+  ]);
+  assert.equal(getStatLineCount("costume", "heroic"), 2);
+  assert.equal(
+    getNextStatLineThreshold("costume", "grand", "mythic"),
+    "arcane",
+  );
+});
+
+void test("grand miss recommends synthesizing to the next stat line before restart", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["physical-defense"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.recommendation, "synth");
+  assert.equal(strategy.synthCost?.materials[0]?.id, "vividSynthiumStone");
+  assert.equal(strategy.synthCost?.materials[0]?.amount, 12);
+  assert.equal(strategy.synthCost?.materials[1]?.id, "charcoalStabilizer");
+  assert.equal(strategy.synthCost?.materials[1]?.amount, 240);
+  assert.equal(strategy.synthCost?.craftGold, 458);
+  assert.equal(strategy.strategyCheckpoints[0]?.grade, "arcane");
+});
+
+void test("unique zero-of-three target stats restarts instead of synthesizing to divine", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: [
+      "physical-defense",
+      "max-health",
+      "received-damage",
+      "received-healing",
+      "resilience",
+    ],
+    current: {
+      grade: "unique",
+      progress: 0,
+      statIds: ["magic-defense", "move-speed", "stealth-detection"],
+    },
+    prices,
+    materialPricing: { boundSynthiumForEpicPlus: true },
+  });
+
+  assert.equal(strategy.recommendation, "restart");
+});
+
+void test("current continuation keeps newly estimated target stats for later rerolls", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["physical-defense"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.continueCost.expectedRerolls, 46);
 });
 
 void test("restart-aware comparison restarts bad upgraded states when rerolls are expensive", () => {

@@ -264,7 +264,9 @@ function CostumePlannerPage() {
   const activeCost = comparison
     ? comparison.recommendation === "restart"
       ? comparison.restartCost
-      : comparison.continueCost
+      : comparison.recommendation === "synth" && comparison.synthCost
+        ? comparison.synthCost
+        : comparison.continueCost
     : (route?.targetCost ?? null);
   const activeBaseItemCost = comparison
     ? comparison.recommendation === "restart"
@@ -713,12 +715,21 @@ function CostumePlannerPage() {
                   >
                     {comparison.recommendation === "continue"
                       ? "Continue rerolling"
-                      : "Salvage and restart"}
+                      : comparison.recommendation === "synth" &&
+                          comparison.synthGrade
+                        ? `Synth to ${formatGrade(comparison.synthGrade)} and reassess`
+                        : "Salvage and restart"}
                   </Badge>
                   <CostLine
                     label="Continue"
                     value={comparison.continueCost.totalCost}
                   />
+                  {comparison.synthCost && comparison.synthGrade ? (
+                    <CostLine
+                      label={`Synth to ${formatGrade(comparison.synthGrade)}`}
+                      value={comparison.synthCost.totalCost}
+                    />
+                  ) : null}
                   <CostLine
                     label="Restart"
                     value={comparison.restartCost.totalCost}

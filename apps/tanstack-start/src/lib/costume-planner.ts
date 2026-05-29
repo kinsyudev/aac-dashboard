@@ -14,6 +14,7 @@ import {
   PLANNER_STATS,
   PRICE_LOOKUP_ITEM_NAMES,
   SALVAGE_OUTPUTS,
+  STAT_LINE_THRESHOLDS,
   SUBTYPE_ORDER,
   SYNTHESIS_MILESTONES,
 } from "./costume-planner-data.ts";
@@ -24,6 +25,7 @@ export {
   MATERIAL_PRICE_LOOKUP_NAMES,
   PLANNER_STATS,
   PRICE_LOOKUP_ITEM_NAMES,
+  STAT_LINE_THRESHOLDS,
 };
 export type {
   GearKind,
@@ -109,9 +111,11 @@ export interface CurrentItemInput {
 }
 
 export interface CurrentComparison {
-  recommendation: "continue" | "restart";
+  recommendation: "continue" | "restart" | "synth";
   continueCost: CostBreakdown;
   restartCost: CostBreakdown;
+  synthCost?: CostBreakdown;
+  synthGrade?: Grade;
   subtype: SubtypeInference;
   checkpoints: RouteCheckpoint[];
 }
@@ -166,6 +170,30 @@ export function getAvailableStatIds(
       return stat.subtypes.includes(subtype);
     })
     .map((stat) => stat.id);
+}
+
+export function getStatLineCount(kind: GearKind, grade: Grade): number {
+  const gradeIndex = getGradeIndex(grade);
+
+  return STAT_LINE_THRESHOLDS[kind].filter(
+    (threshold) => getGradeIndex(threshold) <= gradeIndex,
+  ).length;
+}
+
+export function getNextStatLineThreshold(
+  kind: GearKind,
+  currentGrade: Grade,
+  targetGrade: Grade,
+): Grade | undefined {
+  const currentGradeIndex = getGradeIndex(currentGrade);
+  const targetGradeIndex = getGradeIndex(targetGrade);
+
+  return STAT_LINE_THRESHOLDS[kind].find((threshold) => {
+    const thresholdIndex = getGradeIndex(threshold);
+    return (
+      thresholdIndex > currentGradeIndex && thresholdIndex <= targetGradeIndex
+    );
+  });
 }
 
 export function estimateExpectedRerolls({
@@ -401,6 +429,7 @@ export function compareCurrentItem({
   );
   let expectedRerolls = 0;
 
+  const estimatedKeptTargetStats = [...keptTargetStats];
   for (const statId of missingTargetStats) {
     const stat = statById.get(statId);
     const unlockGrade = stat?.unlockGradeByKind[kind] ?? current.grade;
@@ -413,10 +442,11 @@ export function compareCurrentItem({
       grade: rerollGrade,
       subtype: plannerSubtype,
       desiredStatIds: [statId],
-      keptStatIds: keptTargetStats,
+      keptStatIds: estimatedKeptTargetStats,
       serendipityPrice,
     });
     expectedRerolls += estimate.expectedAttempts;
+    estimatedKeptTargetStats.push(statId);
   }
 
   const continueCost = buildCostBreakdown({
@@ -436,12 +466,42 @@ export function compareCurrentItem({
     salvageCredit,
     totalCost: route.targetCost.totalCost - salvageCredit,
   };
+  const synthGrade = getNextUsefulStatLineThreshold({
+    current,
+    desiredStatIds,
+    kind,
+    subtype: plannerSubtype,
+    targetGrade,
+  });
+  const synthCost =
+    synthGrade &&
+    keptTargetStats.length === 0 &&
+    missingTargetStats.length > 0 &&
+    canReassessAfterSynth({
+      keptTargetStatCount: keptTargetStats.length,
+      kind,
+      synthGrade,
+    })
+      ? buildSynthCost({
+          current,
+          materialPricing,
+          prices,
+          synthGrade,
+        })
+      : undefined;
+  const baseRecommendation =
+    continueCost.totalCost <= restartCost.totalCost ? "continue" : "restart";
+  const recommendation =
+    synthCost && synthCost.totalCost < restartCost.totalCost
+      ? "synth"
+      : baseRecommendation;
 
   return {
-    recommendation:
-      continueCost.totalCost <= restartCost.totalCost ? "continue" : "restart",
+    recommendation,
     continueCost,
     restartCost,
+    synthCost,
+    synthGrade,
     subtype: route.subtype,
     checkpoints: route.checkpoints,
   };
@@ -481,9 +541,11 @@ export function compareCurrentStrategy({
   });
   const restartCost = addFlatCost(comparison.restartCost, baseItemCost);
   const recommendation =
-    comparison.continueCost.totalCost <= restartCost.totalCost
-      ? "continue"
-      : "restart";
+    comparison.recommendation === "synth"
+      ? "synth"
+      : comparison.continueCost.totalCost <= restartCost.totalCost
+        ? "continue"
+        : "restart";
 
   return {
     ...comparison,
@@ -591,16 +653,23 @@ function buildCurrentStrategyCheckpoints({
 }): StrategyCheckpoint[] {
   const checkpoints: StrategyCheckpoint[] = [
     {
-      grade: current.grade,
+      grade:
+        comparison.recommendation === "synth" && comparison.synthGrade
+          ? comparison.synthGrade
+          : current.grade,
       action: comparison.recommendation,
       label:
         comparison.recommendation === "continue"
           ? "Continue this item; its expected remaining cost is lower than salvaging into a fresh start."
-          : "Salvage this item and restart; the fresh route is cheaper in expectation after salvage credit.",
+          : comparison.recommendation === "synth" && comparison.synthGrade
+            ? `Synth to ${formatGrade(comparison.synthGrade)} and reassess after the new stat line.`
+            : "Salvage this item and restart; the fresh route is cheaper in expectation after salvage credit.",
       expectedCost:
         comparison.recommendation === "continue"
           ? comparison.continueCost.totalCost
-          : comparison.restartCost.totalCost,
+          : comparison.recommendation === "synth" && comparison.synthCost
+            ? comparison.synthCost.totalCost
+            : comparison.restartCost.totalCost,
       restartCost: comparison.restartCost.totalCost,
     },
   ];
@@ -616,6 +685,86 @@ function buildCurrentStrategyCheckpoints({
   }
 
   return checkpoints;
+}
+
+function getNextUsefulStatLineThreshold({
+  current,
+  desiredStatIds,
+  kind,
+  subtype,
+  targetGrade,
+}: {
+  kind: GearKind;
+  current: CurrentItemInput;
+  targetGrade: Grade;
+  desiredStatIds: string[];
+  subtype: PlannerSubtype;
+}): Grade | undefined {
+  const currentStats = new Set(current.statIds);
+
+  for (const threshold of STAT_LINE_THRESHOLDS[kind]) {
+    const thresholdIndex = getGradeIndex(threshold);
+    if (thresholdIndex <= getGradeIndex(current.grade)) continue;
+    if (thresholdIndex > getGradeIndex(targetGrade)) break;
+
+    const available = getAvailableStatIds(kind, threshold, subtype).filter(
+      (statId) => !currentStats.has(statId),
+    );
+    const availableSet = new Set(available);
+    const hasUsefulTarget = desiredStatIds.some(
+      (statId) => !currentStats.has(statId) && availableSet.has(statId),
+    );
+
+    if (hasUsefulTarget) return threshold;
+  }
+
+  return undefined;
+}
+
+function canReassessAfterSynth({
+  keptTargetStatCount,
+  kind,
+  synthGrade,
+}: {
+  kind: GearKind;
+  synthGrade: Grade;
+  keptTargetStatCount: number;
+}): boolean {
+  const statLinesAfterSynth = getStatLineCount(kind, synthGrade);
+  return keptTargetStatCount + 1 >= statLinesAfterSynth - 1;
+}
+
+function buildSynthCost({
+  current,
+  materialPricing,
+  prices,
+  synthGrade,
+}: {
+  current: CurrentItemInput;
+  synthGrade: Grade;
+  prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
+}): CostBreakdown {
+  const synthesis = getSynthesisDifference(
+    current.grade,
+    current.progress,
+    synthGrade,
+    0,
+  );
+  const materialCost = getMaterialCost(
+    synthesis.materials,
+    prices,
+    materialPricing,
+  );
+
+  return buildCostBreakdown({
+    materials: synthesis.materials,
+    materialCost,
+    craftGold: synthesis.craftGold,
+    expectedRerolls: 0,
+    rerollCost: 0,
+    salvageCredit: 0,
+  });
 }
 
 function getSynthesisDifference(
@@ -786,4 +935,8 @@ function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, {
     maximumFractionDigits: 2,
   })}g`;
+}
+
+function formatGrade(grade: Grade): string {
+  return grade.charAt(0).toUpperCase() + grade.slice(1);
 }
