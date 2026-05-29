@@ -365,11 +365,16 @@ void test("grand miss recommends synthesizing to the next stat line before resta
   });
 
   assert.equal(strategy.recommendation, "synth");
-  assert.equal(strategy.synthCost?.materials[0]?.id, "vividSynthiumStone");
-  assert.equal(strategy.synthCost?.materials[0]?.amount, 12);
-  assert.equal(strategy.synthCost?.materials[1]?.id, "charcoalStabilizer");
-  assert.equal(strategy.synthCost?.materials[1]?.amount, 240);
-  assert.equal(strategy.synthCost?.craftGold, 458);
+  assert.ok(strategy.synthCost);
+  const firstSynthMaterial = strategy.synthCost.materials[0];
+  const secondSynthMaterial = strategy.synthCost.materials[1];
+  assert.ok(firstSynthMaterial);
+  assert.ok(secondSynthMaterial);
+  assert.equal(firstSynthMaterial.id, "vividSynthiumStone");
+  assert.equal(firstSynthMaterial.amount, 12);
+  assert.equal(secondSynthMaterial.id, "charcoalStabilizer");
+  assert.equal(secondSynthMaterial.amount, 240);
+  assert.equal(strategy.synthCost.craftGold, 458);
   assert.equal(strategy.strategyCheckpoints[0]?.grade, "arcane");
 });
 
