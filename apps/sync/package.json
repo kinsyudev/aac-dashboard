@@ -6,6 +6,7 @@
     "build-static-api-cache": "pnpm with-env tsx src/build-static-api-cache.ts",
     "sync-items": "pnpm with-env tsx src/sync-items.ts",
     "sync-items:full-refresh": "pnpm with-env tsx src/sync-items.ts --full-refresh",
+    "sync-items:notify-new": "pnpm with-env tsx src/sync-items.ts --notify-new-items",
     "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
     "sync-prices:backfill": "pnpm with-env tsx src/sync-prices-backfill.ts",
     "classify-proficiencies": "pnpm with-env tsx src/classify-proficiencies.ts",
@@ -14,6 +15,7 @@
     "migrate-shopping-list-sources": "pnpm with-env tsx src/migrate-shopping-list-sources.ts",
     "regenerate-shopping-lists": "pnpm with-env tsx src/regenerate-shopping-lists.ts",
     "with-env": "dotenv -e ../../.env --",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --flag unstable_native_nodejs_ts_config"
   },
