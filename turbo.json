@@ -47,6 +47,7 @@
   },
   "globalEnv": [
     "AAC_AUTH",
+    "AAC_DISCORD_BOT_TOKEN",
     "AUTH_ALLOWED_DISCORD_IDS",
     "AUTH_DISCORD_ID",
     "AUTH_DISCORD_GUILD_ID",

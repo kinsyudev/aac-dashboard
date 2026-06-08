@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { index, pgEnum, pgTable, primaryKey } from "drizzle-orm/pg-core";
 
 import { user } from "./auth-schema";
@@ -143,6 +143,59 @@ export const prices = pgTable(
   ],
 );
 
+export const discordItemAlertDestinations = pgTable(
+  "discord_item_alert_destinations",
+  (t) => ({
+    id: t.uuid().primaryKey().defaultRandom(),
+    name: t.text().notNull(),
+    channelId: t.text().notNull(),
+    enabled: t.boolean().notNull().default(true),
+    createdAt: t.timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: t
+      .timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => sql`now()`),
+  }),
+  (table) => [
+    index("idx_discord_item_alert_destinations_enabled").on(table.enabled),
+  ],
+);
+
+export const itemDiscoveries = pgTable("item_discoveries", (t) => ({
+  itemId: t
+    .integer()
+    .primaryKey()
+    .references(() => items.id, { onDelete: "cascade" }),
+  discoveredAt: t.timestamp({ withTimezone: true }).notNull().defaultNow(),
+}));
+
+export const itemAlertDeliveries = pgTable(
+  "item_alert_deliveries",
+  (t) => ({
+    itemId: t
+      .integer()
+      .notNull()
+      .references(() => itemDiscoveries.itemId, { onDelete: "cascade" }),
+    destinationId: t
+      .uuid()
+      .notNull()
+      .references(() => discordItemAlertDestinations.id, {
+        onDelete: "cascade",
+      }),
+    attemptCount: t.integer().notNull().default(0),
+    lastAttemptAt: t.timestamp({ withTimezone: true }),
+    lastError: t.text(),
+    sentAt: t.timestamp({ withTimezone: true }),
+    discordMessageId: t.text(),
+  }),
+  (table) => [
+    primaryKey({ columns: [table.itemId, table.destinationId] }),
+    index("idx_item_alert_deliveries_destination").on(table.destinationId),
+    index("idx_item_alert_deliveries_sent_at").on(table.sentAt),
+  ],
+);
+
 export const itemsRelations = relations(items, ({ many, one }) => ({
   craftMaterials: many(craftMaterials),
   craftProducts: many(craftProducts),
@@ -212,6 +265,38 @@ export const pricesRelations = relations(prices, ({ one }) => ({
     references: [items.id],
   }),
 }));
+
+export const discordItemAlertDestinationsRelations = relations(
+  discordItemAlertDestinations,
+  ({ many }) => ({
+    deliveries: many(itemAlertDeliveries),
+  }),
+);
+
+export const itemDiscoveriesRelations = relations(
+  itemDiscoveries,
+  ({ many, one }) => ({
+    item: one(items, {
+      fields: [itemDiscoveries.itemId],
+      references: [items.id],
+    }),
+    deliveries: many(itemAlertDeliveries),
+  }),
+);
+
+export const itemAlertDeliveriesRelations = relations(
+  itemAlertDeliveries,
+  ({ one }) => ({
+    discovery: one(itemDiscoveries, {
+      fields: [itemAlertDeliveries.itemId],
+      references: [itemDiscoveries.itemId],
+    }),
+    destination: one(discordItemAlertDestinations, {
+      fields: [itemAlertDeliveries.destinationId],
+      references: [discordItemAlertDestinations.id],
+    }),
+  }),
+);
 
 export const userPriceOverrides = pgTable(
   "user_price_overrides",

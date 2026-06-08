@@ -2,6 +2,11 @@ import { sql } from "@acme/db";
 import { db } from "@acme/db/client";
 import { craftMaterials, craftProducts, crafts, items } from "@acme/db/schema";
 
+import type { AlertItem } from "./item-alerts";
+import {
+  recordItemDiscoveries,
+  sendItemDiscoveryAlerts,
+} from "./item-alerts";
 import { buildStaticApiCache } from "./static-api-cache";
 
 const BASE_URL = "https://aa-classic.com/data";
@@ -111,6 +116,17 @@ async function fetchBatch<T>(paths: string[]): Promise<(T | null)[]> {
 
 async function main() {
   const fullRefresh = process.argv.includes("--full-refresh");
+  const notifyNewItems = process.argv.includes("--notify-new-items");
+  const shouldNotifyNewItems = notifyNewItems && !fullRefresh;
+  const discordBotToken = process.env.AAC_DISCORD_BOT_TOKEN;
+
+  if (notifyNewItems && fullRefresh) {
+    console.warn("Skipping new item Discord alerts during full refresh.");
+  }
+
+  if (shouldNotifyNewItems && !discordBotToken) {
+    throw new Error("Set AAC_DISCORD_BOT_TOKEN env var to send item alerts");
+  }
 
   if (fullRefresh) {
     console.log("Clearing existing data...");
@@ -133,6 +149,7 @@ async function main() {
     `Items: ${remoteItems.length} remote, ${existingItemIds.size} in DB, ${missingItems.length} to sync`,
   );
 
+  const discoveredItems: AlertItem[] = [];
   let itemsDone = 0;
   for (let i = 0; i < missingItems.length; i += BATCH) {
     const chunk = missingItems.slice(i, i + BATCH);
@@ -186,6 +203,20 @@ async function main() {
             overIcon: sql`excluded.over_icon`,
           },
         });
+
+      if (shouldNotifyNewItems) {
+        for (const item of valid) {
+          discoveredItems.push({
+            id: item.id,
+            name: item.name,
+            category: item.category_name,
+            level: item.level,
+            icon: item.icon_filename,
+            maxStackSize: item.max_stack_size,
+          });
+          console.log(`New item detected: ${item.id} ${item.name}`);
+        }
+      }
     }
 
     itemsDone += chunk.length;
@@ -196,6 +227,18 @@ async function main() {
 
   const totalItems = await db.$count(items);
   console.log(`Items done: ${totalItems} total in DB`);
+
+  if (shouldNotifyNewItems) {
+    if (!discordBotToken) {
+      throw new Error("Set AAC_DISCORD_BOT_TOKEN env var to send item alerts");
+    }
+
+    await recordItemDiscoveries(db, discoveredItems);
+    await sendItemDiscoveryAlerts({
+      botToken: discordBotToken,
+      database: db,
+    });
+  }
 
   // ── Crafts ─────────────────────────────────────────────────────────────────
 

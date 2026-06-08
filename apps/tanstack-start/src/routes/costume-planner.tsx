@@ -619,15 +619,15 @@ function CostumePlannerPage() {
             route={route}
           />
 
-          <details className="group rounded-lg border">
+          <details className="group min-w-0 overflow-hidden rounded-lg border">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
               Advanced pricing and crafting
               <span className="text-muted-foreground group-open:rotate-180">
                 v
               </span>
             </summary>
-            <div className="border-t p-4">
-              <div className="grid gap-3">
+            <div className="min-w-0 overflow-hidden border-t p-4">
+              <div className="grid min-w-0 gap-3">
                 <PlannerOptionToggle
                   checked={craftedSerendipities}
                   label="Crafted Serendipities"
@@ -1000,8 +1000,7 @@ function DecisionDashboard({
               {nextCheckpoint.label}
             </p>
             <p className="text-muted-foreground mt-1 text-xs">
-              {formatGold(nextCheckpoint.expectedCost)} expected checkpoint
-              cost
+              {formatGold(nextCheckpoint.expectedCost)} expected checkpoint cost
             </p>
           </div>
         ) : null}
@@ -1151,7 +1150,7 @@ function SerendipityRecipeSelector({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border p-3">
+    <div className="flex min-w-0 flex-col gap-3 overflow-hidden rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium">Serendipity craft cost</p>
@@ -1292,7 +1291,10 @@ function SerendipityRecipeTree({
                                 [item.id]: Number(event.target.value),
                               })
                             }
-                            className={cn(selectClassName, "h-8 w-40")}
+                            className={cn(
+                              selectClassName,
+                              "h-8 min-w-0 sm:w-40",
+                            )}
                           >
                             {subEntries.map((subEntry) => (
                               <option
@@ -1328,7 +1330,7 @@ function SerendipityRecipeTree({
                   }
                 />
                 {mode === "craft" && selectedSubEntry ? (
-                  <div className="border-muted-foreground/20 ml-3 border-l-2 pl-3">
+                  <div className="border-muted-foreground/20 min-w-0 border-l-2 pl-3 sm:ml-3">
                     <SerendipityRecipeTree
                       entry={selectedSubEntry}
                       producedItemId={item.id}
@@ -1385,9 +1387,7 @@ function StatPicker({
         <div key={group.grade} className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <GradeBadge grade={group.grade} />
-            <span className="text-muted-foreground text-xs">
-              Unlock grade
-            </span>
+            <span className="text-muted-foreground text-xs">Unlock grade</span>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {group.stats.map((stat) => {
@@ -1409,7 +1409,6 @@ function StatPicker({
                 >
                   <Checkbox checked={checked} tabIndex={-1} aria-hidden />
                   <span className="min-w-0 flex-1">{stat.label}</span>
-                  <GradeBadge grade={group.grade} compact />
                 </button>
               );
             })}
@@ -1420,22 +1419,16 @@ function StatPicker({
   );
 }
 
-function GradeBadge({
-  compact = false,
-  grade,
-}: {
-  compact?: boolean;
-  grade: Grade;
-}) {
+function GradeBadge({ grade }: { grade: Grade }) {
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-medium",
-        compact ? "text-[10px]" : "text-xs",
+        "text-xs",
         getGradeBadgeClassName(grade),
       )}
     >
-      {compact ? formatGrade(grade).slice(0, 3) : formatGrade(grade)}
+      {formatGrade(grade)}
     </span>
   );
 }

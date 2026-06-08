@@ -36,7 +36,7 @@ export function RecipeHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-2.5 flex items-center justify-between gap-2">
+    <div className="mb-2.5 flex min-w-0 flex-wrap items-center justify-between gap-2">
       <div className="flex min-w-0 items-center gap-2">
         {collapseToggle}
         <p className={`truncate font-semibold ${depth > 0 ? "text-sm" : ""}`}>
@@ -50,7 +50,7 @@ export function RecipeHeader({
         ) : null}
       </div>
       {materialsLabel || action ? (
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3">
           {materialsLabel ? (
             <p className="text-sm font-medium tabular-nums">
               <span className="text-muted-foreground mr-1 text-xs font-normal">
@@ -117,7 +117,7 @@ export function RecipeItemRow({
   diff?: ReactNode;
 }) {
   return (
-    <li className="hover:bg-muted/40 flex items-center gap-2 rounded px-1 py-1 text-sm">
+    <li className="hover:bg-muted/40 flex min-w-0 flex-wrap items-center gap-2 rounded px-1 py-1 text-sm">
       {icon}
       <span className="min-w-0 flex-1 truncate">
         {name}
@@ -125,8 +125,8 @@ export function RecipeItemRow({
           <span className="text-muted-foreground ml-1 text-xs">×{amount}</span>
         ) : null}
       </span>
-      {controls}
-      {value}
+      {controls ? <span className="min-w-0 shrink">{controls}</span> : null}
+      {value ? <span className="min-w-0 shrink">{value}</span> : null}
       {diff}
     </li>
   );
