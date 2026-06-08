@@ -13,11 +13,14 @@ import {
   estimateBaseItemCost,
   estimateExpectedRerolls,
   getAvailableStatIds,
+  getNextStatLineThreshold,
   getPlannerStats,
+  getStatLineCount,
   GRADES,
   inferSubtype,
   planOptimalStrategy,
   planTargetRoute,
+  STAT_LINE_THRESHOLDS,
 } from "./costume-planner.ts";
 
 const prices = {
@@ -290,6 +293,161 @@ void test("restart-aware strategy includes base item cost in build from scratch"
   assert.ok(strategy.targetCost.totalCost > strategy.baseItemCost);
 });
 
+void test("grade-up rerolls reduce paid serendipity attempts but keep synthesis cost", () => {
+  const route = planTargetRoute({
+    kind: "costume",
+    targetGrade: "arcane",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    prices,
+  });
+
+  assert.equal(route.targetCost.expectedRerolls, 15);
+  assert.equal(route.targetCost.rerollCost, 4500);
+  assert.ok(route.targetCost.materialCost > 0);
+  assert.ok(route.targetCost.craftGold > 0);
+});
+
+void test("current continuation uses grade-up rerolls before paid serendipities", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "arcane",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["physical-defense"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.continueCost.expectedRerolls, 15);
+  assert.equal(strategy.continueCost.rerollCost, 4500);
+  assert.ok(strategy.continueCost.materialCost > 0);
+  assert.ok(strategy.continueCost.craftGold > 0);
+});
+
+void test("stat line thresholds apply to costumes and undergarments", () => {
+  assert.deepEqual(STAT_LINE_THRESHOLDS.costume, [
+    "grand",
+    "arcane",
+    "unique",
+    "divine",
+    "legendary",
+  ]);
+  assert.deepEqual(STAT_LINE_THRESHOLDS.undergarment, [
+    "grand",
+    "arcane",
+    "unique",
+    "divine",
+    "legendary",
+  ]);
+  assert.equal(getStatLineCount("costume", "heroic"), 2);
+  assert.equal(
+    getNextStatLineThreshold("costume", "grand", "mythic"),
+    "arcane",
+  );
+});
+
+void test("grand miss recommends synthesizing to the next stat line before restart", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["physical-defense"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.recommendation, "synth");
+  assert.ok(strategy.synthCost);
+  const firstSynthMaterial = strategy.synthCost.materials[0];
+  const secondSynthMaterial = strategy.synthCost.materials[1];
+  assert.ok(firstSynthMaterial);
+  assert.ok(secondSynthMaterial);
+  assert.equal(firstSynthMaterial.id, "vividSynthiumStone");
+  assert.equal(firstSynthMaterial.amount, 12);
+  assert.equal(secondSynthMaterial.id, "charcoalStabilizer");
+  assert.equal(secondSynthMaterial.amount, 240);
+  assert.equal(strategy.synthCost.craftGold, 458);
+  assert.equal(strategy.strategyCheckpoints[0]?.grade, "arcane");
+});
+
+void test("unique zero-of-three target stats restarts instead of synthesizing to divine", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: [
+      "physical-defense",
+      "max-health",
+      "received-damage",
+      "received-healing",
+      "resilience",
+    ],
+    current: {
+      grade: "unique",
+      progress: 0,
+      statIds: ["magic-defense", "move-speed", "stealth-detection"],
+    },
+    prices,
+    materialPricing: { boundSynthiumForEpicPlus: true },
+  });
+
+  assert.equal(strategy.recommendation, "restart");
+});
+
+void test("arcane one-of-two target stats synthesizes to grade-up reroll checkpoint", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: [
+      "physical-defense",
+      "max-health",
+      "received-damage",
+      "received-healing",
+      "resilience",
+    ],
+    current: {
+      grade: "arcane",
+      progress: 0,
+      statIds: ["magic-defense", "max-health"],
+    },
+    prices,
+    materialPricing: { boundSynthiumForEpicPlus: true },
+  });
+
+  assert.equal(strategy.recommendation, "synth");
+  assert.equal(strategy.synthGrade, "heroic");
+  assert.equal(
+    strategy.strategyCheckpoints[0]?.label,
+    "Synth to Heroic and reassess after the grade-up reroll.",
+  );
+});
+
+void test("current continuation keeps newly estimated target stats for later rerolls", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "grand",
+      progress: 0,
+      statIds: ["physical-defense"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.continueCost.expectedRerolls, 44);
+});
+
 void test("restart-aware comparison restarts bad upgraded states when rerolls are expensive", () => {
   const strategy = compareCurrentStrategy({
     kind: "costume",
@@ -342,9 +500,9 @@ void test("crafted serendipity price replaces the market reroll price", () => {
     materialPricing: { serendipityStonePrice: 42 },
   });
 
-  assert.equal(marketRoute.targetCost.rerollCost, 4800);
-  assert.equal(craftedRoute.targetCost.expectedRerolls, 16);
-  assert.equal(craftedRoute.targetCost.rerollCost, 672);
+  assert.equal(marketRoute.targetCost.rerollCost, 4500);
+  assert.equal(craftedRoute.targetCost.expectedRerolls, 15);
+  assert.equal(craftedRoute.targetCost.rerollCost, 630);
 });
 
 void test("bound synthium pricing changes radiant synthesis without changing lucid synthesis", () => {
@@ -432,6 +590,45 @@ void test("costume planner state clamps numbers and filters stats for selected k
       currentStats: ["max-health"],
     },
   );
+});
+
+void test("costume planner state trims selected stats to the grade stat line cap", () => {
+  const state = normalizeCostumePlannerState({
+    kind: "costume",
+    targetGrade: "divine",
+    targetStats: [
+      "physical-defense",
+      "magic-defense",
+      "max-health",
+      "received-damage",
+      "received-magic-damage",
+    ],
+  });
+
+  assert.deepEqual(state.targetStats, [
+    "physical-defense",
+    "magic-defense",
+    "max-health",
+    "received-damage",
+  ]);
+});
+
+void test("costume planner state removes stats not unlocked at the selected grade", () => {
+  const state = normalizeCostumePlannerState({
+    kind: "costume",
+    targetGrade: "unique",
+    targetStats: [
+      "physical-defense",
+      "ranged-skill-damage",
+      "resilience",
+      "ranged-critical-rate",
+    ],
+    currentGrade: "arcane",
+    currentStats: ["physical-defense", "resilience", "ranged-critical-rate"],
+  });
+
+  assert.deepEqual(state.targetStats, ["physical-defense", "resilience"]);
+  assert.deepEqual(state.currentStats, ["physical-defense"]);
 });
 
 void test("costume planner search serialization round-trips full planner state", () => {

@@ -16,6 +16,11 @@ export type GearKind = "costume" | "undergarment";
 export type GearSubtype = "healing" | "magic" | "melee" | "ranged";
 export type PlannerSubtype = GearSubtype | "any";
 
+export const STAT_LINE_THRESHOLDS: Record<GearKind, Grade[]> = {
+  costume: ["grand", "arcane", "unique", "divine", "legendary"],
+  undergarment: ["grand", "arcane", "unique", "divine", "legendary"],
+};
+
 export type PlannerMaterialId =
   | "clearSynthiumStone"
   | "vividSynthiumStone"
@@ -251,24 +256,15 @@ export const PLANNER_STATS: PlannerStat[] = [
   stat("stealth-detection", "Stealth Detection", ["costume"], {
     costume: "grand",
   }),
-  stat(
-    "pve-magic-skills",
-    "PvE Magic Skills",
-    ["costume"],
-    { costume: "grand" },
-  ),
-  stat(
-    "pve-melee-skills",
-    "PvE Melee Skills",
-    ["costume"],
-    { costume: "grand" },
-  ),
-  stat(
-    "pve-ranged-skills",
-    "PvE Ranged Skills",
-    ["costume"],
-    { costume: "grand" },
-  ),
+  stat("pve-magic-skills", "PvE Magic Skills", ["costume"], {
+    costume: "grand",
+  }),
+  stat("pve-melee-skills", "PvE Melee Skills", ["costume"], {
+    costume: "grand",
+  }),
+  stat("pve-ranged-skills", "PvE Ranged Skills", ["costume"], {
+    costume: "grand",
+  }),
   stat(
     "backstab-melee-damage",
     "Backstab Melee Damage",
@@ -395,30 +391,18 @@ export const PLANNER_STATS: PlannerStat[] = [
     ["undergarment"],
     { undergarment: "unique" },
   ),
-  stat(
-    "magic-critical-damage",
-    "Magic Critical Damage",
-    ["costume"],
-    { costume: "divine" },
-  ),
-  stat(
-    "melee-critical-damage",
-    "Melee Critical Damage",
-    ["costume"],
-    { costume: "divine" },
-  ),
-  stat(
-    "ranged-critical-damage",
-    "Ranged Critical Damage",
-    ["costume"],
-    { costume: "divine" },
-  ),
-  stat(
-    "critical-heal-bonus",
-    "Critical Heal Bonus",
-    ["costume"],
-    { costume: "divine" },
-  ),
+  stat("magic-critical-damage", "Magic Critical Damage", ["costume"], {
+    costume: "divine",
+  }),
+  stat("melee-critical-damage", "Melee Critical Damage", ["costume"], {
+    costume: "divine",
+  }),
+  stat("ranged-critical-damage", "Ranged Critical Damage", ["costume"], {
+    costume: "divine",
+  }),
+  stat("critical-heal-bonus", "Critical Heal Bonus", ["costume"], {
+    costume: "divine",
+  }),
   stat(
     "melee-skill-damage",
     "Melee Skill Damage",
@@ -437,12 +421,10 @@ export const PLANNER_STATS: PlannerStat[] = [
     ["costume", "undergarment"],
     { costume: "epic", undergarment: "divine" },
   ),
-  stat(
-    "healing",
-    "Healing",
-    ["costume", "undergarment"],
-    { costume: "epic", undergarment: "divine" },
-  ),
+  stat("healing", "Healing", ["costume", "undergarment"], {
+    costume: "epic",
+    undergarment: "divine",
+  }),
   stat(
     "melee-critical-rate",
     "Melee Critical Rate",

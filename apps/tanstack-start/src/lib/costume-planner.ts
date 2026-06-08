@@ -14,6 +14,7 @@ import {
   PLANNER_STATS,
   PRICE_LOOKUP_ITEM_NAMES,
   SALVAGE_OUTPUTS,
+  STAT_LINE_THRESHOLDS,
   SUBTYPE_ORDER,
   SYNTHESIS_MILESTONES,
 } from "./costume-planner-data.ts";
@@ -24,6 +25,7 @@ export {
   MATERIAL_PRICE_LOOKUP_NAMES,
   PLANNER_STATS,
   PRICE_LOOKUP_ITEM_NAMES,
+  STAT_LINE_THRESHOLDS,
 };
 export type {
   GearKind,
@@ -109,9 +111,12 @@ export interface CurrentItemInput {
 }
 
 export interface CurrentComparison {
-  recommendation: "continue" | "restart";
+  recommendation: "continue" | "restart" | "synth";
   continueCost: CostBreakdown;
   restartCost: CostBreakdown;
+  synthCost?: CostBreakdown;
+  synthGrade?: Grade;
+  synthReason?: "statLine" | "gradeReroll";
   subtype: SubtypeInference;
   checkpoints: RouteCheckpoint[];
 }
@@ -168,8 +173,33 @@ export function getAvailableStatIds(
     .map((stat) => stat.id);
 }
 
+export function getStatLineCount(kind: GearKind, grade: Grade): number {
+  const gradeIndex = getGradeIndex(grade);
+
+  return STAT_LINE_THRESHOLDS[kind].filter(
+    (threshold) => getGradeIndex(threshold) <= gradeIndex,
+  ).length;
+}
+
+export function getNextStatLineThreshold(
+  kind: GearKind,
+  currentGrade: Grade,
+  targetGrade: Grade,
+): Grade | undefined {
+  const currentGradeIndex = getGradeIndex(currentGrade);
+  const targetGradeIndex = getGradeIndex(targetGrade);
+
+  return STAT_LINE_THRESHOLDS[kind].find((threshold) => {
+    const thresholdIndex = getGradeIndex(threshold);
+    return (
+      thresholdIndex > currentGradeIndex && thresholdIndex <= targetGradeIndex
+    );
+  });
+}
+
 export function estimateExpectedRerolls({
   desiredStatIds,
+  freeAttempts = 0,
   grade,
   keptStatIds,
   kind,
@@ -181,6 +211,7 @@ export function estimateExpectedRerolls({
   subtype: PlannerSubtype;
   desiredStatIds: string[];
   keptStatIds: string[];
+  freeAttempts?: number;
   serendipityPrice?: number;
 }): RerollEstimate {
   const kept = new Set(keptStatIds);
@@ -193,12 +224,18 @@ export function estimateExpectedRerolls({
   );
   const expectedAttempts =
     favorable.length > 0 ? available.length / favorable.length : 0;
+  const successChance =
+    available.length > 0 ? favorable.length / available.length : 0;
+  const paidAttempts =
+    successChance > 0
+      ? Math.pow(1 - successChance, freeAttempts) * expectedAttempts
+      : 0;
 
   return {
     availableOutcomes: available.length,
     favorableOutcomes: favorable.length,
-    expectedAttempts,
-    expectedCost: expectedAttempts * serendipityPrice,
+    expectedAttempts: paidAttempts,
+    expectedCost: paidAttempts * serendipityPrice,
   };
 }
 
@@ -241,6 +278,7 @@ export function planTargetRoute({
   );
   const kept: string[] = [];
   const checkpoints: RouteCheckpoint[] = [];
+  const freeRerollGrades = getGradeUpRerollGrades("grand", targetGrade);
   let expectedRerolls = 0;
 
   for (const grade of GRADES) {
@@ -259,6 +297,7 @@ export function planTargetRoute({
         grade,
         subtype: plannerSubtype,
         desiredStatIds: [statId],
+        freeAttempts: consumeUsableFreeRerolls(freeRerollGrades, grade),
         keptStatIds: kept,
         serendipityPrice,
       });
@@ -380,9 +419,13 @@ export function compareCurrentItem({
   const keptTargetStats = desiredStatIds.filter((statId) =>
     currentStatSet.has(statId),
   );
-  const missingTargetStats = desiredStatIds.filter(
-    (statId) => !currentStatSet.has(statId),
-  );
+  const missingTargetStats = desiredStatIds
+    .filter((statId) => !currentStatSet.has(statId))
+    .sort(
+      (left, right) =>
+        getGradeIndex(getRerollGrade(kind, current.grade, left)) -
+        getGradeIndex(getRerollGrade(kind, current.grade, right)),
+    );
   const serendipityPrice = getMaterialPrice(
     "serendipityStone",
     prices,
@@ -399,24 +442,23 @@ export function compareCurrentItem({
     prices,
     materialPricing,
   );
+  const freeRerollGrades = getGradeUpRerollGrades(current.grade, targetGrade);
   let expectedRerolls = 0;
 
+  const estimatedKeptTargetStats = [...keptTargetStats];
   for (const statId of missingTargetStats) {
-    const stat = statById.get(statId);
-    const unlockGrade = stat?.unlockGradeByKind[kind] ?? current.grade;
-    const rerollGrade =
-      getGradeIndex(current.grade) > getGradeIndex(unlockGrade)
-        ? current.grade
-        : unlockGrade;
+    const rerollGrade = getRerollGrade(kind, current.grade, statId);
     const estimate = estimateExpectedRerolls({
       kind,
       grade: rerollGrade,
       subtype: plannerSubtype,
       desiredStatIds: [statId],
-      keptStatIds: keptTargetStats,
+      freeAttempts: consumeUsableFreeRerolls(freeRerollGrades, rerollGrade),
+      keptStatIds: estimatedKeptTargetStats,
       serendipityPrice,
     });
     expectedRerolls += estimate.expectedAttempts;
+    estimatedKeptTargetStats.push(statId);
   }
 
   const continueCost = buildCostBreakdown({
@@ -436,12 +478,40 @@ export function compareCurrentItem({
     salvageCredit,
     totalCost: route.targetCost.totalCost - salvageCredit,
   };
+  const synthCheckpoint = getNextUsefulSynthCheckpoint({
+    current,
+    desiredStatIds,
+    keptTargetStatCount: keptTargetStats.length,
+    kind,
+    subtype: plannerSubtype,
+    targetGrade,
+  });
+  const synthGrade = synthCheckpoint?.grade;
+  const synthCost =
+    synthCheckpoint && missingTargetStats.length > 0
+      ? buildSynthCost({
+          current,
+          materialPricing,
+          prices,
+          synthGrade: synthCheckpoint.grade,
+        })
+      : undefined;
+  const baseRecommendation =
+    continueCost.totalCost <= restartCost.totalCost ? "continue" : "restart";
+  const recommendation =
+    synthCost &&
+    (baseRecommendation === "restart" || keptTargetStats.length === 0) &&
+    synthCost.totalCost < restartCost.totalCost
+      ? "synth"
+      : baseRecommendation;
 
   return {
-    recommendation:
-      continueCost.totalCost <= restartCost.totalCost ? "continue" : "restart",
+    recommendation,
     continueCost,
     restartCost,
+    synthCost,
+    synthGrade,
+    synthReason: synthCheckpoint?.reason,
     subtype: route.subtype,
     checkpoints: route.checkpoints,
   };
@@ -481,9 +551,11 @@ export function compareCurrentStrategy({
   });
   const restartCost = addFlatCost(comparison.restartCost, baseItemCost);
   const recommendation =
-    comparison.continueCost.totalCost <= restartCost.totalCost
-      ? "continue"
-      : "restart";
+    comparison.recommendation === "synth"
+      ? "synth"
+      : comparison.continueCost.totalCost <= restartCost.totalCost
+        ? "continue"
+        : "restart";
 
   return {
     ...comparison,
@@ -539,6 +611,50 @@ function addFlatCost(cost: CostBreakdown, amount: number): CostBreakdown {
   };
 }
 
+function getGradeUpRerollGrades(fromGrade: Grade, toGrade: Grade): Grade[] {
+  const fromGradeIndex = getGradeIndex(fromGrade);
+  const toGradeIndex = getGradeIndex(toGrade);
+
+  return GRADES.filter((grade) => {
+    const gradeIndex = getGradeIndex(grade);
+    return gradeIndex > fromGradeIndex && gradeIndex <= toGradeIndex;
+  });
+}
+
+function consumeUsableFreeRerolls(
+  freeRerollGrades: Grade[],
+  minimumGrade: Grade,
+): number {
+  const minimumGradeIndex = getGradeIndex(minimumGrade);
+
+  for (let index = 0; index < freeRerollGrades.length; ) {
+    const grade = freeRerollGrades[index];
+    if (!grade) break;
+    if (getGradeIndex(grade) < minimumGradeIndex) {
+      index += 1;
+      continue;
+    }
+
+    freeRerollGrades.splice(index, 1);
+    return 1;
+  }
+
+  return 0;
+}
+
+function getRerollGrade(
+  kind: GearKind,
+  currentGrade: Grade,
+  statId: string,
+): Grade {
+  const stat = statById.get(statId);
+  const unlockGrade = stat?.unlockGradeByKind[kind] ?? currentGrade;
+
+  return getGradeIndex(currentGrade) > getGradeIndex(unlockGrade)
+    ? currentGrade
+    : unlockGrade;
+}
+
 function buildStrategyCheckpoints({
   baseItemCost,
   baseRoute,
@@ -591,16 +707,25 @@ function buildCurrentStrategyCheckpoints({
 }): StrategyCheckpoint[] {
   const checkpoints: StrategyCheckpoint[] = [
     {
-      grade: current.grade,
+      grade:
+        comparison.recommendation === "synth" && comparison.synthGrade
+          ? comparison.synthGrade
+          : current.grade,
       action: comparison.recommendation,
       label:
         comparison.recommendation === "continue"
           ? "Continue this item; its expected remaining cost is lower than salvaging into a fresh start."
-          : "Salvage this item and restart; the fresh route is cheaper in expectation after salvage credit.",
+          : comparison.recommendation === "synth" && comparison.synthGrade
+            ? comparison.synthReason === "gradeReroll"
+              ? `Synth to ${formatGrade(comparison.synthGrade)} and reassess after the grade-up reroll.`
+              : `Synth to ${formatGrade(comparison.synthGrade)} and reassess after the new stat line.`
+            : "Salvage this item and restart; the fresh route is cheaper in expectation after salvage credit.",
       expectedCost:
         comparison.recommendation === "continue"
           ? comparison.continueCost.totalCost
-          : comparison.restartCost.totalCost,
+          : comparison.recommendation === "synth" && comparison.synthCost
+            ? comparison.synthCost.totalCost
+            : comparison.restartCost.totalCost,
       restartCost: comparison.restartCost.totalCost,
     },
   ];
@@ -616,6 +741,123 @@ function buildCurrentStrategyCheckpoints({
   }
 
   return checkpoints;
+}
+
+function getNextUsefulSynthCheckpoint({
+  current,
+  desiredStatIds,
+  keptTargetStatCount,
+  kind,
+  subtype,
+  targetGrade,
+}: {
+  kind: GearKind;
+  current: CurrentItemInput;
+  targetGrade: Grade;
+  desiredStatIds: string[];
+  keptTargetStatCount: number;
+  subtype: PlannerSubtype;
+}): { grade: Grade; reason: "statLine" | "gradeReroll" } | undefined {
+  const currentStats = new Set(current.statIds);
+
+  for (const grade of GRADES) {
+    const gradeIndex = getGradeIndex(grade);
+    if (gradeIndex <= getGradeIndex(current.grade)) continue;
+    if (gradeIndex > getGradeIndex(targetGrade)) break;
+
+    const available = getAvailableStatIds(kind, grade, subtype).filter(
+      (statId) => !currentStats.has(statId),
+    );
+    const availableSet = new Set(available);
+    const hasUsefulTarget = desiredStatIds.some(
+      (statId) => !currentStats.has(statId) && availableSet.has(statId),
+    );
+
+    if (!hasUsefulTarget) continue;
+
+    const isStatLineThreshold = STAT_LINE_THRESHOLDS[kind].includes(grade);
+    if (
+      isStatLineThreshold &&
+      canReassessAfterStatLine({
+        keptTargetStatCount,
+        kind,
+        synthGrade: grade,
+      })
+    ) {
+      return { grade, reason: "statLine" };
+    }
+
+    if (
+      keptTargetStatCount > 0 &&
+      canReassessAfterGradeUpReroll({
+        currentGrade: current.grade,
+        keptTargetStatCount,
+        kind,
+      })
+    ) {
+      return { grade, reason: "gradeReroll" };
+    }
+  }
+
+  return undefined;
+}
+
+function canReassessAfterStatLine({
+  keptTargetStatCount,
+  kind,
+  synthGrade,
+}: {
+  kind: GearKind;
+  synthGrade: Grade;
+  keptTargetStatCount: number;
+}): boolean {
+  const statLinesAfterSynth = getStatLineCount(kind, synthGrade);
+  return keptTargetStatCount + 1 >= statLinesAfterSynth - 1;
+}
+
+function canReassessAfterGradeUpReroll({
+  currentGrade,
+  keptTargetStatCount,
+  kind,
+}: {
+  kind: GearKind;
+  currentGrade: Grade;
+  keptTargetStatCount: number;
+}): boolean {
+  return keptTargetStatCount + 1 >= getStatLineCount(kind, currentGrade);
+}
+
+function buildSynthCost({
+  current,
+  materialPricing,
+  prices,
+  synthGrade,
+}: {
+  current: CurrentItemInput;
+  synthGrade: Grade;
+  prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
+}): CostBreakdown {
+  const synthesis = getSynthesisDifference(
+    current.grade,
+    current.progress,
+    synthGrade,
+    0,
+  );
+  const materialCost = getMaterialCost(
+    synthesis.materials,
+    prices,
+    materialPricing,
+  );
+
+  return buildCostBreakdown({
+    materials: synthesis.materials,
+    materialCost,
+    craftGold: synthesis.craftGold,
+    expectedRerolls: 0,
+    rerollCost: 0,
+    salvageCredit: 0,
+  });
 }
 
 function getSynthesisDifference(
@@ -786,4 +1028,8 @@ function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, {
     maximumFractionDigits: 2,
   })}g`;
+}
+
+function formatGrade(grade: Grade): string {
+  return grade.charAt(0).toUpperCase() + grade.slice(1);
 }

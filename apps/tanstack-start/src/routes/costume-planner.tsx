@@ -18,11 +18,16 @@ import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
 import type {
+  CostBreakdown,
+  CurrentStrategyComparison,
   GearKind,
   Grade,
   MaterialPricingOptions,
+  OptimalStrategyRoute,
   PlannerMaterialId,
   PlannerPrices,
+  PlannerStat,
+  StrategyCheckpoint,
 } from "~/lib/costume-planner";
 import type { CostumePlannerState } from "~/lib/costume-planner-state";
 import type {
@@ -42,6 +47,7 @@ import {
   compareCurrentStrategy,
   getBoundRadiantSynthiumStonePrice,
   getPlannerStats,
+  getStatLineCount,
   GRADES,
   MATERIAL_LABELS,
   MATERIAL_PRICE_LOOKUP_NAMES,
@@ -264,7 +270,9 @@ function CostumePlannerPage() {
   const activeCost = comparison
     ? comparison.recommendation === "restart"
       ? comparison.restartCost
-      : comparison.continueCost
+      : comparison.recommendation === "synth" && comparison.synthCost
+        ? comparison.synthCost
+        : comparison.continueCost
     : (route?.targetCost ?? null);
   const activeBaseItemCost = comparison
     ? comparison.recommendation === "restart"
@@ -273,11 +281,11 @@ function CostumePlannerPage() {
     : (route?.baseItemCost ?? 0);
   const activeSerendipityUnitCost =
     materialPricing.serendipityStonePrice ?? prices.serendipityStone ?? 0;
-  const restartCost = comparison?.restartCost ?? null;
   const subtype = comparison?.subtype ?? route?.subtype ?? null;
   const conflict = subtype?.status === "conflict";
   const strategyCheckpoints =
     comparison?.strategyCheckpoints ?? route?.strategyCheckpoints ?? [];
+  const nextCheckpoint = strategyCheckpoints[0] ?? null;
   const createLoadout = useMutation(
     trpc.profile.createCostumePlannerLoadout.mutationOptions({
       onSuccess: async (created) => {
@@ -387,17 +395,32 @@ function CostumePlannerPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px]">
         <div className="flex flex-col gap-6">
           <Card>
             <CardHeader>
-              <CardTitle>Target item</CardTitle>
+              <CardTitle>Strategy setup</CardTitle>
               <CardDescription>
-                Subtype is inferred from selected typed stats. Pick up to five
-                stats.
+                Choose whether the route starts from a fresh item or from the
+                item you already have.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <StrategyModeButton
+                  active={!currentEnabled}
+                  title="From scratch"
+                  description="Optimize the full route including a fresh base item."
+                  onClick={() => updatePlannerState({ currentEnabled: false })}
+                />
+                <StrategyModeButton
+                  active={currentEnabled}
+                  title="I have an item"
+                  description="Compare continuing, synthesizing, or restarting."
+                  onClick={() => updatePlannerState({ currentEnabled: true })}
+                />
+              </div>
+
               <div className="grid gap-4 md:grid-cols-4">
                 <Field label="Kind">
                   <select
@@ -455,89 +478,7 @@ function CostumePlannerPage() {
                 </Field>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <PlannerOptionToggle
-                  checked={craftedSerendipities}
-                  label="Crafted Serendipities"
-                  description="Use craft 9000059 for Serendipity Stone reroll cost."
-                  onToggle={() =>
-                    updatePlannerState({
-                      craftedSerendipities: !craftedSerendipities,
-                    })
-                  }
-                />
-                <PlannerOptionToggle
-                  checked={boundSynthiumForEpicPlus}
-                  label="Bound Synthium for Epic+"
-                  description="Price Radiant Synthium through the bound Radiant recipe."
-                  onToggle={() =>
-                    updatePlannerState({
-                      boundSynthiumForEpicPlus: !boundSynthiumForEpicPlus,
-                    })
-                  }
-                />
-              </div>
-
-              {craftedSerendipities ? (
-                <SerendipityRecipeSelector
-                  entry={serendipityCraftEntry}
-                  loading={serendipityCraftQuery.isLoading}
-                  priceMap={serendipityPriceMap}
-                  overrideMap={overrideMap}
-                  proficiencyMap={proficiencyMap}
-                  subcraftMap={serendipityCraftData?.subcraftsByItemId ?? {}}
-                  modes={serendipityCraftModes}
-                  selectedCrafts={serendipitySelectedCrafts}
-                  unitCost={serendipityCraftCost}
-                  setModes={(nextModes) =>
-                    updatePlannerState({ serendipityCraftModes: nextModes })
-                  }
-                  setSelectedCrafts={(nextSelectedCrafts) =>
-                    updatePlannerState({
-                      serendipitySelectedCrafts: nextSelectedCrafts,
-                    })
-                  }
-                />
-              ) : null}
-
-              <StatPicker
-                options={statOptions}
-                selected={targetStats}
-                onToggle={(statId) =>
-                  updatePlannerState({
-                    targetStats: toggleStat(targetStats, statId),
-                  })
-                }
-                max={5}
-              />
-
-              <SubtypeBadge subtype={subtype} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <CardTitle>Current item comparison</CardTitle>
-                  <CardDescription>
-                    Optional. Add current grade and stats to compare continuing
-                    against salvaging and restarting.
-                  </CardDescription>
-                </div>
-                <Button
-                  type="button"
-                  variant={currentEnabled ? "default" : "outline"}
-                  onClick={() =>
-                    updatePlannerState({ currentEnabled: !currentEnabled })
-                  }
-                >
-                  {currentEnabled ? "Enabled" : "Enable"}
-                </Button>
-              </div>
-            </CardHeader>
-            {currentEnabled ? (
-              <CardContent className="flex flex-col gap-5">
+              {currentEnabled ? (
                 <div className="grid gap-4 md:grid-cols-4">
                   <Field label="Current grade">
                     <select
@@ -600,31 +541,146 @@ function CostumePlannerPage() {
                     />
                   </Field>
                 </div>
+              ) : null}
+            </CardContent>
+          </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle>Target stats</CardTitle>
+              <CardDescription>
+                Stats are grouped by unlock grade. The selected target grade
+                controls how many lines can be planned.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <StatPicker
+                grade={targetGrade}
+                kind={kind}
+                options={statOptions}
+                selected={targetStats}
+                onToggle={(statId) =>
+                  updatePlannerState({
+                    targetStats: toggleStat(
+                      targetStats,
+                      statId,
+                      statOptions,
+                      kind,
+                      targetGrade,
+                    ),
+                  })
+                }
+              />
+              <SubtypeBadge subtype={subtype} />
+            </CardContent>
+          </Card>
+
+          {currentEnabled ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Current stats</CardTitle>
+                <CardDescription>
+                  These are used to compare continuing against synth/restart
+                  options.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
                 <StatPicker
+                  grade={currentGrade}
+                  kind={kind}
                   options={currentStatOptions}
                   selected={currentStats}
                   onToggle={(statId) =>
                     updatePlannerState({
-                      currentStats: toggleStat(currentStats, statId),
+                      currentStats: toggleStat(
+                        currentStats,
+                        statId,
+                        currentStatOptions,
+                        kind,
+                        currentGrade,
+                      ),
                     })
                   }
-                  max={5}
                 />
               </CardContent>
-            ) : null}
-          </Card>
+            </Card>
+          ) : null}
         </div>
 
         <aside className="flex flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Saved loadouts</CardTitle>
-              <CardDescription>
-                Save named costume and undergarment planner snapshots.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
+          <DecisionDashboard
+            activeCost={activeCost}
+            activeBaseItemCost={activeBaseItemCost}
+            activeSerendipityUnitCost={activeSerendipityUnitCost}
+            comparison={comparison}
+            conflict={conflict}
+            craftedSerendipities={craftedSerendipities}
+            nextCheckpoint={nextCheckpoint}
+            route={route}
+          />
+
+          <details className="group min-w-0 overflow-hidden rounded-lg border">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+              Advanced pricing and crafting
+              <span className="text-muted-foreground group-open:rotate-180">
+                v
+              </span>
+            </summary>
+            <div className="min-w-0 overflow-hidden border-t p-4">
+              <div className="grid min-w-0 gap-3">
+                <PlannerOptionToggle
+                  checked={craftedSerendipities}
+                  label="Crafted Serendipities"
+                  description="Use craft 9000059 for Serendipity Stone reroll cost."
+                  onToggle={() =>
+                    updatePlannerState({
+                      craftedSerendipities: !craftedSerendipities,
+                    })
+                  }
+                />
+                <PlannerOptionToggle
+                  checked={boundSynthiumForEpicPlus}
+                  label="Bound Synthium for Epic+"
+                  description="Price Radiant Synthium through the bound Radiant recipe."
+                  onToggle={() =>
+                    updatePlannerState({
+                      boundSynthiumForEpicPlus: !boundSynthiumForEpicPlus,
+                    })
+                  }
+                />
+                {craftedSerendipities ? (
+                  <SerendipityRecipeSelector
+                    entry={serendipityCraftEntry}
+                    loading={serendipityCraftQuery.isLoading}
+                    priceMap={serendipityPriceMap}
+                    overrideMap={overrideMap}
+                    proficiencyMap={proficiencyMap}
+                    subcraftMap={serendipityCraftData?.subcraftsByItemId ?? {}}
+                    modes={serendipityCraftModes}
+                    selectedCrafts={serendipitySelectedCrafts}
+                    unitCost={serendipityCraftCost}
+                    setModes={(nextModes) =>
+                      updatePlannerState({ serendipityCraftModes: nextModes })
+                    }
+                    setSelectedCrafts={(nextSelectedCrafts) =>
+                      updatePlannerState({
+                        serendipitySelectedCrafts: nextSelectedCrafts,
+                      })
+                    }
+                  />
+                ) : null}
+              </div>
+            </div>
+          </details>
+
+          <details className="group rounded-lg border">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+              Saved loadouts
+              <span className="text-muted-foreground group-open:rotate-180">
+                v
+              </span>
+            </summary>
+            <div className="flex flex-col gap-3 border-t p-4">
               <Field label="Loadout">
                 <select
                   value={selectedLoadoutId}
@@ -685,124 +741,8 @@ function CostumePlannerPage() {
                   Copy share link
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Recommendation</CardTitle>
-              <CardDescription>
-                Uses current market prices, then profile overrides.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {conflict ? (
-                <p className="text-destructive text-sm">
-                  Selected stats require conflicting subtypes. Remove mixed
-                  typed stats to calculate a route.
-                </p>
-              ) : comparison ? (
-                <div className="flex flex-col gap-3">
-                  <Badge
-                    variant={
-                      comparison.recommendation === "continue"
-                        ? "default"
-                        : "secondary"
-                    }
-                    className="w-fit"
-                  >
-                    {comparison.recommendation === "continue"
-                      ? "Continue rerolling"
-                      : "Salvage and restart"}
-                  </Badge>
-                  <CostLine
-                    label="Continue"
-                    value={comparison.continueCost.totalCost}
-                  />
-                  <CostLine
-                    label="Restart"
-                    value={comparison.restartCost.totalCost}
-                  />
-                  <CostLine
-                    label="Salvage credit"
-                    value={comparison.restartCost.salvageCredit}
-                  />
-                  <CostLine
-                    label="Fresh base item"
-                    value={comparison.baseItemCost}
-                  />
-                </div>
-              ) : route ? (
-                <div className="flex flex-col gap-3">
-                  <Badge className="w-fit">Build from scratch</Badge>
-                  <CostLine
-                    label="Expected total"
-                    value={route.targetCost.totalCost}
-                  />
-                  <CostLine
-                    label="Fresh base item"
-                    value={route.baseItemCost}
-                  />
-                </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">
-                  Select target stats to calculate a route.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {activeCost ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Expected cost</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <CostLine label="Materials" value={activeCost.materialCost} />
-                <CostLine label="Craft gold" value={activeCost.craftGold} />
-                <CostLine label="Rerolls" value={activeCost.rerollCost} />
-                <CostLine
-                  label={
-                    craftedSerendipities ? "Crafted Serendipity" : "Serendipity"
-                  }
-                  value={activeSerendipityUnitCost}
-                />
-                {activeBaseItemCost > 0 ? (
-                  <CostLine
-                    label="Fresh base item"
-                    value={activeBaseItemCost}
-                  />
-                ) : null}
-                <div className="text-muted-foreground text-xs">
-                  {formatNumber(activeCost.expectedRerolls)} expected
-                  serendipity stones
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {restartCost ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Restart cost</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <CostLine
-                  label="Expected total"
-                  value={restartCost.totalCost}
-                />
-                <CostLine label="Rerolls" value={restartCost.rerollCost} />
-                <CostLine
-                  label="Fresh base item"
-                  value={comparison?.baseItemCost ?? 0}
-                />
-                <CostLine
-                  label="Salvage credit"
-                  value={restartCost.salvageCredit}
-                />
-              </CardContent>
-            </Card>
-          ) : null}
+            </div>
+          </details>
         </aside>
       </div>
 
@@ -925,6 +865,205 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
   );
 }
 
+function StrategyModeButton({
+  active,
+  description,
+  onClick,
+  title,
+}: {
+  active: boolean;
+  description: string;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "hover:bg-muted/60 flex min-h-20 flex-col gap-1 rounded-md border px-4 py-3 text-left transition-colors",
+        active && "border-primary bg-primary/10",
+      )}
+    >
+      <span className="text-sm font-semibold">{title}</span>
+      <span className="text-muted-foreground text-xs leading-5">
+        {description}
+      </span>
+    </button>
+  );
+}
+
+function DecisionDashboard({
+  activeBaseItemCost,
+  activeCost,
+  activeSerendipityUnitCost,
+  comparison,
+  conflict,
+  craftedSerendipities,
+  nextCheckpoint,
+  route,
+}: {
+  activeCost: CostBreakdown | null;
+  activeBaseItemCost: number;
+  activeSerendipityUnitCost: number;
+  comparison: CurrentStrategyComparison | null;
+  conflict: boolean;
+  craftedSerendipities: boolean;
+  nextCheckpoint: StrategyCheckpoint | null;
+  route: OptimalStrategyRoute | null;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Strategy decision</CardTitle>
+        <CardDescription>
+          Uses current market prices, then profile overrides.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {conflict ? (
+          <p className="text-destructive text-sm">
+            Selected stats require conflicting subtypes. Remove mixed typed
+            stats to calculate a route.
+          </p>
+        ) : comparison ? (
+          <>
+            <Badge
+              variant={
+                comparison.recommendation === "continue"
+                  ? "default"
+                  : "secondary"
+              }
+              className="w-fit"
+            >
+              {formatRecommendation(comparison)}
+            </Badge>
+            <div className="grid gap-2">
+              <CostOption
+                active={comparison.recommendation === "continue"}
+                label="Continue"
+                value={comparison.continueCost.totalCost}
+              />
+              {comparison.synthCost && comparison.synthGrade ? (
+                <CostOption
+                  active={comparison.recommendation === "synth"}
+                  label={`Synth to ${formatGrade(comparison.synthGrade)}`}
+                  value={comparison.synthCost.totalCost}
+                />
+              ) : null}
+              <CostOption
+                active={comparison.recommendation === "restart"}
+                label="Restart"
+                value={comparison.restartCost.totalCost}
+              />
+            </div>
+            <CostLine
+              label="Salvage credit"
+              value={comparison.restartCost.salvageCredit}
+            />
+            <CostLine label="Fresh base item" value={comparison.baseItemCost} />
+          </>
+        ) : route ? (
+          <>
+            <Badge className="w-fit">Build from scratch</Badge>
+            <CostOption
+              active
+              label="Expected total"
+              value={route.targetCost.totalCost}
+            />
+            <CostLine label="Fresh base item" value={route.baseItemCost} />
+          </>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            Select target stats to calculate a route.
+          </p>
+        )}
+
+        {activeCost ? (
+          <CostBreakdownCard
+            activeBaseItemCost={activeBaseItemCost}
+            activeCost={activeCost}
+            activeSerendipityUnitCost={activeSerendipityUnitCost}
+            craftedSerendipities={craftedSerendipities}
+          />
+        ) : null}
+
+        {nextCheckpoint ? (
+          <div className="bg-muted/50 rounded-md border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">Next action</span>
+              <Badge variant="secondary" className="capitalize">
+                {nextCheckpoint.action}
+              </Badge>
+            </div>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {nextCheckpoint.label}
+            </p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              {formatGold(nextCheckpoint.expectedCost)} expected checkpoint cost
+            </p>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CostOption({
+  active,
+  label,
+  value,
+}: {
+  active: boolean;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm",
+        active && "border-primary bg-primary/10",
+      )}
+    >
+      <span className="font-medium">{label}</span>
+      <span className="font-semibold tabular-nums">{formatGold(value)}</span>
+    </div>
+  );
+}
+
+function CostBreakdownCard({
+  activeBaseItemCost,
+  activeCost,
+  activeSerendipityUnitCost,
+  craftedSerendipities,
+}: {
+  activeCost: CostBreakdown;
+  activeBaseItemCost: number;
+  activeSerendipityUnitCost: number;
+  craftedSerendipities: boolean;
+}) {
+  return (
+    <div className="rounded-md border p-3">
+      <p className="mb-3 text-sm font-medium">Selected path cost</p>
+      <div className="flex flex-col gap-2">
+        <CostLine label="Materials" value={activeCost.materialCost} />
+        <CostLine label="Craft gold" value={activeCost.craftGold} />
+        <CostLine label="Rerolls" value={activeCost.rerollCost} />
+        <CostLine
+          label={craftedSerendipities ? "Crafted Serendipity" : "Serendipity"}
+          value={activeSerendipityUnitCost}
+        />
+        {activeBaseItemCost > 0 ? (
+          <CostLine label="Fresh base item" value={activeBaseItemCost} />
+        ) : null}
+        <div className="text-muted-foreground pt-1 text-xs">
+          {formatNumber(activeCost.expectedRerolls)} expected serendipity stones
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlannerOptionToggle({
   checked,
   description,
@@ -1011,7 +1150,7 @@ function SerendipityRecipeSelector({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border p-3">
+    <div className="flex min-w-0 flex-col gap-3 overflow-hidden rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium">Serendipity craft cost</p>
@@ -1152,7 +1291,10 @@ function SerendipityRecipeTree({
                                 [item.id]: Number(event.target.value),
                               })
                             }
-                            className={cn(selectClassName, "h-8 w-40")}
+                            className={cn(
+                              selectClassName,
+                              "h-8 min-w-0 sm:w-40",
+                            )}
                           >
                             {subEntries.map((subEntry) => (
                               <option
@@ -1188,7 +1330,7 @@ function SerendipityRecipeTree({
                   }
                 />
                 {mode === "craft" && selectedSubEntry ? (
-                  <div className="border-muted-foreground/20 ml-3 border-l-2 pl-3">
+                  <div className="border-muted-foreground/20 min-w-0 border-l-2 pl-3 sm:ml-3">
                     <SerendipityRecipeTree
                       entry={selectedSubEntry}
                       producedItemId={item.id}
@@ -1216,40 +1358,118 @@ function SerendipityRecipeTree({
 }
 
 function StatPicker({
-  max,
+  grade,
+  kind,
   onToggle,
   options,
   selected,
 }: {
-  options: { id: string; label: string }[];
+  grade: Grade;
+  kind: GearKind;
+  options: PlannerStat[];
   selected: string[];
   onToggle: (statId: string) => void;
-  max: number;
 }) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {options.map((stat) => {
-        const checked = selected.includes(stat.id);
-        const disabled = !checked && selected.length >= max;
+  const max = getStatLineCount(kind, grade);
+  const grouped = GRADES.map((unlockGrade) => ({
+    grade: unlockGrade,
+    stats: options.filter(
+      (stat) => getStatUnlockGrade(stat, kind) === unlockGrade,
+    ),
+  })).filter((group) => group.stats.length > 0);
 
-        return (
-          <button
-            key={stat.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onToggle(stat.id)}
-            className={cn(
-              "hover:bg-muted/60 flex min-h-10 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-              checked && "border-primary bg-primary/10",
-            )}
-          >
-            <Checkbox checked={checked} tabIndex={-1} aria-hidden />
-            <span>{stat.label}</span>
-          </button>
-        );
-      })}
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-muted-foreground text-xs">
+        {selected.length} / {max} stats selected for {formatGrade(grade)}
+      </div>
+      {grouped.map((group) => (
+        <div key={group.grade} className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <GradeBadge grade={group.grade} />
+            <span className="text-muted-foreground text-xs">Unlock grade</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {group.stats.map((stat) => {
+              const checked = selected.includes(stat.id);
+              const unlocked = isStatUnlockedAtGrade(stat, kind, grade);
+              const disabled =
+                !checked && (!unlocked || selected.length >= max);
+
+              return (
+                <button
+                  key={stat.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onToggle(stat.id)}
+                  className={cn(
+                    "hover:bg-muted/60 flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                    checked && "border-primary bg-primary/10",
+                  )}
+                >
+                  <Checkbox checked={checked} tabIndex={-1} aria-hidden />
+                  <span className="min-w-0 flex-1">{stat.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
+}
+
+function GradeBadge({ grade }: { grade: Grade }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-medium",
+        "text-xs",
+        getGradeBadgeClassName(grade),
+      )}
+    >
+      {formatGrade(grade)}
+    </span>
+  );
+}
+
+function getStatUnlockGrade(stat: PlannerStat, kind: GearKind): Grade | null {
+  return stat.unlockGradeByKind[kind] ?? null;
+}
+
+function isStatUnlockedAtGrade(
+  stat: PlannerStat,
+  kind: GearKind,
+  grade: Grade,
+): boolean {
+  const unlockGrade = getStatUnlockGrade(stat, kind);
+  if (!unlockGrade) return false;
+  return GRADES.indexOf(unlockGrade) <= GRADES.indexOf(grade);
+}
+
+function getGradeBadgeClassName(grade: Grade): string {
+  switch (grade) {
+    case "grand":
+      return "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+    case "rare":
+      return "border-sky-500/40 bg-sky-500/15 text-sky-700 dark:text-sky-300";
+    case "arcane":
+      return "border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300";
+    case "heroic":
+      return "border-orange-500/40 bg-orange-500/15 text-orange-700 dark:text-orange-300";
+    case "unique":
+      return "border-rose-400/40 bg-rose-400/15 text-rose-700 dark:text-rose-300";
+    case "celestial":
+      return "border-pink-600/40 bg-pink-600/15 text-pink-700 dark:text-pink-300";
+    case "divine":
+      return "border-amber-700/40 bg-amber-700/15 text-amber-800 dark:text-amber-300";
+    case "epic":
+      return "border-slate-400/50 bg-slate-400/15 text-slate-700 dark:text-slate-200";
+    case "legendary":
+      return "border-yellow-500/50 bg-yellow-500/15 text-yellow-700 dark:text-yellow-300";
+    case "mythic":
+      return "border-red-700/50 bg-red-700/15 text-red-800 dark:text-red-300";
+  }
 }
 
 function SubtypeBadge({
@@ -1288,11 +1508,27 @@ function CostLine({ label, value }: { label: string; value: number }) {
   );
 }
 
-function toggleStat(current: string[], statId: string): string[] {
+function formatRecommendation(comparison: CurrentStrategyComparison): string {
+  if (comparison.recommendation === "continue") return "Continue rerolling";
+  if (comparison.recommendation === "synth" && comparison.synthGrade) {
+    return `Synth to ${formatGrade(comparison.synthGrade)} and reassess`;
+  }
+  return "Salvage and restart";
+}
+
+function toggleStat(
+  current: string[],
+  statId: string,
+  options: PlannerStat[],
+  kind: GearKind,
+  grade: Grade,
+): string[] {
   if (current.includes(statId)) {
     return current.filter((id) => id !== statId);
   }
-  if (current.length >= 5) return current;
+  const stat = options.find((option) => option.id === statId);
+  if (!stat || !isStatUnlockedAtGrade(stat, kind, grade)) return current;
+  if (current.length >= getStatLineCount(kind, grade)) return current;
   return [...current, statId];
 }
 
