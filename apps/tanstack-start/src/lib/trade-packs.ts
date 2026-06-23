@@ -2,8 +2,8 @@ import { getItemPrice } from "~/lib/craft-optimizer";
 import { getDiscountedLabor } from "~/lib/proficiency";
 
 export const REWARD_ITEM_IDS = {
-  charcoal: 32103,
-  dragonEssence: 32106,
+  charcoalStabilizer: 32103,
+  dragonEssenceStabilizer: 32106,
   lordsCoin: 26880,
 } as const;
 
@@ -12,8 +12,7 @@ export type RewardItemName =
   | "Charcoal Stabilizer"
   | "Dragon Essence Stabilizer"
   | "Gilda Star"
-  | "Lord's Pence"
-  | (string & {});
+  | "Lord's Pence";
 
 export interface TradePack {
   name: string;
@@ -21,7 +20,7 @@ export interface TradePack {
   rewardItemName: RewardItemName;
   destination: string;
   itemId: number;
-  filename: string;
+  filename: string | null;
   origin: string;
   route: string;
   isLarder: boolean;
@@ -53,13 +52,14 @@ export interface TradePackCraftData {
 }
 
 export interface TradePackInputs {
+  pack: TradePack;
+  craft: TradePackCraftData | null;
   priceMap: PriceMap;
   overrideMap?: OverrideMap;
   proficiencyMap?: ProficiencyMap;
-  craftDataByItemId?: Map<number, TradePackCraftData>;
   gildaStarValue?: number;
-  larderCost?: number;
-  larderLabor?: number;
+  larderCostPerPack?: number;
+  larderLaborPerPack?: number;
   turnInLabor?: number;
 }
 
@@ -79,7 +79,7 @@ export interface TradePackResult {
 export interface TradePackFilters {
   origin?: string;
   destination?: string;
-  reward?: string;
+  rewardItemName?: RewardItemName | "all";
 }
 
 export interface TradePackRunSummary extends TradePackMetrics {
@@ -115,13 +115,13 @@ export function getRewardUnitValue(
       return 1;
     case "Charcoal Stabilizer":
       return getItemPrice(
-        REWARD_ITEM_IDS.charcoal,
+        REWARD_ITEM_IDS.charcoalStabilizer,
         inputs.priceMap,
         overrideMap,
       );
     case "Dragon Essence Stabilizer":
       return getItemPrice(
-        REWARD_ITEM_IDS.dragonEssence,
+        REWARD_ITEM_IDS.dragonEssenceStabilizer,
         inputs.priceMap,
         overrideMap,
       );
@@ -132,17 +132,19 @@ export function getRewardUnitValue(
         getItemPrice(REWARD_ITEM_IDS.lordsCoin, inputs.priceMap, overrideMap) /
         100
       );
-    default:
-      return 0;
   }
 }
 
-export function calculateMaterialCost(
-  materials: TradePackMaterial[],
-  priceMap: PriceMap,
-  overrideMap: OverrideMap = new Map(),
-): number {
-  return materials.reduce(
+export function calculateMaterialCost({
+  craft,
+  priceMap,
+  overrideMap = new Map(),
+}: {
+  craft: TradePackCraftData;
+  priceMap: PriceMap;
+  overrideMap?: OverrideMap;
+}): number {
+  return craft.materials.reduce(
     (total, material) =>
       total +
       getItemPrice(material.itemId, priceMap, overrideMap) * material.amount,
@@ -150,10 +152,8 @@ export function calculateMaterialCost(
   );
 }
 
-export function calculatePackMetrics(
-  pack: TradePack,
-  inputs: TradePackInputs,
-): TradePackMetrics {
+export function calculatePackMetrics(inputs: TradePackInputs): TradePackMetrics {
+  const { pack, craft } = inputs;
   const overrideMap = getOverrideMap(inputs.overrideMap);
   const proficiencyMap = getProficiencyMap(inputs.proficiencyMap);
   const turnInLabor = getDiscountedLabor(
@@ -173,19 +173,18 @@ export function calculatePackMetrics(
   let labor = turnInLabor;
 
   if (!pack.isFreePack && pack.isLarder) {
-    cost = inputs.larderCost ?? 0;
-    labor += inputs.larderLabor ?? 0;
+    cost = inputs.larderCostPerPack ?? 0;
+    labor += inputs.larderLaborPerPack ?? 0;
   } else if (!pack.isFreePack) {
-    const craftData = inputs.craftDataByItemId?.get(pack.itemId);
-    if (craftData) {
-      cost = calculateMaterialCost(
-        craftData.materials,
-        inputs.priceMap,
+    if (craft) {
+      cost = calculateMaterialCost({
+        craft,
+        priceMap: inputs.priceMap,
         overrideMap,
-      );
+      });
       labor += getDiscountedLabor(
-        craftData.labor,
-        craftData.proficiency,
+        craft.labor,
+        craft.proficiency,
         proficiencyMap,
       );
     }
@@ -209,12 +208,12 @@ export function filterTradePacks(
   return packs.filter((pack) => {
     const origin = filters.origin ?? "all";
     const destination = filters.destination ?? "all";
-    const reward = filters.reward ?? "all";
+    const rewardItemName = filters.rewardItemName ?? "all";
 
     return (
       (origin === "all" || pack.origin === origin) &&
       (destination === "all" || pack.destination === destination) &&
-      (reward === "all" || pack.rewardItemName === reward)
+      (rewardItemName === "all" || pack.rewardItemName === rewardItemName)
     );
   });
 }

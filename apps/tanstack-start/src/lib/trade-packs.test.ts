@@ -17,6 +17,8 @@ registerHooks({
 });
 
 const {
+  REWARD_ITEM_IDS,
+  calculateMaterialCost,
   calculatePackMetrics,
   filterTradePacks,
   getRewardUnitValue,
@@ -26,8 +28,13 @@ const {
 } = await import("./trade-packs.ts");
 
 type PriceMap = import("./trade-packs.ts").PriceMap;
+type RewardItemName = import("./trade-packs.ts").RewardItemName;
 type TradePack = import("./trade-packs.ts").TradePack;
 type TradePackCraftData = import("./trade-packs.ts").TradePackCraftData;
+
+// @ts-expect-error RewardItemName is intentionally limited to known rewards.
+const invalidRewardItemName: RewardItemName = "Unknown Reward";
+void invalidRewardItemName;
 
 const priceMap: PriceMap = new Map([
   [32103, { avg24h: "2.50", avg7d: null, avg30d: null }],
@@ -49,6 +56,12 @@ const basePack: TradePack = {
   isFreePack: false,
 };
 
+const nullableFilenamePack: TradePack = {
+  ...basePack,
+  filename: null,
+};
+void nullableFilenamePack;
+
 const baseCraft: TradePackCraftData = {
   labor: 125,
   proficiency: "Alchemy",
@@ -56,6 +69,11 @@ const baseCraft: TradePackCraftData = {
 };
 
 void test("getRewardUnitValue returns direct and item-backed reward values", () => {
+  assert.deepEqual(REWARD_ITEM_IDS, {
+    charcoalStabilizer: 32103,
+    dragonEssenceStabilizer: 32106,
+    lordsCoin: 26880,
+  });
   assert.equal(getRewardUnitValue("Gold", { priceMap }), 1);
   assert.equal(getRewardUnitValue("Charcoal Stabilizer", { priceMap }), 2.5);
   assert.equal(
@@ -69,10 +87,22 @@ void test("getRewardUnitValue returns direct and item-backed reward values", () 
   assert.equal(getRewardUnitValue("Lord's Pence", { priceMap }), 1);
 });
 
+void test("calculateMaterialCost uses buy-price craft materials", () => {
+  assert.equal(
+    calculateMaterialCost({
+      craft: baseCraft,
+      priceMap,
+      overrideMap: new Map([[10, 4]]),
+    }),
+    8,
+  );
+});
+
 void test("calculatePackMetrics uses buy-price materials and Commerce turn-in labor", () => {
-  const metrics = calculatePackMetrics(basePack, {
+  const metrics = calculatePackMetrics({
+    pack: basePack,
+    craft: baseCraft,
     priceMap,
-    craftDataByItemId: new Map([[31842, baseCraft]]),
   });
 
   assert.equal(metrics.revenue, 19.5);
@@ -83,31 +113,30 @@ void test("calculatePackMetrics uses buy-price materials and Commerce turn-in la
 });
 
 void test("calculatePackMetrics applies larder cost and labor overrides", () => {
-  const metrics = calculatePackMetrics(
-    { ...basePack, isLarder: true },
-    {
-      priceMap,
-      craftDataByItemId: new Map([[31842, baseCraft]]),
-      larderCost: 12,
-      larderLabor: 75,
-    },
-  );
+  const metrics = calculatePackMetrics({
+    pack: { ...basePack, isLarder: true },
+    craft: baseCraft,
+    priceMap,
+    larderCostPerPack: 12,
+    larderLaborPerPack: 75,
+  });
 
   assert.equal(metrics.cost, 12);
   assert.equal(metrics.labor, 185);
 });
 
 void test("calculatePackMetrics uses zero cost and turn-in labor only for free packs", () => {
-  const metrics = calculatePackMetrics(
-    {
+  const metrics = calculatePackMetrics({
+    pack: {
       ...basePack,
       name: "Fish-Food Free Pack",
       payout: 99.3148,
       rewardItemName: "Lord's Pence",
       isFreePack: true,
     },
-    { priceMap, craftDataByItemId: new Map([[31842, baseCraft]]) },
-  );
+    craft: baseCraft,
+    priceMap,
+  });
 
   assert.equal(metrics.revenue, 99.3148);
   assert.equal(metrics.cost, 0);
@@ -115,7 +144,7 @@ void test("calculatePackMetrics uses zero cost and turn-in labor only for free p
   assert.equal(metrics.profit, 99.3148);
 });
 
-void test("filterTradePacks filters by origin, destination, and reward", () => {
+void test("filterTradePacks filters by origin, destination, and reward item name", () => {
   const packs: TradePack[] = [
     basePack,
     {
@@ -135,7 +164,7 @@ void test("filterTradePacks filters by origin, destination, and reward", () => {
     filterTradePacks(packs, {
       origin: "Solis",
       destination: "Arcum Iris",
-      reward: "Gold",
+      rewardItemName: "Gold",
     }).map((pack) => pack.name),
     ["Solis Alchemy Oil"],
   );
