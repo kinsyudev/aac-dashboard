@@ -20,6 +20,9 @@ const KNOWN_REWARDS = new Set([
 
 const LARDER_RE = /Aged Cheese|Aged Salve|Aged Honey/;
 const FREE_PACK_ITEM_IDS = new Set([43323, 43324, 9000362, 9000414]);
+const EXPECTED_PACK_COUNT = 7998;
+
+// Origin prefixes found in pack names that are not present as destination zones.
 const NON_ZONE_ORIGIN_PREFIXES = [
   "Ahnimar",
   "Airain",
@@ -51,14 +54,87 @@ const NON_ZONE_ORIGIN_PREFIXES = [
   "Windscour",
 ];
 
-function normalizeRawRow(row) {
+function describeRawRow(row, index) {
+  if (row == null || typeof row !== "object" || Array.isArray(row)) {
+    return `row ${index}`;
+  }
+
+  const name = typeof row.name_x === "string" ? row.name_x : "unknown name";
+  const itemId = typeof row.item_id === "number" ? row.item_id : "unknown id";
+  return `row ${index} (${itemId} ${name})`;
+}
+
+function assertNonEmptyString(value, fieldName, row, index) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `Invalid pack_data.json ${describeRawRow(
+        row,
+        index,
+      )}: ${fieldName} must be a non-empty string.`,
+    );
+  }
+
+  return value;
+}
+
+function assertFiniteNumber(value, fieldName, row, index) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(
+      `Invalid pack_data.json ${describeRawRow(
+        row,
+        index,
+      )}: ${fieldName} must be a finite number.`,
+    );
+  }
+
+  return value;
+}
+
+function assertIntegerNumber(value, fieldName, row, index) {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error(
+      `Invalid pack_data.json ${describeRawRow(
+        row,
+        index,
+      )}: ${fieldName} must be an integer number.`,
+    );
+  }
+
+  return value;
+}
+
+function assertNullableString(value, fieldName, row, index) {
+  if (value !== null && typeof value !== "string") {
+    throw new Error(
+      `Invalid pack_data.json ${describeRawRow(
+        row,
+        index,
+      )}: ${fieldName} must be null or a string.`,
+    );
+  }
+
+  return value;
+}
+
+function normalizeRawRow(row, index) {
+  if (row == null || typeof row !== "object" || Array.isArray(row)) {
+    throw new Error(
+      `Invalid pack_data.json row ${index}: row must be an object.`,
+    );
+  }
+
   return {
-    name: String(row.name_x),
-    payout: Number(row.payout),
-    rewardItemName: String(row.reward_item_name),
-    destination: String(row.zone),
-    itemId: Number(row.item_id),
-    filename: row.filename == null ? null : String(row.filename),
+    name: assertNonEmptyString(row.name_x, "name_x", row, index),
+    payout: assertFiniteNumber(row.payout, "payout", row, index),
+    rewardItemName: assertNonEmptyString(
+      row.reward_item_name,
+      "reward_item_name",
+      row,
+      index,
+    ),
+    destination: assertNonEmptyString(row.zone, "zone", row, index),
+    itemId: assertIntegerNumber(row.item_id, "item_id", row, index),
+    filename: assertNullableString(row.filename, "filename", row, index),
   };
 }
 
@@ -125,6 +201,12 @@ if (sameOriginRows.length > 0) {
     .map((row) => `${row.itemId} ${row.name} -> ${row.destination}`)
     .join("\n");
   throw new Error(`Found ${sameOriginRows.length} same-origin rows:\n${sample}`);
+}
+
+if (packs.length !== EXPECTED_PACK_COUNT) {
+  throw new Error(
+    `Expected ${EXPECTED_PACK_COUNT} trade pack rows, found ${packs.length}.`,
+  );
 }
 
 const output = {
