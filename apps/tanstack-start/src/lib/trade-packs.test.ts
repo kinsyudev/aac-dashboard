@@ -87,6 +87,22 @@ void test("getRewardUnitValue returns direct and item-backed reward values", () 
   assert.equal(getRewardUnitValue("Lord's Pence", { priceMap }), 1);
 });
 
+void test("getRewardUnitValue applies item-backed reward overrides", () => {
+  const overrideMap = new Map([
+    [32103, 3.75],
+    [26880, 125],
+  ]);
+
+  assert.equal(
+    getRewardUnitValue("Charcoal Stabilizer", { priceMap, overrideMap }),
+    3.75,
+  );
+  assert.equal(
+    getRewardUnitValue("Lord's Pence", { priceMap, overrideMap }),
+    1.25,
+  );
+});
+
 void test("calculateMaterialCost uses buy-price craft materials", () => {
   assert.equal(
     calculateMaterialCost({
@@ -112,10 +128,46 @@ void test("calculatePackMetrics uses buy-price materials and Commerce turn-in la
   assert.equal(metrics.silverPerLabor, (13.5 * 100) / 235);
 });
 
+void test("calculatePackMetrics throws when normal pack craft data is missing", () => {
+  assert.throws(
+    () =>
+      calculatePackMetrics({
+        pack: basePack,
+        craft: null,
+        priceMap,
+      }),
+    /Missing craft data for trade pack item 31842/,
+  );
+});
+
+void test("calculatePackMetrics discounts Commerce turn-in labor", () => {
+  const metrics = calculatePackMetrics({
+    pack: { ...basePack, isFreePack: true },
+    craft: null,
+    priceMap,
+    proficiencyMap: new Map([["Commerce", 10000]]),
+  });
+
+  assert.equal(metrics.labor, 105);
+});
+
 void test("calculatePackMetrics applies larder cost and labor overrides", () => {
   const metrics = calculatePackMetrics({
     pack: { ...basePack, isLarder: true },
     craft: baseCraft,
+    priceMap,
+    larderCostPerPack: 12,
+    larderLaborPerPack: 75,
+  });
+
+  assert.equal(metrics.cost, 12);
+  assert.equal(metrics.labor, 185);
+});
+
+void test("calculatePackMetrics allows larders without craft data", () => {
+  const metrics = calculatePackMetrics({
+    pack: { ...basePack, isLarder: true },
+    craft: null,
     priceMap,
     larderCostPerPack: 12,
     larderLaborPerPack: 75,
@@ -142,6 +194,23 @@ void test("calculatePackMetrics uses zero cost and turn-in labor only for free p
   assert.equal(metrics.cost, 0);
   assert.equal(metrics.labor, 110);
   assert.equal(metrics.profit, 99.3148);
+});
+
+void test("calculatePackMetrics allows free packs without craft data", () => {
+  const metrics = calculatePackMetrics({
+    pack: {
+      ...basePack,
+      name: "Fish-Food Free Pack",
+      payout: 99.3148,
+      rewardItemName: "Lord's Pence",
+      isFreePack: true,
+    },
+    craft: null,
+    priceMap,
+  });
+
+  assert.equal(metrics.cost, 0);
+  assert.equal(metrics.labor, 110);
 });
 
 void test("filterTradePacks filters by origin, destination, and reward item name", () => {

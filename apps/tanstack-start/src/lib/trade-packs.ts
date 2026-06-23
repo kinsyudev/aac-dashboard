@@ -176,18 +176,16 @@ export function calculatePackMetrics(inputs: TradePackInputs): TradePackMetrics 
     cost = inputs.larderCostPerPack ?? 0;
     labor += inputs.larderLaborPerPack ?? 0;
   } else if (!pack.isFreePack) {
-    if (craft) {
-      cost = calculateMaterialCost({
-        craft,
-        priceMap: inputs.priceMap,
-        overrideMap,
-      });
-      labor += getDiscountedLabor(
-        craft.labor,
-        craft.proficiency,
-        proficiencyMap,
-      );
+    if (!craft) {
+      throw new Error(`Missing craft data for trade pack item ${pack.itemId}`);
     }
+
+    cost = calculateMaterialCost({
+      craft,
+      priceMap: inputs.priceMap,
+      overrideMap,
+    });
+    labor += getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap);
   }
 
   const profit = revenue - cost;
