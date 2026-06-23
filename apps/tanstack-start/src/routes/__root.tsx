@@ -45,6 +45,7 @@ const APP_DESCRIPTION = getDefaultDescription();
 const NAV_ITEMS = [
   { to: "/craft", label: "Craft", access: "member" },
   { to: "/item", label: "Items", access: "member" },
+  { to: "/trade-packs", label: "Trade Packs", access: "member" },
   { to: "/costume-planner", label: "Costume Planner", access: "member" },
   { to: "/simulator", label: "Simulator", access: "admin" },
   { to: "/shoplists", label: "Shopping Lists", access: "member" },

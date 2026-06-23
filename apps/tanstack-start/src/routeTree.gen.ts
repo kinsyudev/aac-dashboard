@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TradePacksRouteImport } from './routes/trade-packs'
 import { Route as SimulatorRouteImport } from './routes/simulator'
 import { Route as ShoplistsRouteImport } from './routes/shoplists'
 import { Route as ShoplistRouteImport } from './routes/shoplist'
@@ -34,6 +35,11 @@ import { Route as ApiStaticCraftsAllRouteImport } from './routes/api/static/craf
 import { Route as ApiDevImpersonationRouteImport } from './routes/api/dev/impersonation'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 
+const TradePacksRoute = TradePacksRouteImport.update({
+  id: '/trade-packs',
+  path: '/trade-packs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SimulatorRoute = SimulatorRouteImport.update({
   id: '/simulator',
   path: '/simulator',
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
+  '/trade-packs': typeof TradePacksRoute
   '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
@@ -186,6 +193,7 @@ export interface FileRoutesByTo {
   '/costume-planner': typeof CostumePlannerRoute
   '/profile': typeof ProfileRoute
   '/shoplist': typeof ShoplistRoute
+  '/trade-packs': typeof TradePacksRoute
   '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
@@ -213,6 +221,7 @@ export interface FileRoutesById {
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
+  '/trade-packs': typeof TradePacksRoute
   '/auth/error': typeof AuthErrorRoute
   '/craft/$itemId': typeof CraftItemIdRoute
   '/item/$itemId': typeof ItemItemIdRoute
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
+    | '/trade-packs'
     | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
@@ -263,6 +273,7 @@ export interface FileRouteTypes {
     | '/costume-planner'
     | '/profile'
     | '/shoplist'
+    | '/trade-packs'
     | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
+    | '/trade-packs'
     | '/auth/error'
     | '/craft/$itemId'
     | '/item/$itemId'
@@ -316,6 +328,7 @@ export interface RootRouteChildren {
   ShoplistRoute: typeof ShoplistRoute
   ShoplistsRoute: typeof ShoplistsRouteWithChildren
   SimulatorRoute: typeof SimulatorRouteWithChildren
+  TradePacksRoute: typeof TradePacksRoute
   AuthErrorRoute: typeof AuthErrorRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiDevImpersonationRoute: typeof ApiDevImpersonationRoute
@@ -326,6 +339,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/trade-packs': {
+      id: '/trade-packs'
+      path: '/trade-packs'
+      fullPath: '/trade-packs'
+      preLoaderRoute: typeof TradePacksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/simulator': {
       id: '/simulator'
       path: '/simulator'
@@ -562,6 +582,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShoplistRoute: ShoplistRoute,
   ShoplistsRoute: ShoplistsRouteWithChildren,
   SimulatorRoute: SimulatorRouteWithChildren,
+  TradePacksRoute: TradePacksRoute,
   AuthErrorRoute: AuthErrorRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiDevImpersonationRoute: ApiDevImpersonationRoute,
