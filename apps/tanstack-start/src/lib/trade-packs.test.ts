@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { test } from "node:test";
 
+import type {
+  PriceMap,
+  RewardItemName,
+  TradePack,
+  TradePackCraftData,
+} from "./trade-packs.ts";
+
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier.startsWith("~/")) {
@@ -26,11 +33,6 @@ const {
   getTopPacksByRevenue,
   summarizePackRun,
 } = await import("./trade-packs.ts");
-
-type PriceMap = import("./trade-packs.ts").PriceMap;
-type RewardItemName = import("./trade-packs.ts").RewardItemName;
-type TradePack = import("./trade-packs.ts").TradePack;
-type TradePackCraftData = import("./trade-packs.ts").TradePackCraftData;
 
 // @ts-expect-error RewardItemName is intentionally limited to known rewards.
 const invalidRewardItemName: RewardItemName = "Unknown Reward";
@@ -111,6 +113,34 @@ void test("calculateMaterialCost uses buy-price craft materials", () => {
       overrideMap: new Map([[10, 4]]),
     }),
     8,
+  );
+});
+
+void test("calculateMaterialCost throws when a material price is missing", () => {
+  assert.throws(
+    () =>
+      calculateMaterialCost({
+        craft: {
+          ...baseCraft,
+          materials: [{ itemId: 999, amount: 1 }],
+        },
+        priceMap,
+      }),
+    /Missing material price for trade pack item 999/,
+  );
+});
+
+void test("calculateMaterialCost accepts user overrides for missing market prices", () => {
+  assert.equal(
+    calculateMaterialCost({
+      craft: {
+        ...baseCraft,
+        materials: [{ itemId: 999, amount: 3 }],
+      },
+      priceMap,
+      overrideMap: new Map([[999, 2]]),
+    }),
+    6,
   );
 });
 

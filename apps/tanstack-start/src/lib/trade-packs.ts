@@ -1,4 +1,4 @@
-import { getItemPrice } from "~/lib/craft-optimizer";
+import { getItemPrice, hasItemPrice } from "~/lib/craft-optimizer";
 import { getDiscountedLabor } from "~/lib/proficiency";
 
 export const REWARD_ITEM_IDS = {
@@ -89,11 +89,11 @@ export interface TradePackRunSummary extends TradePackMetrics {
 const DEFAULT_TURN_IN_LABOR = 110;
 
 function getOverrideMap(input?: OverrideMap): OverrideMap {
-  return input ?? new Map();
+  return input ?? new Map<number, number>();
 }
 
 function getProficiencyMap(input?: ProficiencyMap): ProficiencyMap {
-  return input ?? new Map();
+  return input ?? new Map<string, number>();
 }
 
 function getSilverPerLabor(profit: number, labor: number): number | null {
@@ -103,10 +103,7 @@ function getSilverPerLabor(profit: number, labor: number): number | null {
 
 export function getRewardUnitValue(
   rewardItemName: RewardItemName,
-  inputs: Pick<
-    TradePackInputs,
-    "priceMap" | "overrideMap" | "gildaStarValue"
-  >,
+  inputs: Pick<TradePackInputs, "priceMap" | "overrideMap" | "gildaStarValue">,
 ): number {
   const overrideMap = getOverrideMap(inputs.overrideMap);
 
@@ -144,15 +141,23 @@ export function calculateMaterialCost({
   priceMap: PriceMap;
   overrideMap?: OverrideMap;
 }): number {
-  return craft.materials.reduce(
-    (total, material) =>
+  return craft.materials.reduce((total, material) => {
+    if (!hasItemPrice(material.itemId, priceMap, overrideMap)) {
+      throw new Error(
+        `Missing material price for trade pack item ${material.itemId}`,
+      );
+    }
+
+    return (
       total +
-      getItemPrice(material.itemId, priceMap, overrideMap) * material.amount,
-    0,
-  );
+      getItemPrice(material.itemId, priceMap, overrideMap) * material.amount
+    );
+  }, 0);
 }
 
-export function calculatePackMetrics(inputs: TradePackInputs): TradePackMetrics {
+export function calculatePackMetrics(
+  inputs: TradePackInputs,
+): TradePackMetrics {
   const { pack, craft } = inputs;
   const overrideMap = getOverrideMap(inputs.overrideMap);
   const proficiencyMap = getProficiencyMap(inputs.proficiencyMap);

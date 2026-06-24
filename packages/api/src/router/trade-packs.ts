@@ -4,11 +4,9 @@ import { z } from "zod/v4";
 import { desc, eq, getTableColumns, inArray } from "@acme/db";
 import { craftMaterials, crafts, items, prices } from "@acme/db/schema";
 
+import type { CraftWithMaterialsAndProducts } from "./crafts";
 import { memberProcedure } from "../trpc";
-import {
-  hasUnsupportedCraftName,
-  type CraftWithMaterialsAndProducts,
-} from "./crafts";
+import { hasUnsupportedCraftName } from "./crafts";
 
 const REWARD_PRICE_ITEM_IDS = [32103, 32106, 26880] as const;
 

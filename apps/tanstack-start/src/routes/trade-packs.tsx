@@ -42,9 +42,7 @@ const originOptions = uniqueSorted(allPacks.map((pack) => pack.origin));
 const destinationOptions = uniqueSorted(
   allPacks.map((pack) => pack.destination),
 );
-const rewardOptions = uniqueSorted(
-  allPacks.map((pack) => pack.rewardItemName),
-) as RewardItemName[];
+const rewardOptions = uniqueSorted(allPacks.map((pack) => pack.rewardItemName));
 export const Route = createFileRoute("/trade-packs")({
   head: () => ({
     meta: [
@@ -190,8 +188,7 @@ function TradePacksContent() {
     ? selectedRoute
     : (filteredRouteOptions[0] ?? "");
   const packsForRoute = useMemo(
-    () =>
-      filteredPacks.filter((pack) => pack.route === effectiveSelectedRoute),
+    () => filteredPacks.filter((pack) => pack.route === effectiveSelectedRoute),
     [effectiveSelectedRoute, filteredPacks],
   );
   const selectedPack = useMemo(() => {
@@ -705,7 +702,8 @@ function calculatePackSafely({
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.startsWith("Missing craft data for trade pack item ")
+      (error.message.startsWith("Missing craft data for trade pack item ") ||
+        error.message.startsWith("Missing material price for trade pack item "))
     ) {
       return {
         result: null,
