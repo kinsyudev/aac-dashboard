@@ -116,6 +116,19 @@ void test("calculateMaterialCost uses buy-price craft materials", () => {
   );
 });
 
+void test("calculateMaterialCost treats coin materials as direct gold cost", () => {
+  assert.equal(
+    calculateMaterialCost({
+      craft: {
+        ...baseCraft,
+        materials: [{ itemId: 500, amount: 12.5 }],
+      },
+      priceMap,
+    }),
+    12.5,
+  );
+});
+
 void test("calculateMaterialCost throws when a material price is missing", () => {
   assert.throws(
     () =>

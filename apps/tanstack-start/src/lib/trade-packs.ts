@@ -7,6 +7,8 @@ export const REWARD_ITEM_IDS = {
   lordsCoin: 26880,
 } as const;
 
+const COIN_ITEM_ID = 500;
+
 export type RewardItemName =
   | "Gold"
   | "Charcoal Stabilizer"
@@ -142,6 +144,10 @@ export function calculateMaterialCost({
   overrideMap?: OverrideMap;
 }): number {
   return craft.materials.reduce((total, material) => {
+    if (material.itemId === COIN_ITEM_ID) {
+      return total + material.amount;
+    }
+
     if (!hasItemPrice(material.itemId, priceMap, overrideMap)) {
       throw new Error(
         `Missing material price for trade pack item ${material.itemId}`,
