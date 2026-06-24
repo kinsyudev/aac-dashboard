@@ -8,6 +8,7 @@ export const REWARD_ITEM_IDS = {
 } as const;
 
 const COIN_ITEM_ID = 500;
+const COPPER_TO_GOLD = 0.0001;
 
 export type RewardItemName =
   | "Gold"
@@ -145,7 +146,7 @@ export function calculateMaterialCost({
 }): number {
   return craft.materials.reduce((total, material) => {
     if (material.itemId === COIN_ITEM_ID) {
-      return total + material.amount;
+      return total + material.amount * COPPER_TO_GOLD;
     }
 
     if (!hasItemPrice(material.itemId, priceMap, overrideMap)) {
