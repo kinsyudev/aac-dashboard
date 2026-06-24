@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { Info } from "lucide-react";
 
 import { Badge } from "@acme/ui/badge";
 import { Input } from "@acme/ui/input";
@@ -31,6 +32,7 @@ import { useUserData } from "~/lib/useUserData";
 
 const curatedData = tradePackData as CuratedTradePackData;
 const allPacks = dedupeTradePacks(curatedData.packs);
+const STATIC_TURN_IN_LABOR = 110;
 const recipeItemIds = [
   ...new Set(
     allPacks
@@ -102,7 +104,6 @@ function TradePacksContent() {
   const [gildaStarValue, setGildaStarValue] = useState("4");
   const [larderCostPerPack, setLarderCostPerPack] = useState("0");
   const [larderLaborPerPack, setLarderLaborPerPack] = useState("75");
-  const [turnInLabor, setTurnInLabor] = useState("110");
   const [origin, setOrigin] = useState("all");
   const [destination, setDestination] = useState("all");
   const [rewardItemName, setRewardItemName] = useState<RewardItemName | "all">(
@@ -125,9 +126,9 @@ function TradePacksContent() {
       gildaStarValue: parseNonNegativeNumber(gildaStarValue, 4),
       larderCostPerPack: parseNonNegativeNumber(larderCostPerPack, 0),
       larderLaborPerPack: parseNonNegativeNumber(larderLaborPerPack, 75),
-      turnInLabor: parseNonNegativeNumber(turnInLabor, 110),
+      turnInLabor: STATIC_TURN_IN_LABOR,
     }),
-    [gildaStarValue, larderCostPerPack, larderLaborPerPack, turnInLabor],
+    [gildaStarValue, larderCostPerPack, larderLaborPerPack],
   );
   const filteredPacks = useMemo(() => {
     const filters: TradePackFilters = {
@@ -238,14 +239,16 @@ function TradePacksContent() {
         <div>
           <h2 className="text-base font-semibold">Inputs</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Values are in gold unless the label says labor. Proficiency and
-            price overrides come from your profile.
+            Values are in gold unless the label says labor. Turn-in labor is
+            fixed at 110 and discounted by Commerce proficiency from your
+            profile.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-3">
           <NumberField
             id="gilda-star-value"
             label="Gilda value"
+            helpText="Used as the gold value for each Gilda Star paid by a pack."
             value={gildaStarValue}
             onChange={setGildaStarValue}
             min={0}
@@ -254,6 +257,7 @@ function TradePacksContent() {
           <NumberField
             id="larder-cost"
             label="Larder cost"
+            helpText="Your estimated gold cost per larder pack. Larders do not have recipe data in the current database."
             value={larderCostPerPack}
             onChange={setLarderCostPerPack}
             min={0}
@@ -262,16 +266,9 @@ function TradePacksContent() {
           <NumberField
             id="larder-labor"
             label="Larder labor"
+            helpText="Labor spent making each larder before the fixed Commerce-discounted turn-in labor is added."
             value={larderLaborPerPack}
             onChange={setLarderLaborPerPack}
-            min={0}
-            step="1"
-          />
-          <NumberField
-            id="turn-in-labor"
-            label="Turn-in labor"
-            value={turnInLabor}
-            onChange={setTurnInLabor}
             min={0}
             step="1"
           />
@@ -431,6 +428,7 @@ function TradePacksContent() {
 function NumberField({
   id,
   label,
+  helpText,
   value,
   onChange,
   min,
@@ -438,6 +436,7 @@ function NumberField({
 }: {
   id: string;
   label: string;
+  helpText?: string;
   value: string;
   onChange: (value: string) => void;
   min?: number;
@@ -445,7 +444,10 @@ function NumberField({
 }) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={id}>{label}</Label>
+        {helpText ? <InfoTooltip text={helpText} /> : null}
+      </div>
       <Input
         id={id}
         type="number"
@@ -456,6 +458,23 @@ function NumberField({
         onChange={(event) => onChange(event.currentTarget.value)}
       />
     </div>
+  );
+}
+
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={text}
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 rounded-full outline-none focus-visible:ring-[3px]"
+      >
+        <Info className="size-3.5" aria-hidden="true" />
+      </button>
+      <span className="bg-popover text-popover-foreground pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-64 -translate-x-1/2 rounded-md border px-3 py-2 text-xs leading-relaxed shadow-md group-focus-within:block group-hover:block">
+        {text}
+      </span>
+    </span>
   );
 }
 

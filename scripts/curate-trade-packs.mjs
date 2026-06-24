@@ -20,7 +20,7 @@ const KNOWN_REWARDS = new Set([
 
 const LARDER_RE = /Aged Cheese|Aged Salve|Aged Honey/;
 const FREE_PACK_ITEM_IDS = new Set([43323, 43324, 9000362, 9000414]);
-const EXPECTED_PACK_COUNT = 7998;
+const EXPECTED_PACK_COUNT = 6770;
 
 // Origin prefixes found in pack names that are not present as destination zones.
 const NON_ZONE_ORIGIN_PREFIXES = [
@@ -179,6 +179,15 @@ const packs = rows.map((row) => {
   };
 });
 
+// Diamond Shores charcoal routes are excluded from trade-pack comparisons.
+const filteredPacks = packs.filter(
+  (pack) =>
+    !(
+      pack.destination === "Diamond Shores" &&
+      pack.rewardItemName === "Charcoal Stabilizer"
+    ),
+);
+
 if (unknownRewards.size > 0) {
   throw new Error(
     `Unknown reward item names: ${[...unknownRewards].sort().join(", ")}`,
@@ -203,19 +212,19 @@ if (sameOriginRows.length > 0) {
   throw new Error(`Found ${sameOriginRows.length} same-origin rows:\n${sample}`);
 }
 
-if (packs.length !== EXPECTED_PACK_COUNT) {
+if (filteredPacks.length !== EXPECTED_PACK_COUNT) {
   throw new Error(
-    `Expected ${EXPECTED_PACK_COUNT} trade pack rows, found ${packs.length}.`,
+    `Expected ${EXPECTED_PACK_COUNT} trade pack rows, found ${filteredPacks.length}.`,
   );
 }
 
 const output = {
   generatedAt: new Date().toISOString(),
   source: "pack_data.json",
-  packs,
+  packs: filteredPacks,
 };
 
 await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`);
 
-console.log(`Generated ${packs.length} trade pack rows.`);
+console.log(`Generated ${filteredPacks.length} trade pack rows.`);
 console.log(`Output: ${path.relative(repoRoot, outputPath)}`);
