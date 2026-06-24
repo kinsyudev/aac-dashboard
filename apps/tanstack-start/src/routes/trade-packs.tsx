@@ -30,7 +30,7 @@ import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
 const curatedData = tradePackData as CuratedTradePackData;
-const allPacks = curatedData.packs;
+const allPacks = dedupeTradePacks(curatedData.packs);
 const recipeItemIds = [
   ...new Set(
     allPacks
@@ -45,8 +45,6 @@ const destinationOptions = uniqueSorted(
 const rewardOptions = uniqueSorted(
   allPacks.map((pack) => pack.rewardItemName),
 ) as RewardItemName[];
-const routeOptions = uniqueSorted(allPacks.map((pack) => pack.route));
-
 export const Route = createFileRoute("/trade-packs")({
   head: () => ({
     meta: [
@@ -103,16 +101,16 @@ function TradePacksContent() {
       itemIds: recipeItemIds.length > 0 ? recipeItemIds : [0],
     }),
   );
-  const [gildaStarValue, setGildaStarValue] = useState("0");
+  const [gildaStarValue, setGildaStarValue] = useState("4");
   const [larderCostPerPack, setLarderCostPerPack] = useState("0");
-  const [larderLaborPerPack, setLarderLaborPerPack] = useState("0");
+  const [larderLaborPerPack, setLarderLaborPerPack] = useState("75");
   const [turnInLabor, setTurnInLabor] = useState("110");
   const [origin, setOrigin] = useState("all");
   const [destination, setDestination] = useState("all");
   const [rewardItemName, setRewardItemName] = useState<RewardItemName | "all">(
     "all",
   );
-  const [selectedRoute, setSelectedRoute] = useState(routeOptions[0] ?? "");
+  const [selectedRoute, setSelectedRoute] = useState("");
   const [selectedPackKey, setSelectedPackKey] = useState("");
   const [packCount, setPackCount] = useState("1");
 
@@ -126,10 +124,10 @@ function TradePacksContent() {
   );
   const numericInputs = useMemo(
     () => ({
-      gildaStarValue: parseNumber(gildaStarValue, 0),
-      larderCostPerPack: parseNumber(larderCostPerPack, 0),
-      larderLaborPerPack: parseNumber(larderLaborPerPack, 0),
-      turnInLabor: parseNumber(turnInLabor, 110),
+      gildaStarValue: parseNonNegativeNumber(gildaStarValue, 4),
+      larderCostPerPack: parseNonNegativeNumber(larderCostPerPack, 0),
+      larderLaborPerPack: parseNonNegativeNumber(larderLaborPerPack, 75),
+      turnInLabor: parseNonNegativeNumber(turnInLabor, 110),
     }),
     [gildaStarValue, larderCostPerPack, larderLaborPerPack, turnInLabor],
   );
@@ -184,9 +182,17 @@ function TradePacksContent() {
     () => getTopPacksByRevenue(availableResults, 10),
     [availableResults],
   );
+  const filteredRouteOptions = useMemo(
+    () => uniqueSorted(filteredPacks.map((pack) => pack.route)),
+    [filteredPacks],
+  );
+  const effectiveSelectedRoute = filteredRouteOptions.includes(selectedRoute)
+    ? selectedRoute
+    : (filteredRouteOptions[0] ?? "");
   const packsForRoute = useMemo(
-    () => allPacks.filter((pack) => pack.route === selectedRoute),
-    [selectedRoute],
+    () =>
+      filteredPacks.filter((pack) => pack.route === effectiveSelectedRoute),
+    [effectiveSelectedRoute, filteredPacks],
   );
   const selectedPack = useMemo(() => {
     const matchingPack = packsForRoute.find(
@@ -225,7 +231,7 @@ function TradePacksContent() {
     if (!selectedCalculation?.result) return null;
     return summarizePackRun(
       selectedCalculation.result.metrics,
-      parseNumber(packCount, 1),
+      parsePositiveInteger(packCount, 1),
     );
   }, [packCount, selectedCalculation]);
 
@@ -366,12 +372,12 @@ function TradePacksContent() {
           <SelectField
             id="route-selector"
             label="Route"
-            value={selectedRoute}
+            value={effectiveSelectedRoute}
             onChange={(value) => {
               setSelectedRoute(value);
               setSelectedPackKey("");
             }}
-            options={routeOptions.map((option) => ({
+            options={filteredRouteOptions.map((option) => ({
               value: option,
               label: option,
             }))}
@@ -596,6 +602,7 @@ function Th({
 }) {
   return (
     <th
+      scope="col"
       className={`px-4 py-3 font-medium ${
         align === "right" ? "text-right" : ""
       }`}
@@ -625,14 +632,16 @@ function buildCraftMap(
   craftsByItemId: Record<
     number,
     {
-      craft: { labor: number; proficiency: string | null };
+      craft: { id: number; labor: number; proficiency: string | null };
       materials: { item: { id: number }; amount: number }[];
     }[]
   >,
 ): Map<number, TradePackCraftData> {
   const craftMap = new Map<number, TradePackCraftData>();
   for (const [itemId, entries] of Object.entries(craftsByItemId)) {
-    const entry = entries[0];
+    const entry = [...entries].sort(
+      (left, right) => left.craft.id - right.craft.id,
+    )[0];
     if (!entry) continue;
     craftMap.set(Number(itemId), {
       labor: entry.craft.labor,
@@ -672,6 +681,13 @@ function calculatePackSafely({
       ? null
       : (craftMap.get(pack.itemId) ?? null);
 
+  if (!pack.isLarder && !pack.isFreePack && craft === null) {
+    return {
+      result: null,
+      unavailableReason: `Missing craft data for trade pack item ${pack.itemId}`,
+    };
+  }
+
   try {
     const metrics = calculatePackMetrics({
       pack,
@@ -687,14 +703,27 @@ function calculatePackSafely({
 
     return { result: { pack, metrics } };
   } catch (error) {
-    return {
-      result: null,
-      unavailableReason:
-        error instanceof Error
-          ? error.message
-          : "Trade pack calculation is unavailable.",
-    };
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Missing craft data for trade pack item ")
+    ) {
+      return {
+        result: null,
+        unavailableReason: error.message,
+      };
+    }
+    throw error;
   }
+}
+
+function dedupeTradePacks(packs: TradePack[]): TradePack[] {
+  const seen = new Set<string>();
+  return packs.filter((pack) => {
+    const key = getPackKey(pack);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function uniqueSorted<T extends string>(values: T[]): T[] {
@@ -702,12 +731,28 @@ function uniqueSorted<T extends string>(values: T[]): T[] {
 }
 
 function getPackKey(pack: TradePack): string {
-  return `${pack.itemId}:${pack.destination}:${pack.rewardItemName}:${pack.name}`;
+  return [
+    pack.itemId,
+    pack.name,
+    pack.origin,
+    pack.destination,
+    pack.rewardItemName,
+    pack.payout,
+    pack.isLarder,
+    pack.isFreePack,
+  ].join(":");
 }
 
-function parseNumber(value: string, fallback: number): number {
+function parseNonNegativeNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
+function parsePositiveInteger(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.floor(parsed));
 }
 
 function formatGold(value: number): string {
