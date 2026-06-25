@@ -48,25 +48,21 @@ export function getAppendableShoplistDestinations(data: {
   owned: ShoplistSummary[];
   shared: SharedShoplistSummary[];
 }): ShoplistDestination[] {
-  const owned = data.owned
-    .filter(isAppendableShoplist)
-    .map((list) => ({
-      id: list.id,
-      name: list.name,
-      updatedAt: list.updatedAt,
-      sourceKind: list.sourceKind,
-      access: "owned" as const,
-    }));
+  const owned = data.owned.filter(isAppendableShoplist).map((list) => ({
+    id: list.id,
+    name: list.name,
+    updatedAt: list.updatedAt,
+    sourceKind: list.sourceKind,
+    access: "owned" as const,
+  }));
 
-  const shared = data.shared
-    .filter(isAppendableSharedShoplist)
-    .map((list) => ({
-      id: list.id,
-      name: list.name,
-      updatedAt: list.updatedAt,
-      sourceKind: list.sourceKind,
-      access: "shared" as const,
-    }));
+  const shared = data.shared.filter(isAppendableSharedShoplist).map((list) => ({
+    id: list.id,
+    name: list.name,
+    updatedAt: list.updatedAt,
+    sourceKind: list.sourceKind,
+    access: "shared" as const,
+  }));
 
   return [...owned, ...shared];
 }
