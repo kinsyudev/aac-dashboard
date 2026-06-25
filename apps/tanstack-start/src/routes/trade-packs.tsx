@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Info } from "lucide-react";
+import { Info, Trophy } from "lucide-react";
 
 import { Badge } from "@acme/ui/badge";
+import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { Label } from "@acme/ui/label";
 
@@ -33,6 +34,14 @@ import { useUserData } from "~/lib/useUserData";
 const curatedData = tradePackData as CuratedTradePackData;
 const allPacks = dedupeTradePacks(curatedData.packs);
 const STATIC_TURN_IN_LABOR = 110;
+type PackTypeFilter = "all" | "normal" | "larder" | "fish-food";
+const FISH_FOOD_ITEM_IDS = new Set([9000362, 9000414]);
+const packTypeOptions = [
+  { value: "all", label: "All types" },
+  { value: "normal", label: "Normal packs" },
+  { value: "larder", label: "Larders" },
+  { value: "fish-food", label: "Fish Food" },
+] satisfies { value: PackTypeFilter; label: string }[];
 const recipeItemIds = [
   ...new Set(
     allPacks
@@ -66,7 +75,7 @@ export const Route = createFileRoute("/trade-packs")({
 
 function TradePacksPage() {
   return (
-    <main className="container py-10">
+    <main className="mx-auto w-full max-w-[1600px] px-4 py-10 sm:px-6 lg:px-8 2xl:px-10">
       <div className="mb-6 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">Trade Packs</h1>
@@ -106,10 +115,12 @@ function TradePacksContent() {
   const [larderLaborPerPack, setLarderLaborPerPack] = useState("75");
   const [origin, setOrigin] = useState("all");
   const [destination, setDestination] = useState("all");
+  const [packType, setPackType] = useState<PackTypeFilter>("all");
   const [rewardItemName, setRewardItemName] = useState<RewardItemName | "all">(
     "all",
   );
-  const [selectedRoute, setSelectedRoute] = useState("");
+  const [routeOrigin, setRouteOrigin] = useState("");
+  const [routeDestination, setRouteDestination] = useState("");
   const [selectedPackKey, setSelectedPackKey] = useState("");
   const [packCount, setPackCount] = useState("1");
 
@@ -136,8 +147,8 @@ function TradePacksContent() {
       destination,
       rewardItemName,
     };
-    return filterTradePacks(allPacks, filters);
-  }, [destination, origin, rewardItemName]);
+    return filterByPackType(filterTradePacks(allPacks, filters), packType);
+  }, [destination, origin, packType, rewardItemName]);
   const calculationRows = useMemo(
     () =>
       filteredPacks.map((pack) =>
@@ -181,16 +192,72 @@ function TradePacksContent() {
     () => getTopPacksByRevenue(availableResults, 10),
     [availableResults],
   );
-  const filteredRouteOptions = useMemo(
-    () => uniqueSorted(filteredPacks.map((pack) => pack.route)),
+  const routeOriginOptions = useMemo(
+    () => uniqueSorted(filteredPacks.map((pack) => pack.origin)),
     [filteredPacks],
   );
-  const effectiveSelectedRoute = filteredRouteOptions.includes(selectedRoute)
-    ? selectedRoute
-    : (filteredRouteOptions[0] ?? "");
+  const effectiveRouteOrigin = routeOriginOptions.includes(routeOrigin)
+    ? routeOrigin
+    : (routeOriginOptions[0] ?? "");
+  const routeDestinationOptions = useMemo(
+    () =>
+      uniqueSorted(
+        filteredPacks
+          .filter((pack) => pack.origin === effectiveRouteOrigin)
+          .map((pack) => pack.destination),
+      ),
+    [effectiveRouteOrigin, filteredPacks],
+  );
+  const effectiveRouteDestination = routeDestinationOptions.includes(
+    routeDestination,
+  )
+    ? routeDestination
+    : (routeDestinationOptions[0] ?? "");
   const packsForRoute = useMemo(
-    () => filteredPacks.filter((pack) => pack.route === effectiveSelectedRoute),
-    [effectiveSelectedRoute, filteredPacks],
+    () =>
+      filteredPacks.filter(
+        (pack) =>
+          pack.origin === effectiveRouteOrigin &&
+          pack.destination === effectiveRouteDestination,
+      ),
+    [effectiveRouteDestination, effectiveRouteOrigin, filteredPacks],
+  );
+  const routeCalculationRows = useMemo(
+    () =>
+      packsForRoute.map((pack) =>
+        calculatePackSafely({
+          pack,
+          craftMap,
+          priceMap,
+          overrideMap,
+          proficiencyMap,
+          gildaStarValue: numericInputs.gildaStarValue,
+          larderCostPerPack: numericInputs.larderCostPerPack,
+          larderLaborPerPack: numericInputs.larderLaborPerPack,
+          turnInLabor: numericInputs.turnInLabor,
+        }),
+      ),
+    [
+      craftMap,
+      numericInputs.gildaStarValue,
+      numericInputs.larderCostPerPack,
+      numericInputs.larderLaborPerPack,
+      numericInputs.turnInLabor,
+      overrideMap,
+      packsForRoute,
+      priceMap,
+      proficiencyMap,
+    ],
+  );
+  const bestRouteResult = useMemo(
+    () =>
+      getTopPacksByProfitSilverPerLabor(
+        routeCalculationRows.flatMap((row) =>
+          row.result === null ? [] : [row.result],
+        ),
+        1,
+      )[0] ?? null,
+    [routeCalculationRows],
   );
   const selectedPack = useMemo(() => {
     const matchingPack = packsForRoute.find(
@@ -295,7 +362,7 @@ function TradePacksContent() {
             ) : null}
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <SelectField
             id="origin-filter"
             label="Origin"
@@ -326,9 +393,7 @@ function TradePacksContent() {
             id="reward-filter"
             label="Reward"
             value={rewardItemName}
-            onChange={(value) =>
-              setRewardItemName(value as RewardItemName | "all")
-            }
+            onChange={setRewardItemName}
             options={[
               { value: "all", label: "All rewards" },
               ...rewardOptions.map((option) => ({
@@ -336,6 +401,13 @@ function TradePacksContent() {
                 label: option,
               })),
             ]}
+          />
+          <SelectField
+            id="pack-type-filter"
+            label="Pack type"
+            value={packType}
+            onChange={setPackType}
+            options={packTypeOptions}
           />
         </div>
       </section>
@@ -357,21 +429,35 @@ function TradePacksContent() {
         <div className="mb-4 flex flex-col gap-1">
           <h2 className="text-base font-semibold">Route Calculator</h2>
           <p className="text-muted-foreground text-sm">
-            Pick a route, pack, and count to inspect total revenue, cost,
-            profit, labor, and silver per labor.
+            Pick an origin, destination, pack, and count to inspect total
+            revenue, cost, profit, labor, and silver per labor.
           </p>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[1.3fr_1.5fr_0.5fr]">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.5fr_auto_0.5fr]">
           <SelectField
-            id="route-selector"
-            label="Route"
-            value={effectiveSelectedRoute}
+            id="route-origin-selector"
+            label="Origin"
+            value={effectiveRouteOrigin}
             onChange={(value) => {
-              setSelectedRoute(value);
+              setRouteOrigin(value);
+              setRouteDestination("");
               setSelectedPackKey("");
             }}
-            options={filteredRouteOptions.map((option) => ({
+            options={routeOriginOptions.map((option) => ({
+              value: option,
+              label: option,
+            }))}
+          />
+          <SelectField
+            id="route-destination-selector"
+            label="Destination"
+            value={effectiveRouteDestination}
+            onChange={(value) => {
+              setRouteDestination(value);
+              setSelectedPackKey("");
+            }}
+            options={routeDestinationOptions.map((option) => ({
               value: option,
               label: option,
             }))}
@@ -386,6 +472,21 @@ function TradePacksContent() {
               label: `${pack.name} - ${pack.rewardItemName}`,
             }))}
           />
+          <div className="flex items-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={bestRouteResult === null}
+              onClick={() => {
+                if (bestRouteResult === null) return;
+                setSelectedPackKey(getPackKey(bestRouteResult.pack));
+              }}
+            >
+              <Trophy className="size-4" aria-hidden="true" />
+              Best
+            </Button>
+          </div>
           <NumberField
             id="pack-count"
             label="Count"
@@ -478,7 +579,7 @@ function InfoTooltip({ text }: { text: string }) {
   );
 }
 
-function SelectField({
+function SelectField<TValue extends string>({
   id,
   label,
   value,
@@ -487,9 +588,9 @@ function SelectField({
 }: {
   id: string;
   label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: { value: string; label: string }[];
+  value: TValue;
+  onChange: (value: TValue) => void;
+  options: readonly { value: TValue; label: string }[];
 }) {
   return (
     <div className="space-y-2">
@@ -497,7 +598,7 @@ function SelectField({
       <select
         id={id}
         value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
+        onChange={(event) => onChange(event.currentTarget.value as TValue)}
         className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
       >
         {options.map((option) => (
@@ -531,13 +632,13 @@ function RankingTable({
             <tr className="text-left">
               <Th>#</Th>
               <Th>Pack</Th>
-              <Th>Route</Th>
               <Th>Reward</Th>
+              <Th align="right">s/L</Th>
+              <Th align="right">Profit</Th>
+              <Th>Route</Th>
               <Th align="right">Revenue</Th>
               <Th align="right">Cost</Th>
-              <Th align="right">Profit</Th>
               <Th align="right">Labor</Th>
-              <Th align="right">s/L</Th>
             </tr>
           </thead>
           <tbody>
@@ -554,17 +655,17 @@ function RankingTable({
                       Item {row.pack.itemId}
                     </div>
                   </Td>
-                  <Td>{row.pack.route}</Td>
                   <Td>
                     <Badge variant="outline">{row.pack.rewardItemName}</Badge>
                   </Td>
-                  <Td align="right">{formatGold(row.metrics.revenue)}</Td>
-                  <Td align="right">{formatGold(row.metrics.cost)}</Td>
-                  <Td align="right">{formatGold(row.metrics.profit)}</Td>
-                  <Td align="right">{formatNumber(row.metrics.labor)}</Td>
                   <Td align="right">
                     {formatSilverPerLabor(row.metrics.silverPerLabor)}
                   </Td>
+                  <Td align="right">{formatGold(row.metrics.profit)}</Td>
+                  <Td>{row.pack.route}</Td>
+                  <Td align="right">{formatGold(row.metrics.revenue)}</Td>
+                  <Td align="right">{formatGold(row.metrics.cost)}</Td>
+                  <Td align="right">{formatNumber(row.metrics.labor)}</Td>
                 </tr>
               ))
             ) : (
@@ -741,6 +842,22 @@ function dedupeTradePacks(packs: TradePack[]): TradePack[] {
     seen.add(key);
     return true;
   });
+}
+
+function filterByPackType(
+  packs: TradePack[],
+  packType: PackTypeFilter,
+): TradePack[] {
+  if (packType === "all") return packs;
+  return packs.filter((pack) => getPackType(pack) === packType);
+}
+
+function getPackType(pack: TradePack): Exclude<PackTypeFilter, "all"> {
+  if (pack.isLarder) return "larder";
+  if (FISH_FOOD_ITEM_IDS.has(pack.itemId) || pack.name.includes("Fish Food")) {
+    return "fish-food";
+  }
+  return "normal";
 }
 
 function uniqueSorted<T extends string>(values: T[]): T[] {

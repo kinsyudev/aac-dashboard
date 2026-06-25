@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "node .output/server/index.mjs",
     "test:planner": "node --experimental-strip-types --test src/lib/costume-planner.test.ts",
+    "test:shoplist-destinations": "node --experimental-strip-types --test src/lib/shoplist-destinations.test.ts",
     "test:trade-packs": "node --experimental-strip-types --test src/lib/trade-packs.test.ts",
     "format": "prettier --check . --ignore-path ../../.gitignore --ignore-path .prettierignore",
     "lint": "eslint --flag unstable_native_nodejs_ts_config",

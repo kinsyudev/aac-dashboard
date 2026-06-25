@@ -17,6 +17,7 @@ import { toast } from "@acme/ui/toast";
 
 import type { ModesMap, OptimizationObjective } from "~/lib/craft-optimizer";
 import type { ProficiencyMap } from "~/lib/proficiency";
+import type { ShoplistDestination } from "~/lib/shoplist-destinations";
 import { ItemIcon } from "~/component/item-icon";
 import { ProficiencyBadge } from "~/component/proficiency";
 import {
@@ -39,6 +40,7 @@ import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { piecesMap } from "~/lib/salvage";
+import { getAppendableShoplistDestinations } from "~/lib/shoplist-destinations";
 import { detectPieceAndTier } from "~/lib/simulator";
 import {
   getItemPrice,
@@ -718,6 +720,10 @@ function ShoplistDetail({
     ...trpc.shoppingLists.getById.queryOptions(listId ?? ""),
     enabled: !!listId,
   });
+  const destinationLists = useQuery({
+    ...trpc.shoppingLists.listMineAndShared.queryOptions(),
+    enabled: !isSimulator && !sourceId,
+  });
 
   const craftData = craftQuery.data ?? null;
   const simulatorData = simulatorQuery.data ?? null;
@@ -945,11 +951,35 @@ function ShoplistDetail({
   const updateList = useMutation(
     trpc.shoppingLists.updateDefinition.mutationOptions(),
   );
+  const appendDestinations = useMemo(
+    () =>
+      destinationLists.data
+        ? getAppendableShoplistDestinations(destinationLists.data)
+        : [],
+    [destinationLists.data],
+  );
+  const selectedAppendDestination = useMemo(
+    () =>
+      listId
+        ? (appendDestinations.find(
+            (destination) => destination.id === listId,
+          ) ?? null)
+        : null,
+    [appendDestinations, listId],
+  );
+  const selectAppendDestination = (nextListId: string | null) => {
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        listId: nextListId ?? undefined,
+      }),
+    });
+  };
   const existingListKind = existingList.data?.list.sourceKind;
   const editingCraftSource =
     !!listId && !!sourceId && !isSimulator && existingListKind === "craft";
   const appendingToCraftList =
-    !!listId && !sourceId && !isSimulator && existingListKind === "craft";
+    !!listId && !sourceId && !isSimulator && !!selectedAppendDestination;
   const editingSimulatorList =
     !!listId && isSimulator && existingListKind === "simulator";
 
@@ -1010,7 +1040,7 @@ function ShoplistDetail({
           craftId,
           quantity: effectiveQty,
           craftModeItemIds,
-          name: listName.trim() || undefined,
+          name: undefined,
         });
       }
 
@@ -1149,6 +1179,11 @@ function ShoplistDetail({
         listName={listName}
         setListName={setListName}
         listId={listId}
+        appendDestinations={appendDestinations}
+        selectedAppendDestination={selectedAppendDestination}
+        setAppendDestination={selectAppendDestination}
+        showDestinationSelector={!sourceId}
+        destinationListsLoading={destinationLists.isLoading}
         persistListLabel={
           editingCraftSource
             ? "Update multiplayer recipe"
@@ -1165,6 +1200,11 @@ function ShoplistDetail({
         }
         persistList={persistList.mutate}
         persistListPending={persistList.isPending}
+        persistDisabledReason={
+          listId && !selectedAppendDestination && !editingCraftSource
+            ? "Choose a writable craft or empty list, or create a new list."
+            : null
+        }
       />
     );
   }
@@ -1406,6 +1446,11 @@ function ShoplistDetail({
       listName={listName}
       setListName={setListName}
       listId={listId}
+      appendDestinations={[]}
+      selectedAppendDestination={null}
+      setAppendDestination={() => undefined}
+      showDestinationSelector={false}
+      destinationListsLoading={false}
       persistListLabel={
         editingSimulatorList
           ? "Update multiplayer list"
@@ -1451,6 +1496,11 @@ function ShoplistLayout({
   listName,
   setListName,
   listId,
+  appendDestinations,
+  selectedAppendDestination,
+  setAppendDestination,
+  showDestinationSelector,
+  destinationListsLoading,
   persistListLabel,
   persistLoadingText,
   persistList,
@@ -1487,6 +1537,11 @@ function ShoplistLayout({
   listName: string;
   setListName: (value: string) => void;
   listId?: string;
+  appendDestinations: ShoplistDestination[];
+  selectedAppendDestination: ShoplistDestination | null;
+  setAppendDestination: (listId: string | null) => void;
+  showDestinationSelector: boolean;
+  destinationListsLoading: boolean;
   persistListLabel: string;
   persistLoadingText: string;
   persistList: () => void;
@@ -1527,16 +1582,92 @@ function ShoplistLayout({
 
       <section className="rounded-lg border p-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <label className="flex-1">
-            <span className="mb-1 block text-sm font-medium">
-              Saved list name
-            </span>
-            <Input
-              value={listName}
-              onChange={(event) => setListName(event.target.value)}
-              placeholder={title}
-            />
-          </label>
+          <div className="flex flex-1 flex-col gap-4">
+            {showDestinationSelector ? (
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium">Save destination</span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant={listId ? "outline" : "default"}
+                    onClick={() => setAppendDestination(null)}
+                  >
+                    Create new
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={listId ? "default" : "outline"}
+                    disabled={appendDestinations.length === 0}
+                    title={
+                      appendDestinations.length === 0
+                        ? "No writable craft or empty lists available."
+                        : undefined
+                    }
+                    onClick={() =>
+                      setAppendDestination(appendDestinations[0]?.id ?? null)
+                    }
+                  >
+                    Existing list
+                  </Button>
+                </div>
+                {listId ? (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-muted-foreground text-sm">
+                      Existing list
+                    </span>
+                    <select
+                      value={selectedAppendDestination ? listId : ""}
+                      onChange={(event) =>
+                        setAppendDestination(event.target.value || null)
+                      }
+                      className="bg-background h-10 rounded-md border px-3 text-sm"
+                    >
+                      {!selectedAppendDestination ? (
+                        <option value="">Choose a list</option>
+                      ) : null}
+                      {appendDestinations.map((destination) => (
+                        <option key={destination.id} value={destination.id}>
+                          {destination.name}
+                          {destination.access === "shared" ? " (shared)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {destinationListsLoading ? (
+                  <p className="text-muted-foreground text-sm">
+                    Loading existing lists...
+                  </p>
+                ) : listId && !selectedAppendDestination ? (
+                  <p className="text-muted-foreground text-sm">
+                    This list cannot accept craft sources. Choose another
+                    destination or create a new list.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {!showDestinationSelector || !listId ? (
+              <label>
+                <span className="mb-1 block text-sm font-medium">
+                  Saved list name
+                </span>
+                <Input
+                  value={listName}
+                  onChange={(event) => setListName(event.target.value)}
+                  placeholder={title}
+                />
+              </label>
+            ) : selectedAppendDestination ? (
+              <div>
+                <span className="mb-1 block text-sm font-medium">
+                  Saved list name
+                </span>
+                <p className="text-muted-foreground text-sm">
+                  {selectedAppendDestination.name}
+                </p>
+              </div>
+            ) : null}
+          </div>
           <div className="flex gap-2">
             {listId ? (
               <Button asChild variant="outline">
