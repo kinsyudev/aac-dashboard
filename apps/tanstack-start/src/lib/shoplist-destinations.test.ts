@@ -3,8 +3,6 @@ import { test } from "node:test";
 
 import { getAppendableShoplistDestinations } from "./shoplist-destinations.ts";
 
-const owner = { id: "owner-1", name: "Owner", image: null };
-
 type TestList = Parameters<
   typeof getAppendableShoplistDestinations
 >[0]["owned"][number];
@@ -23,11 +21,7 @@ function ownedList(
     id: overrides.id ?? "list-1",
     name: overrides.name ?? "List",
     updatedAt: new Date("2026-06-08T00:00:00.000Z"),
-    owner,
     sourceKind: overrides.sourceKind ?? "craft",
-    rootCount: 1,
-    totalQuantity: 1,
-    primarySourceItem: null,
   };
 }
 

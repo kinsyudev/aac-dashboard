@@ -10,6 +10,13 @@ interface ShoplistSummary {
 type SharedShoplistSummary = ShoplistSummary & {
   role: "read" | "write";
 };
+type AppendableShoplistSummary = ShoplistSummary & {
+  sourceKind: "empty" | "craft";
+};
+type AppendableSharedShoplistSummary = SharedShoplistSummary & {
+  sourceKind: "empty" | "craft";
+  role: "write";
+};
 
 export interface ShoplistDestination {
   id: string;
@@ -25,12 +32,24 @@ function isAppendableSourceKind(
   return sourceKind === "empty" || sourceKind === "craft";
 }
 
+function isAppendableShoplist(
+  list: ShoplistSummary,
+): list is AppendableShoplistSummary {
+  return isAppendableSourceKind(list.sourceKind);
+}
+
+function isAppendableSharedShoplist(
+  list: SharedShoplistSummary,
+): list is AppendableSharedShoplistSummary {
+  return list.role === "write" && isAppendableSourceKind(list.sourceKind);
+}
+
 export function getAppendableShoplistDestinations(data: {
   owned: ShoplistSummary[];
   shared: SharedShoplistSummary[];
 }): ShoplistDestination[] {
   const owned = data.owned
-    .filter((list) => isAppendableSourceKind(list.sourceKind))
+    .filter(isAppendableShoplist)
     .map((list) => ({
       id: list.id,
       name: list.name,
@@ -40,10 +59,7 @@ export function getAppendableShoplistDestinations(data: {
     }));
 
   const shared = data.shared
-    .filter(
-      (list) =>
-        list.role === "write" && isAppendableSourceKind(list.sourceKind),
-    )
+    .filter(isAppendableSharedShoplist)
     .map((list) => ({
       id: list.id,
       name: list.name,
