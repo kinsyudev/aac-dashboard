@@ -34,6 +34,7 @@
     "@trpc/server": "catalog:",
     "@trpc/tanstack-react-query": "catalog:",
     "better-auth": "catalog:",
+    "lucide-react": "^1.8.0",
     "nitro": "3.0.1-alpha.1",
     "react": "catalog:react19",
     "react-dom": "catalog:react19",
