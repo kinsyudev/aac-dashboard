@@ -306,9 +306,9 @@ function TradePacksContent() {
         <div>
           <h2 className="text-base font-semibold">Inputs</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Values are in gold unless the label says labor. Turn-in labor is
-            fixed at 110 and discounted by Commerce proficiency from your
-            profile.
+            Values are in gold unless the label says labor. Commerce
+            proficiency discounts both pack craft labor and the fixed 110
+            turn-in labor.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
@@ -333,7 +333,7 @@ function TradePacksContent() {
           <NumberField
             id="larder-labor"
             label="Larder labor"
-            helpText="Labor spent making each larder before the fixed Commerce-discounted turn-in labor is added."
+            helpText="Base labor spent making each larder. Commerce proficiency discounts this and the fixed turn-in labor."
             value={larderLaborPerPack}
             onChange={setLarderLaborPerPack}
             min={0}

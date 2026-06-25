@@ -194,6 +194,30 @@ void test("calculatePackMetrics discounts Commerce turn-in labor", () => {
   assert.equal(metrics.labor, 105);
 });
 
+void test("calculatePackMetrics discounts normal pack craft labor with Commerce", () => {
+  const metrics = calculatePackMetrics({
+    pack: basePack,
+    craft: baseCraft,
+    priceMap,
+    proficiencyMap: new Map([["Commerce", 10000]]),
+  });
+
+  assert.equal(metrics.labor, 224);
+});
+
+void test("calculatePackMetrics discounts larder craft labor with Commerce", () => {
+  const metrics = calculatePackMetrics({
+    pack: { ...basePack, isLarder: true },
+    craft: null,
+    priceMap,
+    larderCostPerPack: 12,
+    larderLaborPerPack: 75,
+    proficiencyMap: new Map([["Commerce", 10000]]),
+  });
+
+  assert.equal(metrics.labor, 177);
+});
+
 void test("calculatePackMetrics applies larder cost and labor overrides", () => {
   const metrics = calculatePackMetrics({
     pack: { ...basePack, isLarder: true },

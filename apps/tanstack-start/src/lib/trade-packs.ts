@@ -9,6 +9,7 @@ export const REWARD_ITEM_IDS = {
 
 const COIN_ITEM_ID = 500;
 const COPPER_TO_GOLD = 0.0001;
+const TRADE_PACK_PROFICIENCY = "Commerce";
 
 export type RewardItemName =
   | "Gold"
@@ -170,7 +171,7 @@ export function calculatePackMetrics(
   const proficiencyMap = getProficiencyMap(inputs.proficiencyMap);
   const turnInLabor = getDiscountedLabor(
     inputs.turnInLabor ?? DEFAULT_TURN_IN_LABOR,
-    "Commerce",
+    TRADE_PACK_PROFICIENCY,
     proficiencyMap,
   );
   const revenue =
@@ -186,7 +187,11 @@ export function calculatePackMetrics(
 
   if (!pack.isFreePack && pack.isLarder) {
     cost = inputs.larderCostPerPack ?? 0;
-    labor += inputs.larderLaborPerPack ?? 0;
+    labor += getDiscountedLabor(
+      inputs.larderLaborPerPack ?? 0,
+      TRADE_PACK_PROFICIENCY,
+      proficiencyMap,
+    );
   } else if (!pack.isFreePack) {
     if (!craft) {
       throw new Error(`Missing craft data for trade pack item ${pack.itemId}`);
@@ -197,7 +202,11 @@ export function calculatePackMetrics(
       priceMap: inputs.priceMap,
       overrideMap,
     });
-    labor += getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap);
+    labor += getDiscountedLabor(
+      craft.labor,
+      TRADE_PACK_PROFICIENCY,
+      proficiencyMap,
+    );
   }
 
   const profit = revenue - cost;
