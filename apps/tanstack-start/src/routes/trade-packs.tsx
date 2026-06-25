@@ -306,9 +306,8 @@ function TradePacksContent() {
         <div>
           <h2 className="text-base font-semibold">Inputs</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Values are in gold unless the label says labor. Commerce
-            proficiency discounts both pack craft labor and the fixed 110
-            turn-in labor.
+            Values are in gold unless the label says labor. Commerce proficiency
+            discounts both pack craft labor and the fixed 110 turn-in labor.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
