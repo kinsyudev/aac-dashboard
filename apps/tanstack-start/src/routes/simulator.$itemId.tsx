@@ -35,11 +35,13 @@ import {
   detectPieceAndTier,
 } from "~/lib/simulator";
 import {
+  buildRecommendedModes,
   deepCraftCost,
   getCraftEntryUnitCost,
   getItemPrice,
   getMarketPrice,
   getSimulationChain,
+  isForcedAuctionHouseMaterial,
   pickCheapestCraftForItem,
   useAyanadUpgradeData,
 } from "~/lib/simulator-upgrade";
@@ -221,7 +223,11 @@ function deepCraftLabor(
   for (const { item, amount } of entry.materials) {
     const subEntries = subcraftMap[item.id];
     const mode = modes[item.id] ?? "craft";
-    if (subEntries?.length && mode === "craft") {
+    if (
+      subEntries?.length &&
+      mode === "craft" &&
+      !isForcedAuctionHouseMaterial(item)
+    ) {
       labor +=
         deepCraftLabor(
           item.id,
@@ -272,33 +278,33 @@ function findWispInChain(
 }
 
 function getChosenMaterialUnitCost(
-  itemId: number,
+  item: { id: number; name: string },
   subcraftMap: SubcraftMap,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   modes: Record<number, CraftMode>,
 ): number {
-  const isCraftable = !!subcraftMap[itemId]?.length;
-  const mode = modes[itemId] ?? "buy";
-  if (isCraftable && mode === "craft") {
-    return deepCraftCost(itemId, subcraftMap, priceMap, overrideMap, modes);
+  const isCraftable = !!subcraftMap[item.id]?.length;
+  const mode = modes[item.id] ?? "buy";
+  if (isCraftable && mode === "craft" && !isForcedAuctionHouseMaterial(item)) {
+    return deepCraftCost(item.id, subcraftMap, priceMap, overrideMap, modes);
   }
-  return getItemPrice(itemId, priceMap, overrideMap);
+  return getItemPrice(item.id, priceMap, overrideMap);
 }
 
 function getChosenMaterialLabor(
-  itemId: number,
+  item: { id: number; name: string },
   subcraftMap: SubcraftMap,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
   modes: Record<number, CraftMode>,
 ): number {
-  const isCraftable = !!subcraftMap[itemId]?.length;
-  const mode = modes[itemId] ?? "buy";
-  if (isCraftable && mode === "craft") {
+  const isCraftable = !!subcraftMap[item.id]?.length;
+  const mode = modes[item.id] ?? "buy";
+  if (isCraftable && mode === "craft" && !isForcedAuctionHouseMaterial(item)) {
     return deepCraftLabor(
-      itemId,
+      item.id,
       subcraftMap,
       priceMap,
       overrideMap,
@@ -354,7 +360,7 @@ function getSelectedCraftUnitLabor(
       (sum, { item, amount }) =>
         sum +
         getChosenMaterialLabor(
-          item.id,
+          item,
           subcraftMap,
           priceMap,
           overrideMap,
@@ -366,50 +372,6 @@ function getSelectedCraftUnitLabor(
     );
 
   return batchLabor / produced;
-}
-
-function buildRecommendedModes(
-  materials: { item: { id: number } }[],
-  subcraftMap: SubcraftMap,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-): Record<number, CraftMode> {
-  const acc: Record<number, CraftMode> = {};
-  const visited = new Set<number>();
-
-  const visit = (itemId: number) => {
-    if (visited.has(itemId)) return;
-    visited.add(itemId);
-
-    const subEntries = subcraftMap[itemId];
-    if (!subEntries?.length) return;
-
-    const entry = pickCheapestCraft(
-      subEntries,
-      itemId,
-      (candidate, productItemId) =>
-        getCraftEntryUnitCost(
-          candidate,
-          productItemId,
-          subcraftMap,
-          priceMap,
-          overrideMap,
-        ),
-    );
-    for (const mat of entry.materials) {
-      visit(mat.item.id);
-    }
-
-    const buyUnit = getItemPrice(itemId, priceMap, overrideMap);
-    const craftUnit = deepCraftCost(itemId, subcraftMap, priceMap, overrideMap);
-    acc[itemId] = buyUnit > 0 && craftUnit < buyUnit ? "craft" : "buy";
-  };
-
-  for (const mat of materials) {
-    visit(mat.item.id);
-  }
-
-  return acc;
 }
 
 function countManaWispsForItem(
@@ -525,7 +487,10 @@ function collectCraftExecutionsForItem(
 
   visited.add(itemId);
   for (const { item, amount } of entry.materials) {
-    if ((modes[item.id] ?? "buy") === "craft") {
+    if (
+      (modes[item.id] ?? "buy") === "craft" &&
+      !isForcedAuctionHouseMaterial(item)
+    ) {
       collectCraftExecutionsForItem(
         item.id,
         amount * batches,
@@ -795,7 +760,7 @@ function SimulatorDetail() {
       (sum, { item, amount }) =>
         sum +
         getChosenMaterialUnitCost(
-          item.id,
+          item,
           subcraftMap,
           priceMap,
           overrideMap,
@@ -813,7 +778,7 @@ function SimulatorDetail() {
       (sum, { item, amount }) =>
         sum +
         getChosenMaterialUnitCost(
-          item.id,
+          item,
           ayanadSubcraftMap ?? subcraftMap,
           priceMap,
           overrideMap,
@@ -834,7 +799,7 @@ function SimulatorDetail() {
         (sum, { item, amount }) =>
           sum +
           getChosenMaterialLabor(
-            item.id,
+            item,
             ayanadSubcraftMap ?? subcraftMap,
             priceMap,
             overrideMap,
@@ -873,7 +838,7 @@ function SimulatorDetail() {
         (sum, { item, amount }) =>
           sum +
           getChosenMaterialLabor(
-            item.id,
+            item,
             subcraftMap,
             priceMap,
             overrideMap,
@@ -1046,7 +1011,10 @@ function SimulatorDetail() {
     }
 
     for (const { item, amount } of attemptMaterials) {
-      if ((effectiveModes[item.id] ?? "buy") === "craft") {
+      if (
+        (effectiveModes[item.id] ?? "buy") === "craft" &&
+        !isForcedAuctionHouseMaterial(item)
+      ) {
         collectCraftExecutionsForItem(
           item.id,
           amount * attemptBatches,
@@ -1075,7 +1043,10 @@ function SimulatorDetail() {
         );
 
         for (const { item, amount } of sealCraft.materials) {
-          if ((effectiveModes[item.id] ?? "buy") === "craft") {
+          if (
+            (effectiveModes[item.id] ?? "buy") === "craft" &&
+            !isForcedAuctionHouseMaterial(item)
+          ) {
             collectCraftExecutionsForItem(
               item.id,
               amount * sealBatches,
@@ -1098,7 +1069,10 @@ function SimulatorDetail() {
     const upgradeSubcraftMap =
       ayanadCraftData?.subcraftsByItemId ?? subcraftMap;
     for (const { item, amount } of upgradeMaterials) {
-      if ((effectiveModes[item.id] ?? "buy") === "craft") {
+      if (
+        (effectiveModes[item.id] ?? "buy") === "craft" &&
+        !isForcedAuctionHouseMaterial(item)
+      ) {
         collectCraftExecutionsForItem(
           item.id,
           amount,
@@ -1215,14 +1189,14 @@ function SimulatorDetail() {
                 amount,
                 mode: effectiveModes[item.id] ?? "buy",
                 unitCost: getChosenMaterialUnitCost(
-                  item.id,
+                  item,
                   data.subcraftsByItemId,
                   priceMap,
                   overrideMap,
                   effectiveModes,
                 ),
                 unitLabor: getChosenMaterialLabor(
-                  item.id,
+                  item,
                   data.subcraftsByItemId,
                   priceMap,
                   overrideMap,
@@ -1238,14 +1212,14 @@ function SimulatorDetail() {
                 amount,
                 mode: effectiveModes[item.id] ?? "buy",
                 unitCost: getChosenMaterialUnitCost(
-                  item.id,
+                  item,
                   ayanadSubcraftMap ?? data.subcraftsByItemId,
                   priceMap,
                   overrideMap,
                   effectiveModes,
                 ),
                 unitLabor: getChosenMaterialLabor(
-                  item.id,
+                  item,
                   ayanadSubcraftMap ?? data.subcraftsByItemId,
                   priceMap,
                   overrideMap,
@@ -1303,6 +1277,25 @@ function SimulatorDetail() {
       },
     );
   };
+
+  const sealedUpgradeCostDetail = simulationData
+    ? simulationData.base.upgradeMaterials
+        .filter(({ item }) => isForcedAuctionHouseMaterial(item))
+        .map(({ item, amount }) => {
+          const lineTotal =
+            getChosenMaterialUnitCost(
+              item,
+              ayanadSubcraftMap ?? data.subcraftsByItemId,
+              priceMap,
+              overrideMap,
+              effectiveModes,
+            ) * amount;
+          const label =
+            amount === 1 ? item.name : `${formatCount(amount)} × ${item.name}`;
+          return `${label}: ${gold(lineTotal)}`;
+        })
+        .join(" + ") || null
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -1548,6 +1541,7 @@ function SimulatorDetail() {
         <SimulationResults
           salvage={simulationData.salvage}
           reseal={simulationData.reseal}
+          sealedUpgradeCostDetail={sealedUpgradeCostDetail}
         />
       ) : (
         <p className="text-muted-foreground text-sm">
@@ -1597,7 +1591,7 @@ function SimulatorCraftBreakdown({
 
   const total = materials.reduce((sum, { item, amount }) => {
     const unit = getChosenMaterialUnitCost(
-      item.id,
+      item,
       subcraftMap,
       priceMap,
       overrideMap,
@@ -1656,21 +1650,27 @@ function SimulatorCraftBreakdown({
               const price = priceMap.get(item.id);
               const isCustom = customPrice != null;
               const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-              const craftUnit = isCraftable
-                ? deepCraftCost(
-                    item.id,
-                    subcraftMap,
-                    priceMap,
-                    overrideMap,
-                    modes,
-                  )
-                : 0;
+              const forceBuy = isForcedAuctionHouseMaterial(item);
+              const craftUnit =
+                isCraftable && !forceBuy
+                  ? deepCraftCost(
+                      item.id,
+                      subcraftMap,
+                      priceMap,
+                      overrideMap,
+                      modes,
+                    )
+                  : 0;
               const unit =
-                mode === "craft" && isCraftable ? craftUnit : buyUnit;
+                mode === "craft" && isCraftable && !forceBuy
+                  ? craftUnit
+                  : buyUnit;
               const lineTotal = unit * amount;
               const hasPrice = isCustom || !!price;
               const totalDiff =
-                isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
+                isCraftable && !forceBuy && hasPrice
+                  ? (buyUnit - craftUnit) * amount
+                  : null;
               const subEntries = subcraftMap[item.id];
               const subEntry =
                 isCraftable && subEntries?.length
@@ -1690,7 +1690,7 @@ function SimulatorCraftBreakdown({
                   : null;
               const subLabor = subEntry
                 ? getChosenMaterialLabor(
-                    item.id,
+                    item,
                     subcraftMap,
                     priceMap,
                     overrideMap,
@@ -1729,7 +1729,10 @@ function SimulatorCraftBreakdown({
                               (custom)
                             </span>
                           ) : null}
-                          {mode === "craft" && isCraftable && subLabor > 0 ? (
+                          {mode === "craft" &&
+                          isCraftable &&
+                          !forceBuy &&
+                          subLabor > 0 ? (
                             <span className="mr-1 text-xs text-amber-500">
                               {subLabor.toLocaleString(undefined, {
                                 maximumFractionDigits: 0,
@@ -1769,23 +1772,26 @@ function SimulatorCraftBreakdown({
                     }
                   />
 
-                  {mode === "craft" && isCraftable && subEntry && (
-                    <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
-                      <SimulatorCraftBreakdown
-                        entry={subEntry}
-                        itemId={itemId}
-                        priceMap={priceMap}
-                        overrideMap={overrideMap}
-                        proficiencyMap={proficiencyMap}
-                        subcraftMap={subcraftMap}
-                        modes={modes}
-                        setModes={setModes}
-                        collapsedCraftIds={collapsedCraftIds}
-                        toggleCollapsed={toggleCollapsed}
-                        depth={depth + 1}
-                      />
-                    </li>
-                  )}
+                  {mode === "craft" &&
+                    isCraftable &&
+                    !isForcedAuctionHouseMaterial(item) &&
+                    subEntry && (
+                      <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
+                        <SimulatorCraftBreakdown
+                          entry={subEntry}
+                          itemId={itemId}
+                          priceMap={priceMap}
+                          overrideMap={overrideMap}
+                          proficiencyMap={proficiencyMap}
+                          subcraftMap={subcraftMap}
+                          modes={modes}
+                          setModes={setModes}
+                          collapsedCraftIds={collapsedCraftIds}
+                          toggleCollapsed={toggleCollapsed}
+                          depth={depth + 1}
+                        />
+                      </li>
+                    )}
                 </Fragment>
               );
             })}
@@ -1856,8 +1862,10 @@ function StrategySummaryCard({
 
 function SalvageLoopDetails({
   result,
+  sealedUpgradeCostDetail,
 }: {
   result: SalvageLoopSimulationResult;
+  sealedUpgradeCostDetail: string | null;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -1892,6 +1900,7 @@ function SalvageLoopDetails({
       <StatCard
         label="Sealed upgrade cost"
         value={gold(result.sealedUpgradeCost)}
+        detail={sealedUpgradeCostDetail}
       />
       <StatCard
         label={`Net fail recovery (×${formatCount(result.failedAttempts)})`}
@@ -1928,9 +1937,11 @@ function SalvageLoopDetails({
 function ResealLoopDetails({
   result,
   sealName,
+  sealedUpgradeCostDetail,
 }: {
   result: ResealLoopSimulationResult;
   sealName: string;
+  sealedUpgradeCostDetail: string | null;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -1949,6 +1960,7 @@ function ResealLoopDetails({
       <StatCard
         label="Sealed upgrade cost"
         value={gold(result.sealedUpgradeCost)}
+        detail={sealedUpgradeCostDetail}
       />
       <StatCard label="Salvage wisps" value={`${result.salvageWisps}`} />
       <StatCard label="Revenue (salvage)" value={gold(result.revenueSalvage)} />
@@ -1990,9 +2002,11 @@ function ResealLoopDetails({
 function SimulationResults({
   salvage,
   reseal,
+  sealedUpgradeCostDetail,
 }: {
   salvage: SalvageLoopSimulationResult;
   reseal: ResealStrategyData;
+  sealedUpgradeCostDetail: string | null;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -2016,7 +2030,10 @@ function SimulationResults({
 
       <div className="flex flex-col gap-3">
         <h2 className="text-xl font-semibold">Salvage Loop details</h2>
-        <SalvageLoopDetails result={salvage} />
+        <SalvageLoopDetails
+          result={salvage}
+          sealedUpgradeCostDetail={sealedUpgradeCostDetail}
+        />
       </div>
 
       {reseal.result && reseal.sealName ? (
@@ -2025,6 +2042,7 @@ function SimulationResults({
           <ResealLoopDetails
             result={reseal.result}
             sealName={reseal.sealName}
+            sealedUpgradeCostDetail={sealedUpgradeCostDetail}
           />
         </div>
       ) : null}
