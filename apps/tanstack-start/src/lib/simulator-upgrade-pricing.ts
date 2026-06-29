@@ -73,6 +73,10 @@ export function getItemPrice(
   return getMarketPrice(priceMap.get(itemId));
 }
 
+export function mergePriceMaps(...priceMaps: PriceMap[]): PriceMap {
+  return new Map(priceMaps.flatMap((priceMap) => [...priceMap]));
+}
+
 export function getMatchingAyanadName(name: string): string | null {
   if (!name.toLowerCase().includes("sealed delphinad")) return null;
   return name.replace(/delphinad/i, "Ayanad");

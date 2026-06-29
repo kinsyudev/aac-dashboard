@@ -42,6 +42,7 @@ import {
   getMarketPrice,
   getSimulationChain,
   isForcedAuctionHouseMaterial,
+  mergePriceMaps,
   pickCheapestCraftForItem,
   useAyanadUpgradeData,
 } from "~/lib/simulator-upgrade";
@@ -625,6 +626,10 @@ function SimulatorDetail() {
     () => new Map(ayanadCraftData?.prices.map((p) => [p.itemId, p])),
     [ayanadCraftData],
   );
+  const upgradePriceMap = useMemo(
+    () => mergePriceMaps(priceMap, ayanadPriceMap),
+    [ayanadPriceMap, priceMap],
+  );
   const ayanadPriceQuery = useQuery({
     ...trpc.items.price.queryOptions(ayanadItem?.id ?? -1),
     enabled: ayanadItem?.id != null,
@@ -669,19 +674,18 @@ function SimulatorDetail() {
       upgradeCrafts.length ? upgradeCrafts : ayanadCraftData.crafts,
       ayanadItem.id,
       subcraftMap,
-      new Map([...priceMap, ...ayanadPriceMap]),
+      upgradePriceMap,
       overrideMap,
       modes,
     );
   }, [
     ayanadCraftData,
     ayanadItem,
-    ayanadPriceMap,
     data.item,
     equip,
     modes,
     overrideMap,
-    priceMap,
+    upgradePriceMap,
   ]);
   const ayanadSubcraftMap = ayanadCraftData?.subcraftsByItemId;
   const manaSealCraft = useMemo(() => {
@@ -780,7 +784,7 @@ function SimulatorDetail() {
         getChosenMaterialUnitCost(
           item,
           ayanadSubcraftMap ?? subcraftMap,
-          priceMap,
+          upgradePriceMap,
           overrideMap,
           effectiveModes,
         ) *
@@ -801,7 +805,7 @@ function SimulatorDetail() {
           getChosenMaterialLabor(
             item,
             ayanadSubcraftMap ?? subcraftMap,
-            priceMap,
+            upgradePriceMap,
             overrideMap,
             proficiencyMap,
             effectiveModes,
@@ -967,6 +971,7 @@ function SimulatorDetail() {
     glowingProcEnabled,
     ayanadCraft,
     ayanadSubcraftMap,
+    upgradePriceMap,
     manaSealCraft,
     manaSealCraftQuery.data,
     manaSealItem,
@@ -1077,7 +1082,7 @@ function SimulatorDetail() {
           item.id,
           amount,
           upgradeSubcraftMap,
-          priceMap,
+          upgradePriceMap,
           overrideMap,
           proficiencyMap,
           effectiveModes,
@@ -1105,6 +1110,7 @@ function SimulatorDetail() {
     priceMap,
     proficiencyMap,
     simulationData,
+    upgradePriceMap,
   ]);
 
   const laborByProficiency = useMemo(() => {
@@ -1214,14 +1220,14 @@ function SimulatorDetail() {
                 unitCost: getChosenMaterialUnitCost(
                   item,
                   ayanadSubcraftMap ?? data.subcraftsByItemId,
-                  priceMap,
+                  upgradePriceMap,
                   overrideMap,
                   effectiveModes,
                 ),
                 unitLabor: getChosenMaterialLabor(
                   item,
                   ayanadSubcraftMap ?? data.subcraftsByItemId,
-                  priceMap,
+                  upgradePriceMap,
                   overrideMap,
                   proficiencyMap,
                   effectiveModes,
@@ -1286,7 +1292,7 @@ function SimulatorDetail() {
             getChosenMaterialUnitCost(
               item,
               ayanadSubcraftMap ?? data.subcraftsByItemId,
-              priceMap,
+              upgradePriceMap,
               overrideMap,
               effectiveModes,
             ) * amount;

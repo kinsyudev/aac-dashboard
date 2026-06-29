@@ -5,6 +5,7 @@ import {
   buildRecommendedModes,
   getCraftEntryUnitCost,
   getItemPrice,
+  mergePriceMaps,
 } from "./simulator-upgrade-pricing.ts";
 
 void test("recommended modes always buy Ayanad conversion scrolls", () => {
@@ -50,6 +51,16 @@ void test("item pricing uses AH price for Ayanad conversion scrolls", () => {
     ),
     123,
   );
+});
+
+void test("merged price maps include Ayanad-only material prices", () => {
+  const ayanadScrollId = 40092;
+  const merged = mergePriceMaps(
+    new Map(),
+    new Map([[ayanadScrollId, { avg24h: "456", avg7d: null, avg30d: null }]]),
+  );
+
+  assert.equal(getItemPrice(ayanadScrollId, merged, new Map()), 456);
 });
 
 void test("Ayanad craft costing buys conversion scrolls even when craft mode is selected", () => {
