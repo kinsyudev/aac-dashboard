@@ -102,8 +102,6 @@ interface BaseSimulationInput {
   equip: DetectedEquip;
   /** Price per mana wisp in gold. */
   wispPrice: number;
-  /** Market price of the final sealed ayanad item (for sell comparison). */
-  sellPrice: number;
 }
 
 interface BaseSimulationResult {
@@ -121,22 +119,14 @@ interface BaseSimulationResult {
   salvageWisps: number;
   /** Revenue if salvaged (wisps x wisp price). */
   revenueSalvage: number;
-  /** Revenue if sold on market. */
-  revenueSell: number;
   /** Profit if salvaged. */
   profitSalvage: number;
-  /** Profit if sold. */
-  profitSell: number;
   /** Expected profit per RNG attempt if the successful item is salvaged. */
   expectedValueSalvage: number;
-  /** Expected profit per RNG attempt if the successful item is sold. */
-  expectedValueSell: number;
   /** Total labor for the strategy. */
   totalLabor: number;
   /** Gold per labor point (salvage path). */
   silverPerLaborSalvage: number;
-  /** Gold per labor point (sell path). */
-  silverPerLaborSell: number;
 }
 
 export interface SalvageLoopSimulationInput extends BaseSimulationInput {
@@ -225,9 +215,8 @@ function getFinalRevenue(input: BaseSimulationInput) {
     input.equip.category,
   );
   const revenueSalvage = salvageWisps * input.wispPrice;
-  const revenueSell = input.sellPrice;
 
-  return { salvageWisps, revenueSalvage, revenueSell };
+  return { salvageWisps, revenueSalvage };
 }
 
 export function getEffectiveCraftSuccessRate(
@@ -252,12 +241,10 @@ function getBaseResult(
   glowingProcChance = 0,
 ): BaseSimulationResult {
   const variants = variantsByTier[input.rngTier];
-  const { salvageWisps, revenueSalvage, revenueSell } = getFinalRevenue(input);
+  const { salvageWisps, revenueSalvage } = getFinalRevenue(input);
 
   const profitSalvage = revenueSalvage - totalCost;
-  const profitSell = revenueSell - totalCost;
   const expectedValueSalvage = profitSalvage / expectedAttempts;
-  const expectedValueSell = profitSell / expectedAttempts;
 
   return {
     variants,
@@ -267,15 +254,11 @@ function getBaseResult(
     totalCost,
     salvageWisps,
     revenueSalvage,
-    revenueSell,
     profitSalvage,
-    profitSell,
     expectedValueSalvage,
-    expectedValueSell,
     totalLabor,
     silverPerLaborSalvage:
       totalLabor > 0 ? (profitSalvage * 100) / totalLabor : 0,
-    silverPerLaborSell: totalLabor > 0 ? (profitSell * 100) / totalLabor : 0,
   };
 }
 
