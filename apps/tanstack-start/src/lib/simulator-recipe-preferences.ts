@@ -84,15 +84,13 @@ export function parseSimulatorCraftModePreferences(
           }
 
           const normalizedModes = Object.fromEntries(
-            Object.entries(rawModes)
+            Object.entries(rawModes as Record<string, unknown>)
               .map(([itemId, mode]) => {
                 const numericItemId = Number(itemId);
                 return [numericItemId, mode] as const;
               })
               .filter(
-                (
-                  entry,
-                ): entry is [number, SimulatorCraftMode] =>
+                (entry): entry is [number, SimulatorCraftMode] =>
                   Number.isInteger(entry[0]) &&
                   (entry[1] === "buy" || entry[1] === "craft"),
               )
@@ -116,15 +114,11 @@ export function serializeSimulatorCraftModePreferences(
     Object.fromEntries(
       Object.entries(preferences)
         .map(([wispKey, modes]) => {
-          if (!modes) return [wispKey, {}] as const;
-
           const normalizedModes = Object.fromEntries(
             Object.entries(modes)
               .map(([itemId, mode]) => [Number(itemId), mode] as const)
               .filter(
-                (
-                  entry,
-                ): entry is [number, SimulatorCraftMode] =>
+                (entry): entry is [number, SimulatorCraftMode] =>
                   Number.isInteger(entry[0]) &&
                   (entry[1] === "buy" || entry[1] === "craft"),
               )
@@ -139,7 +133,9 @@ export function serializeSimulatorCraftModePreferences(
   );
 }
 
-export function pickPreferredSimulatorRecipe<T extends { craft: { id: number } }>(
+export function pickPreferredSimulatorRecipe<
+  T extends { craft: { id: number } },
+>(
   entries: T[],
   wispKey: SimulatorWispKey,
   preferences: SimulatorRecipePreferences,

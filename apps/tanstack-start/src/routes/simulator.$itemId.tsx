@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { inferProcedureOutput } from "@trpc/server";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +15,8 @@ import type {
   SalvageLoopSimulationResult,
   SimulationResult,
 } from "~/lib/simulator";
-import type { SimulationChain } from "~/lib/simulator-upgrade";
+import type { SimulatorTarget } from "~/lib/simulator-catalog";
+import type { CraftModeMap, SimulationChain } from "~/lib/simulator-upgrade";
 import { ItemIcon } from "~/component/item-icon";
 import {
   CraftModeToggle,
@@ -29,18 +31,17 @@ import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import { piecesMap } from "~/lib/salvage";
-import { getSimulatorTargetByItemId } from "~/lib/simulator-catalog";
-import type { SimulatorTarget } from "~/lib/simulator-catalog";
-import {
-  pickPreferredSimulatorRecipe,
-  useSimulatorCraftModePreferences,
-  useSimulatorRecipePreferences,
-} from "~/lib/simulator-recipe-preferences";
 import {
   computeResealLoopSimulation,
   computeSimulation,
   detectPieceAndTier,
 } from "~/lib/simulator";
+import { getSimulatorTargetByItemId } from "~/lib/simulator-catalog";
+import {
+  pickPreferredSimulatorRecipe,
+  useSimulatorCraftModePreferences,
+  useSimulatorRecipePreferences,
+} from "~/lib/simulator-recipe-preferences";
 import {
   buildRecommendedModes,
   deepCraftCost,
@@ -156,7 +157,7 @@ interface ResealStrategyData {
 
 async function prefetchCraftDataByExactName(
   trpc: ReturnType<typeof useTRPC>,
-  queryClient: { fetchQuery: <T>(options: unknown) => Promise<T> },
+  queryClient: QueryClient,
   itemName: string | null,
 ) {
   if (!itemName) return null;
@@ -165,10 +166,12 @@ async function prefetchCraftDataByExactName(
     trpc.items.byName.queryOptions(itemName),
   );
   const exactItem =
-    items?.find((item: { name: string }) => item.name === itemName) ?? null;
+    items.find((item: { name: string }) => item.name === itemName) ?? null;
 
   if (exactItem) {
-    await queryClient.fetchQuery(trpc.crafts.forItem.queryOptions(exactItem.id));
+    await queryClient.fetchQuery(
+      trpc.crafts.forItem.queryOptions(exactItem.id),
+    );
   }
 
   return exactItem;
@@ -228,7 +231,7 @@ function deepCraftLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode> = {},
+  modes: CraftModeMap = {},
   visited = new Set<number>(),
 ): number {
   if (visited.has(itemId)) return 0;
@@ -319,7 +322,7 @@ function getChosenMaterialUnitCost(
   subcraftMap: SubcraftMap,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ): number {
   const isCraftable = !!subcraftMap[item.id]?.length;
   const mode = modes[item.id] ?? "buy";
@@ -335,7 +338,7 @@ function getChosenMaterialLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ): number {
   const isCraftable = !!subcraftMap[item.id]?.length;
   const mode = modes[item.id] ?? "buy";
@@ -382,7 +385,7 @@ function getSelectedCraftUnitLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ): number {
   const produced =
     entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
@@ -416,7 +419,7 @@ function countManaWispsForItem(
   subcraftMap: SubcraftMap,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
   visited = new Set<number>(),
 ): number {
   if (visited.has(itemId)) return 0;
@@ -464,143 +467,12 @@ function countManaWispsForItem(
   return total / produced;
 }
 
-function serializeCraftModes(
-  modes: Record<number, CraftMode>,
-): string | undefined {
+function serializeCraftModes(modes: CraftModeMap): string | undefined {
   const craftIds = Object.entries(modes)
     .filter(([, mode]) => mode === "craft")
     .map(([id]) => Number(id))
     .sort((a, b) => a - b);
   return craftIds.length ? craftIds.join(",") : undefined;
-}
-
-function collectCraftExecutionsForItem(
-  itemId: number,
-  requiredUnits: number,
-  subcraftMap: SubcraftMap,
-  priceMap: PriceMap,
-  overrideMap: OverrideMap,
-  proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
-  acc: Map<number, CraftExecution>,
-  visited = new Set<number>(),
-) {
-  const subEntries = subcraftMap[itemId];
-  if (!subEntries?.length || visited.has(itemId)) return;
-
-  const entry = pickCheapestCraft(
-    subEntries,
-    itemId,
-    (candidate, productItemId) =>
-      getCraftEntryUnitCost(
-        candidate,
-        productItemId,
-        subcraftMap,
-        priceMap,
-        overrideMap,
-        modes,
-        new Set(visited),
-      ),
-  );
-  const produced =
-    entry.products.find((p) => p.item.id === itemId)?.amount ?? 1;
-  const batches = requiredUnits / produced;
-
-  const existing = acc.get(entry.craft.id);
-  if (existing) existing.batches += batches;
-  else {
-    acc.set(entry.craft.id, {
-      craftId: entry.craft.id,
-      name: entry.craft.name,
-      proficiency: entry.craft.proficiency,
-      batches,
-      laborPerBatch: getDiscountedLabor(
-        entry.craft.labor,
-        entry.craft.proficiency,
-        proficiencyMap,
-      ),
-    });
-  }
-
-  visited.add(itemId);
-  for (const { item, amount } of entry.materials) {
-    if (
-      (modes[item.id] ?? "buy") === "craft" &&
-      !isForcedAuctionHouseMaterial(item)
-    ) {
-      collectCraftExecutionsForItem(
-        item.id,
-        amount * batches,
-        subcraftMap,
-        priceMap,
-        overrideMap,
-        proficiencyMap,
-        modes,
-        acc,
-        new Set(visited),
-      );
-    }
-  }
-}
-
-function addCraftExecution(
-  craft: CraftEntry["craft"],
-  batches: number,
-  proficiencyMap: ProficiencyMap,
-  acc: Map<number, CraftExecution>,
-) {
-  if (batches <= 0) return;
-
-  const existing = acc.get(craft.id);
-  if (existing) {
-    existing.batches += batches;
-    return;
-  }
-
-  acc.set(craft.id, {
-    craftId: craft.id,
-    name: craft.name,
-    proficiency: craft.proficiency,
-    batches,
-    laborPerBatch: getDiscountedLabor(
-      craft.labor,
-      craft.proficiency,
-      proficiencyMap,
-    ),
-  });
-}
-
-function addSelectedCraftExecutionForUnits(
-  entry: CraftEntry,
-  itemId: number,
-  requiredUnits: number,
-  proficiencyMap: ProficiencyMap,
-  acc: Map<number, CraftExecution>,
-): number {
-  const produced =
-    entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
-  const batches = requiredUnits / produced;
-  addCraftExecution(entry.craft, batches, proficiencyMap, acc);
-  return batches;
-}
-
-function fillMissingCraftLabor(
-  acc: Map<number, CraftExecution>,
-  subcraftMap: SubcraftMap,
-  proficiencyMap: ProficiencyMap,
-) {
-  for (const craft of acc.values()) {
-    if (craft.laborPerBatch > 0) continue;
-    const subEntry = Object.values(subcraftMap)
-      .flat()
-      .find((entry) => entry.craft.id === craft.craftId);
-    if (!subEntry) continue;
-    craft.laborPerBatch = getDiscountedLabor(
-      subEntry.craft.labor,
-      subEntry.craft.proficiency,
-      proficiencyMap,
-    );
-  }
 }
 
 function SimulatorDetail() {
@@ -1407,7 +1279,7 @@ function SimulatorCraftBreakdown({
   overrideMap: OverrideMap;
   proficiencyMap: ProficiencyMap;
   subcraftMap: SubcraftMap;
-  modes: Record<number, CraftMode>;
+  modes: CraftModeMap;
   setModes: (itemId: number, mode: CraftMode) => void;
   onSavePriceOverride: (itemId: number, price: number) => void;
   collapsedCraftIds: Set<number>;
@@ -1667,13 +1539,16 @@ function RecipePicker({
   priceMap: PriceMap;
   overrideMap: OverrideMap;
   subcraftMap: SubcraftMap;
-  modes: Record<number, CraftMode>;
+  modes: CraftModeMap;
   preferences: Record<string, number | undefined>;
   selectedRecipe: NonNullable<
     ReturnType<typeof pickPreferredSimulatorRecipe<CraftEntry>>
   >;
   simulatorTarget: SimulatorTarget;
-  onSelectRecipe: (wispKey: SimulatorTarget["wispKey"], craftId: number) => void;
+  onSelectRecipe: (
+    wispKey: SimulatorTarget["wispKey"],
+    craftId: number,
+  ) => void;
 }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -1688,8 +1563,7 @@ function RecipePicker({
         );
         const isSelected = entry.craft.id === selectedRecipe.selected.craft.id;
         const isCheapest = entry.craft.id === selectedRecipe.cheapest.craft.id;
-        const isSaved =
-          entry.craft.id === preferences[simulatorTarget.wispKey];
+        const isSaved = entry.craft.id === preferences[simulatorTarget.wispKey];
 
         return (
           <button
@@ -1723,7 +1597,7 @@ function RecipePicker({
                 </span>
               ) : null}
               {isSelected ? (
-                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                <span className="bg-primary/10 text-primary rounded px-1.5 py-0.5 text-[11px] font-medium">
                   Selected
                 </span>
               ) : null}
@@ -1781,7 +1655,10 @@ function StrategySummaryCard({
           value={result.silverPerLaborSalvage.toFixed(2)}
           variant={resultVariant(result.silverPerLaborSalvage)}
         />
-        <StatCard label="Total labor" value={result.totalLabor.toLocaleString()} />
+        <StatCard
+          label="Total labor"
+          value={result.totalLabor.toLocaleString()}
+        />
       </div>
     </div>
   );

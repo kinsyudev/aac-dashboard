@@ -5,16 +5,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import type { AppRouter } from "@acme/api";
 
+import type { ProficiencyMap } from "~/lib/proficiency";
+import type { SimulatorTarget } from "~/lib/simulator-catalog";
+import type { CraftModeMap } from "~/lib/simulator-upgrade";
 import { ItemIcon } from "~/component/item-icon";
 import { StatCard } from "~/component/stat-card";
-import type { ProficiencyMap } from "~/lib/proficiency";
-import { SIMULATOR_TARGETS } from "~/lib/simulator-catalog";
-import type { SimulatorTarget } from "~/lib/simulator-catalog";
-import {
-  pickPreferredSimulatorRecipe,
-  useSimulatorCraftModePreferences,
-  useSimulatorRecipePreferences,
-} from "~/lib/simulator-recipe-preferences";
 import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
@@ -22,6 +17,12 @@ import {
   computeSimulation,
   detectPieceAndTier,
 } from "~/lib/simulator";
+import { SIMULATOR_TARGETS } from "~/lib/simulator-catalog";
+import {
+  pickPreferredSimulatorRecipe,
+  useSimulatorCraftModePreferences,
+  useSimulatorRecipePreferences,
+} from "~/lib/simulator-recipe-preferences";
 import {
   buildRecommendedModes,
   deepCraftCost,
@@ -44,7 +45,6 @@ type PriceMap = Map<
   { avg24h: string | null; avg7d: string | null; avg30d: string | null }
 >;
 type OverrideMap = Map<number, number>;
-type CraftMode = "buy" | "craft";
 
 export const Route = createFileRoute("/simulator/")({
   head: () => ({
@@ -189,7 +189,9 @@ function SimulatorDashboardCard({
   const ayanadCraftData = ayanadCraftQuery.data ?? null;
   const ayanadPriceMap = useMemo<PriceMap>(
     () =>
-      new Map(ayanadCraftData?.prices.map((price) => [price.itemId, price]) ?? []),
+      new Map(
+        ayanadCraftData?.prices.map((price) => [price.itemId, price]) ?? [],
+      ),
     [ayanadCraftData],
   );
   const upgradePriceMap = useMemo(
@@ -231,7 +233,12 @@ function SimulatorDashboardCard({
     [manaSealCraftQuery.data],
   );
   const ayanadCraft = useMemo(() => {
-    if (!ayanadCraftData?.crafts.length || ayanadItem == null || !equip) {
+    if (
+      !data ||
+      !ayanadCraftData?.crafts.length ||
+      ayanadItem == null ||
+      !equip
+    ) {
       return null;
     }
     return pickCheapestCraftForItem(
@@ -275,7 +282,7 @@ function SimulatorDashboardCard({
     overrideMap,
   ]);
   const recommendedModes = useMemo(() => {
-    if (!preferredMainCraft || !equip) return {};
+    if (!data || !preferredMainCraft || !equip) return {};
     const materials = [
       ...preferredMainCraft.materials,
       ...(manaSealCraft?.materials ?? []),
@@ -393,7 +400,7 @@ function SimulatorDashboardCard({
             overrideMap,
             proficiencyMap,
             effectiveModes,
-            ) *
+          ) *
             amount,
         0,
       );
@@ -451,7 +458,11 @@ function SimulatorDashboardCard({
     });
 
     let reseal = null;
-    if (manaSealItem && manaSealCraftQuery.data?.crafts.length) {
+    if (
+      manaSealItem &&
+      manaSealCraft &&
+      manaSealCraftQuery.data?.crafts.length
+    ) {
       const sealCraft = manaSealCraft;
       const manaSealCost = getCraftEntryUnitCost(
         sealCraft,
@@ -502,8 +513,8 @@ function SimulatorDashboardCard({
 
     return { result, delphinadCost, expectedDetail };
   }, [
+    ayanadCraft,
     ayanadCraftData,
-    ayanadItem,
     data,
     effectiveModes,
     equip,
@@ -523,7 +534,7 @@ function SimulatorDashboardCard({
     <Link
       to="/simulator/$itemId"
       params={{ itemId: target.itemId }}
-      className="rounded-lg border p-4 transition-colors hover:bg-muted/30"
+      className="hover:bg-muted/30 rounded-lg border p-4 transition-colors"
     >
       <div className="mb-4 flex items-center gap-3">
         {data?.item.icon ? (
@@ -537,7 +548,10 @@ function SimulatorDashboardCard({
 
       {card ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          <StatCard label="Initial Seed" value={gold(card.result.initialSeedCost)} />
+          <StatCard
+            label="Initial Seed"
+            value={gold(card.result.initialSeedCost)}
+          />
           <StatCard
             label="Delphinad Craft Cost"
             value={gold(card.delphinadCost)}
@@ -592,7 +606,7 @@ function getChosenMaterialUnitCost(
   subcraftMap: ForItemOutput["subcraftsByItemId"],
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ) {
   const isCraftable = !!subcraftMap[item.id]?.length;
   const mode = modes[item.id] ?? "buy";
@@ -608,7 +622,7 @@ function deepCraftLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
   visited = new Set<number>(),
 ): number {
   if (visited.has(itemId)) return 0;
@@ -664,7 +678,7 @@ function getChosenMaterialLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ): number {
   const isCraftable = !!subcraftMap[item.id]?.length;
   const mode = modes[item.id] ?? "buy";
@@ -688,7 +702,7 @@ function getSelectedCraftUnitLabor(
   priceMap: PriceMap,
   overrideMap: OverrideMap,
   proficiencyMap: ProficiencyMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
 ): number {
   const produced =
     entry.products.find((product) => product.item.id === itemId)?.amount ?? 1;
@@ -722,7 +736,7 @@ function countManaWispsForItem(
   subcraftMap: ForItemOutput["subcraftsByItemId"],
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode>,
+  modes: CraftModeMap,
   visited = new Set<number>(),
 ): number {
   if (visited.has(itemId)) return 0;

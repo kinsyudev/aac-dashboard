@@ -1,6 +1,7 @@
 import { pickCheapestCraft } from "./craft-helpers.ts";
 
 export type CraftMode = "buy" | "craft";
+export type CraftModeMap = Partial<Record<number, CraftMode>>;
 
 export interface PriceEntry {
   avg24h: string | null;
@@ -140,7 +141,7 @@ export function getCraftEntryUnitCost<T extends CraftEntryLike>(
   subcraftMap: SubcraftMap<T>,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode> = {},
+  modes: CraftModeMap = {},
   visited = new Set<number>(),
 ): number {
   const produced =
@@ -175,7 +176,7 @@ export function deepCraftCost<T extends CraftEntryLike>(
   subcraftMap: SubcraftMap<T>,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode> = {},
+  modes: CraftModeMap = {},
   visited = new Set<number>(),
 ): number {
   if (visited.has(itemId)) return getItemPrice(itemId, priceMap, overrideMap);
@@ -213,7 +214,7 @@ export function pickCheapestCraftForItem<T extends CraftEntryLike>(
   subcraftMap: SubcraftMap<T>,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
-  modes: Record<number, CraftMode> = {},
+  modes: CraftModeMap = {},
 ): T {
   return pickCheapestCraft(entries, itemId, (entry, productItemId) =>
     getCraftEntryUnitCost(
