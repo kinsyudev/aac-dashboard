@@ -3,6 +3,16 @@ packages:
   - packages/*
   - tooling/*
 
+allowBuilds:
+  '@prisma/client': false
+  '@prisma/engines': false
+  better-sqlite3: true
+  bufferutil: false
+  core-js-pure: false
+  esbuild: true
+  prisma: false
+  utf-8-validate: false
+
 catalog:
   '@better-auth/cli': 1.4.0-beta.9
   '@better-auth/expo': 1.4.0-beta.9
