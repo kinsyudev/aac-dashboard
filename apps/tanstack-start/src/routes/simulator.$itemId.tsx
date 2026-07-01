@@ -1,12 +1,15 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { inferProcedureOutput } from "@trpc/server";
+import type { FormEvent } from "react";
 import { Fragment, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
+import { Button } from "@acme/ui/button";
 import { Checkbox } from "@acme/ui/checkbox";
+import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
@@ -37,6 +40,7 @@ import {
   detectPieceAndTier,
 } from "~/lib/simulator";
 import { getSimulatorTargetByItemId } from "~/lib/simulator-catalog";
+import { parsePriceOverrideInput } from "~/lib/simulator-price-override";
 import {
   pickPreferredSimulatorRecipe,
   useSimulatorCraftModePreferences,
@@ -493,6 +497,10 @@ function SimulatorDetail() {
   );
   const [glowingProcEnabled, setGlowingProcEnabled] = useState(false);
   const [debugCopyState, setDebugCopyState] = useState<string | null>(null);
+  const [wispPriceInput, setWispPriceInput] = useState<{
+    itemId: number;
+    value: string;
+  } | null>(null);
 
   const priceMap: PriceMap = useMemo(
     () => new Map(data.prices.map((p) => [p.itemId, p])),
@@ -515,6 +523,12 @@ function SimulatorDetail() {
     () => findWispInChain(data, priceMap, overrideMap),
     [data, priceMap, overrideMap],
   );
+  const currentWispPriceInput =
+    wispPriceInput && wispPriceInput.itemId === wisp?.id
+      ? wispPriceInput.value
+      : wisp && wisp.price > 0
+        ? String(wisp.price)
+        : "";
   const manaSealName = useMemo(
     () =>
       equip
@@ -1067,6 +1081,15 @@ function SimulatorDetail() {
       },
     );
   };
+  const saveWispPriceOverride = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!wisp) return;
+
+    const parsed = parsePriceOverrideInput(currentWispPriceInput);
+    if (parsed == null) return;
+
+    setPriceOverride.mutate({ itemId: wisp.id, price: parsed });
+  };
 
   const sealedUpgradeCostDetail = simulationData
     ? simulationData.base.upgradeMaterials
@@ -1157,16 +1180,50 @@ function SimulatorDetail() {
       </div>
 
       {wisp && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Wisp type:</span>
-          <span className="font-medium">{wisp.name}</span>
-          <span className="text-muted-foreground">·</span>
-          <span className="font-medium tabular-nums">
-            {wisp.price > 0
-              ? `${wisp.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`
-              : "no price data"}
-          </span>
-        </div>
+        <form
+          onSubmit={saveWispPriceOverride}
+          className="flex flex-col gap-3 rounded-md border p-3 text-sm sm:flex-row sm:items-end sm:justify-between"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground">Wisp type:</span>
+            <span className="font-medium">{wisp.name}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="font-medium tabular-nums">
+              {wisp.price > 0
+                ? `${wisp.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`
+                : "no price data"}
+            </span>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <label className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-xs">
+                Custom price (g)
+              </span>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 1.5"
+                value={currentWispPriceInput}
+                onChange={(event) =>
+                  setWispPriceInput({
+                    itemId: wisp.id,
+                    value: event.target.value,
+                  })
+                }
+                className="w-full sm:w-36"
+              />
+            </label>
+            <Button
+              type="submit"
+              disabled={parsePriceOverrideInput(currentWispPriceInput) == null}
+              loading={setPriceOverride.isPending}
+              loadingText="Saving..."
+            >
+              Save
+            </Button>
+          </div>
+        </form>
       )}
 
       {simulationData ? (
