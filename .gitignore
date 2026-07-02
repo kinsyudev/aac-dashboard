@@ -54,3 +54,6 @@ dist/
 
 # tanstack
 .tanstack
+
+# local worktrees
+.worktrees/
