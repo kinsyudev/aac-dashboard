@@ -7,6 +7,7 @@
     "dev": "pnpm with-env vite dev",
     "build": "vite build",
     "start": "node .output/server/index.mjs",
+    "test:regrade": "node --experimental-strip-types --test src/lib/regrade.test.ts",
     "test:planner": "node --experimental-strip-types --test src/lib/costume-planner.test.ts",
     "test:shoplist-destinations": "node --experimental-strip-types --test src/lib/shoplist-destinations.test.ts",
     "test:trade-packs": "node --experimental-strip-types --test src/lib/trade-packs.test.ts",

@@ -13,6 +13,7 @@ import { Route as TradePacksRouteImport } from './routes/trade-packs'
 import { Route as SimulatorRouteImport } from './routes/simulator'
 import { Route as ShoplistsRouteImport } from './routes/shoplists'
 import { Route as ShoplistRouteImport } from './routes/shoplist'
+import { Route as RegradeRouteImport } from './routes/regrade'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ItemRouteImport } from './routes/item'
 import { Route as CraftRouteImport } from './routes/craft'
@@ -53,6 +54,11 @@ const ShoplistsRoute = ShoplistsRouteImport.update({
 const ShoplistRoute = ShoplistRouteImport.update({
   id: '/shoplist',
   path: '/shoplist',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegradeRoute = RegradeRouteImport.update({
+  id: '/regrade',
+  path: '/regrade',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/craft': typeof CraftRouteWithChildren
   '/item': typeof ItemRouteWithChildren
   '/profile': typeof ProfileRoute
+  '/regrade': typeof RegradeRoute
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/costume-planner': typeof CostumePlannerRoute
   '/profile': typeof ProfileRoute
+  '/regrade': typeof RegradeRoute
   '/shoplist': typeof ShoplistRoute
   '/trade-packs': typeof TradePacksRoute
   '/auth/error': typeof AuthErrorRoute
@@ -218,6 +226,7 @@ export interface FileRoutesById {
   '/craft': typeof CraftRouteWithChildren
   '/item': typeof ItemRouteWithChildren
   '/profile': typeof ProfileRoute
+  '/regrade': typeof RegradeRoute
   '/shoplist': typeof ShoplistRoute
   '/shoplists': typeof ShoplistsRouteWithChildren
   '/simulator': typeof SimulatorRouteWithChildren
@@ -247,6 +256,7 @@ export interface FileRouteTypes {
     | '/craft'
     | '/item'
     | '/profile'
+    | '/regrade'
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
@@ -272,6 +282,7 @@ export interface FileRouteTypes {
     | '/'
     | '/costume-planner'
     | '/profile'
+    | '/regrade'
     | '/shoplist'
     | '/trade-packs'
     | '/auth/error'
@@ -297,6 +308,7 @@ export interface FileRouteTypes {
     | '/craft'
     | '/item'
     | '/profile'
+    | '/regrade'
     | '/shoplist'
     | '/shoplists'
     | '/simulator'
@@ -325,6 +337,7 @@ export interface RootRouteChildren {
   CraftRoute: typeof CraftRouteWithChildren
   ItemRoute: typeof ItemRouteWithChildren
   ProfileRoute: typeof ProfileRoute
+  RegradeRoute: typeof RegradeRoute
   ShoplistRoute: typeof ShoplistRoute
   ShoplistsRoute: typeof ShoplistsRouteWithChildren
   SimulatorRoute: typeof SimulatorRouteWithChildren
@@ -365,6 +378,13 @@ declare module '@tanstack/react-router' {
       path: '/shoplist'
       fullPath: '/shoplist'
       preLoaderRoute: typeof ShoplistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/regrade': {
+      id: '/regrade'
+      path: '/regrade'
+      fullPath: '/regrade'
+      preLoaderRoute: typeof RegradeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -579,6 +599,7 @@ const rootRouteChildren: RootRouteChildren = {
   CraftRoute: CraftRouteWithChildren,
   ItemRoute: ItemRouteWithChildren,
   ProfileRoute: ProfileRoute,
+  RegradeRoute: RegradeRoute,
   ShoplistRoute: ShoplistRoute,
   ShoplistsRoute: ShoplistsRouteWithChildren,
   SimulatorRoute: SimulatorRouteWithChildren,

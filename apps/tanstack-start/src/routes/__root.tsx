@@ -48,6 +48,7 @@ const NAV_ITEMS = [
   { to: "/trade-packs", label: "Trade Packs", access: "member" },
   { to: "/costume-planner", label: "Costume Planner", access: "member" },
   { to: "/simulator", label: "Simulator", access: "admin" },
+  { to: "/regrade", label: "Regrade", access: "admin" },
   { to: "/shoplists", label: "Shopping Lists", access: "member" },
   { to: "/profile", label: "Profile", access: "member" },
 ] as const;

@@ -46,6 +46,8 @@ export interface ManaSealItemContext {
   equip: DetectedEquip;
 }
 
+export type ManaSealTier = "delphinad" | "ayanad";
+
 function getArmorMaterial(
   category: string,
 ): "Cloth" | "Leather" | "Plate" | null {
@@ -80,12 +82,18 @@ function getAccessoryType(
   return null;
 }
 
-export function resolveDelphinadManaSealName(
+function titleCaseTier(tier: ManaSealTier): "Delphinad" | "Ayanad" {
+  return tier === "delphinad" ? "Delphinad" : "Ayanad";
+}
+
+export function resolveTieredManaSealName(
+  tier: ManaSealTier,
   context: ManaSealItemContext,
 ): string | null {
   const { category, equip, name } = context;
+  const prefix = titleCaseTier(tier);
 
-  if (equip.tier !== "delphinad") return null;
+  if (equip.tier !== tier) return null;
 
   if (equip.category === "armor") {
     if (!equip.piece) return null;
@@ -93,18 +101,24 @@ export function resolveDelphinadManaSealName(
     const armorMaterial = getArmorMaterial(category);
     if (!armorMaterial) return null;
 
-    return `Delphinad ${armorMaterial} ${sealToGearMap.armor[equip.piece]}`;
+    return `${prefix} ${armorMaterial} ${sealToGearMap.armor[equip.piece]}`;
   }
 
   if (equip.category === "weapon") {
     const weaponType = getWeaponType(name, category);
     if (!weaponType) return null;
 
-    return `Delphinad ${sealToGearMap.weapon[weaponType]}`;
+    return `${prefix} ${sealToGearMap.weapon[weaponType]}`;
   }
 
   const accessoryType = getAccessoryType(name, category);
   if (!accessoryType) return null;
 
-  return `Delphinad ${sealToGearMap.jewelry[accessoryType]}`;
+  return `${prefix} ${sealToGearMap.jewelry[accessoryType]}`;
+}
+
+export function resolveDelphinadManaSealName(
+  context: ManaSealItemContext,
+): string | null {
+  return resolveTieredManaSealName("delphinad", context);
 }
