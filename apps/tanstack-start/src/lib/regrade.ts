@@ -1,6 +1,4 @@
-import regradeDataJson from "../../../../regrade_data/regrade.json" with {
-  type: "json",
-};
+import regradeDataJson from "../../../../regrade_data/regrade.json" with { type: "json" };
 
 export type RegradeItemType = "weapon" | "armor" | "accessory" | "pet" | "ship";
 
@@ -53,6 +51,17 @@ export interface RegradeScroll {
   icon: string;
   type: RegradeItemType;
   resplendent: boolean;
+}
+
+export interface RegradeConsumableRecipeItem {
+  id: number;
+  name: string;
+  icon: string;
+}
+
+export interface ResplendentScrollRightClickRecipe {
+  normalScroll: RegradeConsumableRecipeItem;
+  luckyPoint: RegradeConsumableRecipeItem;
 }
 
 export interface RegradeData {
@@ -119,6 +128,30 @@ export interface RegradeActionChoice {
   expectedValueGold: number;
   attemptCostGold: number;
   attemptLabor: number;
+  successProbability: number;
+  greatProbability: number;
+  normalToGrade: number;
+  greatToGrade: number;
+}
+
+export interface RegradeTapProjection {
+  targetGrade: number;
+  desiredTargetCount: number;
+  targetProbability: number;
+  requiredTaps: number;
+  expectedNormalHits: number;
+  expectedLuckyHits: number;
+  expectedTargetOrBetter: number;
+  expectedFailures: number;
+}
+
+export interface ExpectedRevenueBreakdownEntry {
+  grade: number;
+  probability: number;
+  saleValueGold: number;
+  expectedRevenueGold: number;
+  expectedCostGold: number;
+  expectedProfitGold: number;
 }
 
 export interface ExpectedRegradeInput {
@@ -143,6 +176,8 @@ export interface ExpectedRegradeResult {
   expectedCostGold: number;
   expectedRevenueGold: number;
   expectedLabor: number;
+  expectedAttempts: number;
+  revenueBreakdown: ExpectedRevenueBreakdownEntry[];
   silverPerLabor: number;
   selectedSteps: RegradeActionChoice[];
   skippedReasons: string[];
@@ -227,7 +262,8 @@ function sameNumberList(left: readonly number[], right: readonly number[]) {
 export function parseRegradeSearch(
   search: Record<string, unknown>,
 ): RegradeSearchState {
-  const family = search.family === "obsidian-t1" ? "obsidian-t1" : "magnificent";
+  const family =
+    search.family === "obsidian-t1" ? "obsidian-t1" : "magnificent";
   const ayanadTargetMode = search.ayanad === "any" ? "any" : "specific";
   const saleValuesByGradeInput: Record<number, string> = {};
   const selectedSaleGrades = readSearchNumberList(search.sell);
@@ -278,7 +314,9 @@ export function serializeRegradeSearch(
   if (resolved.selectedTargetGrade != null) {
     search.target = resolved.selectedTargetGrade;
   }
-  if (resolved.ayanadTargetMode !== DEFAULT_REGRADE_SEARCH_STATE.ayanadTargetMode) {
+  if (
+    resolved.ayanadTargetMode !== DEFAULT_REGRADE_SEARCH_STATE.ayanadTargetMode
+  ) {
     search.ayanad = resolved.ayanadTargetMode;
   }
   if (resolved.ayanadTargetItemId != null) {
@@ -308,6 +346,7 @@ export function serializeRegradeSearch(
 export function getEffectiveSelectedRegradeTarget(
   results: ExpectedRegradeResult[],
   selectedTargetGrade: number | null,
+  preferredResults: ExpectedRegradeResult[] = results,
 ): number | null {
   if (
     selectedTargetGrade != null &&
@@ -316,10 +355,12 @@ export function getEffectiveSelectedRegradeTarget(
     return selectedTargetGrade;
   }
 
-  const finiteResults = results.filter((result) =>
+  const defaultResults =
+    preferredResults.length > 0 ? preferredResults : results;
+  const finiteResults = defaultResults.filter((result) =>
     Number.isFinite(result.expectedProfitGold),
   );
-  const candidates = finiteResults.length > 0 ? finiteResults : results;
+  const candidates = finiteResults.length > 0 ? finiteResults : defaultResults;
   const best = candidates.reduce<ExpectedRegradeResult | null>(
     (currentBest, result) =>
       !currentBest || result.expectedProfitGold > currentBest.expectedProfitGold
@@ -329,6 +370,19 @@ export function getEffectiveSelectedRegradeTarget(
   );
 
   return best?.targetGrade ?? null;
+}
+
+export function getReachableRegradeResults<T extends { targetGrade: number }>(
+  results: T[],
+  saleValuesByGrade: GradeSaleValueMap,
+): T[] {
+  const saleGrades = [...saleValuesByGrade.keys()].sort((a, b) => a - b);
+  return results.filter((result) => {
+    const blockingSaleGrade = saleGrades.find(
+      (grade) => grade < result.targetGrade,
+    );
+    return blockingSaleGrade == null;
+  });
 }
 
 export interface MagnificentVariantParts {
@@ -354,6 +408,54 @@ export interface MagnificentSealedUpgradeNames {
 
 export const regradeData = regradeDataJson as RegradeData;
 
+const RESPLENDENT_SCROLL_RIGHT_CLICK_RECIPES: Partial<
+  Record<RegradeItemType, ResplendentScrollRightClickRecipe>
+> = {
+  weapon: {
+    normalScroll: {
+      id: 28298,
+      name: "Weapon Regrade Scroll",
+      icon: "icon_item_1268.png",
+    },
+    luckyPoint: {
+      id: 28300,
+      name: "Lucky Sunpoint",
+      icon: "icon_item_1263.png",
+    },
+  },
+  armor: {
+    normalScroll: {
+      id: 28299,
+      name: "Armor Regrade Scroll",
+      icon: "icon_item_1269.png",
+    },
+    luckyPoint: {
+      id: 28308,
+      name: "Lucky Moonpoint",
+      icon: "icon_item_1266.png",
+    },
+  },
+  accessory: {
+    normalScroll: {
+      id: 31928,
+      name: "Accessory Regrade Scroll",
+      icon: "icon_item_1695.png",
+    },
+    luckyPoint: {
+      id: 31930,
+      name: "Lucky Starpoint",
+      icon: "icon_item_1694.png",
+    },
+  },
+};
+
+export function getResplendentScrollRightClickRecipe(
+  scroll: RegradeScroll,
+): ResplendentScrollRightClickRecipe | null {
+  if (!scroll.resplendent) return null;
+  return RESPLENDENT_SCROLL_RIGHT_CLICK_RECIPES[scroll.type] ?? null;
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -362,11 +464,51 @@ function basisPointsToProbability(value: number): number {
   return value / 10000;
 }
 
+export function getRegradeTapProjection(
+  step: Pick<
+    RegradeActionChoice,
+    "normalToGrade" | "greatToGrade" | "successProbability" | "greatProbability"
+  >,
+  targetGrade: number,
+  desiredTargetCount: number,
+): RegradeTapProjection {
+  const normalProbability = Math.max(
+    0,
+    step.successProbability - step.greatProbability,
+  );
+  const normalQualifies = step.normalToGrade >= targetGrade;
+  const luckyQualifies =
+    step.greatProbability > 0 && step.greatToGrade >= targetGrade;
+  const targetProbability =
+    (normalQualifies ? normalProbability : 0) +
+    (luckyQualifies ? step.greatProbability : 0);
+  const desiredCount =
+    Number.isFinite(desiredTargetCount) && desiredTargetCount > 0
+      ? desiredTargetCount
+      : 0;
+  const requiredTaps =
+    targetProbability > 0 ? desiredCount / targetProbability : 0;
+
+  return {
+    targetGrade,
+    desiredTargetCount: desiredCount,
+    targetProbability,
+    requiredTaps,
+    expectedNormalHits: requiredTaps * normalProbability,
+    expectedLuckyHits: requiredTaps * step.greatProbability,
+    expectedTargetOrBetter: requiredTaps * targetProbability,
+    expectedFailures: Math.max(0, requiredTaps * (1 - step.successProbability)),
+  };
+}
+
 interface SolverValue {
   value: number;
   cost: number;
   revenue: number;
   labor: number;
+  attempts: number;
+  landingProbabilities: Map<number, number>;
+  costContributions: Map<number, number>;
   steps: RegradeActionChoice[];
 }
 
@@ -381,8 +523,61 @@ const ZERO_SOLVER_VALUE: SolverValue = {
   cost: 0,
   revenue: 0,
   labor: 0,
+  attempts: 0,
+  landingProbabilities: new Map(),
+  costContributions: new Map(),
   steps: [],
 };
+
+function combineLandingProbabilities(
+  entries: { value: SolverValue; weight: number }[],
+  denominator: number,
+): Map<number, number> {
+  const combined = new Map<number, number>();
+  for (const { value, weight } of entries) {
+    if (weight <= 0) continue;
+    for (const [grade, probability] of value.landingProbabilities) {
+      combined.set(
+        grade,
+        (combined.get(grade) ?? 0) + (weight * probability) / denominator,
+      );
+    }
+  }
+  return combined;
+}
+
+function combineCostContributions(
+  entries: { value: SolverValue; weight: number; extraCost?: number }[],
+  landingProbabilities: ReadonlyMap<number, number>,
+  attemptCostGold: number,
+  denominator: number,
+): Map<number, number> {
+  const combined = new Map<number, number>();
+  for (const [grade, probability] of landingProbabilities) {
+    combined.set(grade, (attemptCostGold * probability) / denominator);
+  }
+
+  for (const { value, weight, extraCost = 0 } of entries) {
+    if (weight <= 0) continue;
+    for (const [grade, cost] of value.costContributions) {
+      combined.set(
+        grade,
+        (combined.get(grade) ?? 0) + (weight * cost) / denominator,
+      );
+    }
+    if (extraCost > 0) {
+      for (const [grade, probability] of value.landingProbabilities) {
+        combined.set(
+          grade,
+          (combined.get(grade) ?? 0) +
+            (weight * extraCost * probability) / denominator,
+        );
+      }
+    }
+  }
+
+  return combined;
+}
 
 function getPricedConsumable(
   consumable: { id: number; name: string } | null,
@@ -487,7 +682,9 @@ export function getMagnificentGearTypes(
 
   return [...byPiece.entries()]
     .map(([piece, items]) => {
-      const sortedItems = [...items].sort((a, b) => a.name.localeCompare(b.name));
+      const sortedItems = [...items].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
       const representativeItem =
         sortedItems.find((item) => item.name.includes("Squall ")) ??
         sortedItems[0];
@@ -528,12 +725,25 @@ export function charmApplies(
   return true;
 }
 
+export function isObtainableRegradeCharm(charm: RegradeCharm): boolean {
+  if (charm.preventDestroy) return false;
+  return !charm.name.includes("White Regrade Charm");
+}
+
+export function getObtainableRegradeCharms(
+  data: RegradeData = regradeData,
+): RegradeCharm[] {
+  return data.charms.filter(isObtainableRegradeCharm);
+}
+
 export function getApplicableCharms(
   item: RegradeItem,
   fromGrade: number,
   data: RegradeData = regradeData,
 ): RegradeCharm[] {
-  return data.charms.filter((charm) => charmApplies(charm, item, fromGrade));
+  return getObtainableRegradeCharms(data).filter((charm) =>
+    charmApplies(charm, item, fromGrade),
+  );
 }
 
 export function getRegradeRate(
@@ -570,7 +780,8 @@ export function getRegradeStep(input: RegradeStepInput): RegradeStep {
   const charm =
     input.charmId == null
       ? null
-      : data.charms.find((candidate) => candidate.id === input.charmId) ?? null;
+      : (data.charms.find((candidate) => candidate.id === input.charmId) ??
+        null);
   const effectiveCharm =
     charm && charmApplies(charm, input.item, input.fromGrade) ? charm : null;
 
@@ -617,7 +828,8 @@ export function getRegradeStep(input: RegradeStepInput): RegradeStep {
     destroyProbability,
     downgradeProbability,
     stayProbability,
-    downgradeGrade: rate.dmin >= 0 ? rate.dmin : Math.max(0, input.fromGrade - 1),
+    downgradeGrade:
+      rate.dmin >= 0 ? rate.dmin : Math.max(0, input.fromGrade - 1),
     feeGold: getRegradeFeeGold({
       ratioCost: rate.cost,
       itemLevel: input.item.level,
@@ -642,16 +854,27 @@ export function solveExpectedRegradeToTarget(
     cost: Number.POSITIVE_INFINITY,
     revenue: 0,
     labor: 0,
+    attempts: 0,
+    landingProbabilities: new Map(),
+    costContributions: new Map(),
     steps: [],
   };
+  const isTerminalGrade = (grade: number): boolean =>
+    grade >= input.targetGrade || input.saleValuesByGrade.has(grade);
 
   const terminalValue = (grade: number): SolverValue => {
-    const saleValue = getSaleValueForLandingGrade(input.saleValuesByGrade, grade);
+    const saleValue = getSaleValueForLandingGrade(
+      input.saleValuesByGrade,
+      grade,
+    );
     return {
       value: saleValue - input.upgradeCostGold,
       cost: input.upgradeCostGold,
       revenue: saleValue,
       labor: input.upgradeLabor,
+      attempts: 0,
+      landingProbabilities: new Map([[grade, 1]]),
+      costContributions: new Map([[grade, input.upgradeCostGold]]),
       steps: [],
     };
   };
@@ -659,7 +882,7 @@ export function solveExpectedRegradeToTarget(
     grade: number,
     values: Map<number, SolverValue>,
   ): SolverValue => {
-    if (grade >= input.targetGrade) {
+    if (isTerminalGrade(grade)) {
       return terminalValue(grade);
     }
     return values.get(grade) ?? ZERO_SOLVER_VALUE;
@@ -671,11 +894,38 @@ export function solveExpectedRegradeToTarget(
     }
     return Math.abs(next - previous);
   };
+  const probabilityMapDelta = (
+    next: ReadonlyMap<number, number>,
+    previous: ReadonlyMap<number, number>,
+  ): number => {
+    const grades = new Set([...next.keys(), ...previous.keys()]);
+    return [...grades].reduce(
+      (delta, grade) =>
+        Math.max(
+          delta,
+          Math.abs((next.get(grade) ?? 0) - (previous.get(grade) ?? 0)),
+        ),
+      0,
+    );
+  };
+  const obtainableCharmIds = new Set(
+    getObtainableRegradeCharms(data).map((charm) => charm.id),
+  );
 
   const actionsByGrade = new Map<number, SolverAction[]>();
   for (const grade of stateGrades) {
+    if (isTerminalGrade(grade)) {
+      actionsByGrade.set(grade, []);
+      continue;
+    }
+
     const scrollModes = [false, true];
-    const charmIds = [null, ...input.candidateCharmIds] as (number | null)[];
+    const charmIds = [
+      null,
+      ...input.candidateCharmIds.filter((charmId) =>
+        obtainableCharmIds.has(charmId),
+      ),
+    ] as (number | null)[];
     const actions: SolverAction[] = [];
 
     for (const resplendent of scrollModes) {
@@ -736,7 +986,8 @@ export function solveExpectedRegradeToTarget(
     const expectedValue =
       (step.normalSuccessProbability * normal.value +
         step.greatProbability * great.value +
-        step.destroyProbability * (restarted.value - input.baseRecraftCostGold) +
+        step.destroyProbability *
+          (restarted.value - input.baseRecraftCostGold) +
         step.downgradeProbability * downgraded.value -
         attemptCostGold) /
       denominator;
@@ -760,12 +1011,46 @@ export function solveExpectedRegradeToTarget(
         step.destroyProbability * (input.baseRecraftLabor + restarted.labor) +
         step.downgradeProbability * downgraded.labor) /
       denominator;
+    const expectedAttempts =
+      (1 +
+        step.normalSuccessProbability * normal.attempts +
+        step.greatProbability * great.attempts +
+        step.destroyProbability * restarted.attempts +
+        step.downgradeProbability * downgraded.attempts) /
+      denominator;
+    const landingProbabilities = combineLandingProbabilities(
+      [
+        { value: normal, weight: step.normalSuccessProbability },
+        { value: great, weight: step.greatProbability },
+        { value: restarted, weight: step.destroyProbability },
+        { value: downgraded, weight: step.downgradeProbability },
+      ],
+      denominator,
+    );
+    const costContributions = combineCostContributions(
+      [
+        { value: normal, weight: step.normalSuccessProbability },
+        { value: great, weight: step.greatProbability },
+        {
+          value: restarted,
+          weight: step.destroyProbability,
+          extraCost: input.baseRecraftCostGold,
+        },
+        { value: downgraded, weight: step.downgradeProbability },
+      ],
+      landingProbabilities,
+      attemptCostGold,
+      denominator,
+    );
 
     return {
       value: expectedValue,
       cost: expectedCost,
       revenue: expectedRevenue,
       labor: expectedLabor,
+      attempts: expectedAttempts,
+      landingProbabilities,
+      costContributions,
       steps: [],
     };
   };
@@ -781,6 +1066,30 @@ export function solveExpectedRegradeToTarget(
     let maxDelta = 0;
 
     for (const grade of stateGrades) {
+      if (isTerminalGrade(grade)) {
+        const resolved = terminalValue(grade);
+        nextValues.set(grade, resolved);
+
+        const previous = values.get(grade) ?? ZERO_SOLVER_VALUE;
+        maxDelta = Math.max(
+          maxDelta,
+          metricDelta(resolved.value, previous.value),
+          metricDelta(resolved.cost, previous.cost),
+          metricDelta(resolved.revenue, previous.revenue),
+          metricDelta(resolved.labor, previous.labor),
+          metricDelta(resolved.attempts, previous.attempts),
+          probabilityMapDelta(
+            resolved.landingProbabilities,
+            previous.landingProbabilities,
+          ),
+          probabilityMapDelta(
+            resolved.costContributions,
+            previous.costContributions,
+          ),
+        );
+        continue;
+      }
+
       let best: SolverValue | null = null;
       let bestAction: SolverAction | null = null;
 
@@ -803,6 +1112,15 @@ export function solveExpectedRegradeToTarget(
         metricDelta(resolved.cost, previous.cost),
         metricDelta(resolved.revenue, previous.revenue),
         metricDelta(resolved.labor, previous.labor),
+        metricDelta(resolved.attempts, previous.attempts),
+        probabilityMapDelta(
+          resolved.landingProbabilities,
+          previous.landingProbabilities,
+        ),
+        probabilityMapDelta(
+          resolved.costContributions,
+          previous.costContributions,
+        ),
       );
     }
 
@@ -815,6 +1133,7 @@ export function solveExpectedRegradeToTarget(
   const seenStepGrades = new Set<number>();
   let stepGrade = startGrade;
   while (stepGrade < input.targetGrade && !seenStepGrades.has(stepGrade)) {
+    if (input.saleValuesByGrade.has(stepGrade)) break;
     seenStepGrades.add(stepGrade);
     const action = selectedActions.get(stepGrade);
     if (!action?.step.scroll) break;
@@ -826,16 +1145,43 @@ export function solveExpectedRegradeToTarget(
       expectedValueGold: solvedAtGrade.value,
       attemptCostGold: action.attemptCostGold,
       attemptLabor: action.attemptLabor,
+      successProbability: action.step.successProbability,
+      greatProbability: action.step.greatProbability,
+      normalToGrade: action.step.normalToGrade,
+      greatToGrade: action.step.greatToGrade,
     });
     if (action.step.normalToGrade <= stepGrade) break;
     stepGrade = action.step.normalToGrade;
   }
 
-  const solved =
-    startGrade >= input.targetGrade
-      ? terminalValue(startGrade)
-      : (values.get(startGrade) ?? impossibleValue);
+  const solved = isTerminalGrade(startGrade)
+    ? terminalValue(startGrade)
+    : (values.get(startGrade) ?? impossibleValue);
   const expectedLabor = solved.labor;
+  const expectedAttempts = solved.attempts;
+  const revenueBreakdown = [...solved.landingProbabilities.entries()]
+    .map(([grade, probability]) => {
+      const saleValueGold = getSaleValueForLandingGrade(
+        input.saleValuesByGrade,
+        grade,
+      );
+      return {
+        grade,
+        probability,
+        saleValueGold,
+        expectedRevenueGold: probability * saleValueGold,
+        expectedCostGold: solved.costContributions.get(grade) ?? 0,
+        expectedProfitGold:
+          probability * saleValueGold -
+          (solved.costContributions.get(grade) ?? 0),
+      };
+    })
+    .filter(
+      (entry) =>
+        entry.saleValueGold > 0 &&
+        (entry.probability > 0.000001 || entry.expectedRevenueGold > 0),
+    )
+    .sort((left, right) => left.grade - right.grade);
 
   return {
     item: input.item,
@@ -844,6 +1190,8 @@ export function solveExpectedRegradeToTarget(
     expectedCostGold: solved.cost,
     expectedRevenueGold: solved.revenue,
     expectedLabor,
+    expectedAttempts,
+    revenueBreakdown,
     silverPerLabor:
       expectedLabor > 0 && Number.isFinite(solved.value)
         ? (solved.value * 100) / expectedLabor

@@ -144,12 +144,7 @@ function ShoplistPage() {
 type ForCraftOutput = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forCraft"]>
 >;
-type ForItemOutput = NonNullable<
-  inferProcedureOutput<AppRouter["crafts"]["forItem"]>
->;
-type SubcraftEntry =
-  | ForCraftOutput["subcraftsByItemId"][number][number]
-  | ForItemOutput["subcraftsByItemId"][number][number];
+type SubcraftEntry = ForCraftOutput["subcraftsByItemId"][number][number];
 type SubcraftMap = Record<number, SubcraftEntry[]>;
 type PriceMap = Map<
   number,

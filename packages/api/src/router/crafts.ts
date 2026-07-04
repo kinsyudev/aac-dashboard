@@ -255,10 +255,6 @@ async function getCraftDataForItem(
           .where(inArray(prices.itemId, pricedItemIds))
           .orderBy(prices.itemId, desc(prices.fetchedAt))
       : [];
-  const latestPricesByItemId = new Map(
-    latestPrices.map((price) => [price.itemId, price]),
-  );
-
   return {
     item,
     crafts: supportedCraftsForItem.map((craft) => ({
@@ -337,7 +333,9 @@ async function getCraftDataForItems(
 
   const allMaterialItemIds = new Set<number>(
     supportedRootCraftRows.flatMap((craft) =>
-      (rootMaterialsByCraft[craft.id] ?? []).map((material) => material.item.id),
+      (rootMaterialsByCraft[craft.id] ?? []).map(
+        (material) => material.item.id,
+      ),
     ),
   );
   const subcraftsByItemId: Record<number, SubcraftEntry[]> = {};
@@ -502,7 +500,9 @@ async function getCraftDataForItems(
         {
           item,
           crafts: rootCrafts,
-          prices: rootPrice ? [rootPrice, ...reachable.prices] : reachable.prices,
+          prices: rootPrice
+            ? [rootPrice, ...reachable.prices]
+            : reachable.prices,
           subcraftsByItemId: reachable.subcraftsByItemId,
         },
       ] as const;

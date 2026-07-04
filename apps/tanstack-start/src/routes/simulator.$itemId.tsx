@@ -130,7 +130,6 @@ type ForItemOutput = NonNullable<
 >;
 type CraftMode = "buy" | "craft";
 type CraftEntry = ForItemOutput["crafts"][number];
-type SubcraftEntry = ForItemOutput["subcraftsByItemId"][number][number];
 type PriceMap = Map<
   number,
   { avg24h: string | null; avg7d: string | null; avg30d: string | null }
@@ -203,7 +202,7 @@ function serializeOverrideMap(map: OverrideMap) {
     .map(([itemId, price]) => ({ itemId, price }));
 }
 
-function serializeCraftEntry(entry: CraftEntry | SubcraftEntry | null) {
+function serializeCraftEntry(entry: CraftEntry | null) {
   if (!entry) return null;
   return {
     craft: {
@@ -1330,7 +1329,7 @@ function SimulatorCraftBreakdown({
   toggleCollapsed,
   depth = 0,
 }: {
-  entry: CraftEntry | SubcraftEntry;
+  entry: CraftEntry;
   itemId: number;
   priceMap: PriceMap;
   overrideMap: OverrideMap;

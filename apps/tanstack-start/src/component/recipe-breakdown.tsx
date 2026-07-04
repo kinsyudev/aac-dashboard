@@ -78,7 +78,11 @@ export function CraftModeToggle({
   return (
     <span className="inline-flex overflow-hidden rounded-full border text-xs">
       <button
-        onClick={onBuy}
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          onBuy();
+        }}
         className={`px-2.5 py-0.5 transition-colors ${
           mode === "buy"
             ? "bg-primary text-primary-foreground"
@@ -88,7 +92,11 @@ export function CraftModeToggle({
         Buy
       </button>
       <button
-        onClick={onCraft}
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          onCraft();
+        }}
         className={`px-2.5 py-0.5 transition-colors ${
           mode === "craft"
             ? "bg-primary text-primary-foreground"
