@@ -1,25 +1,6 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import type {
-  ConsumableLaborMap,
-  ConsumablePriceMap,
-  GradeSaleValueMap,
-  RegradeActionChoice,
-  RegradeSearchState,
-  SupportedRegradeItem,
-} from "~/lib/regrade";
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Info } from "lucide-react";
 
@@ -31,6 +12,14 @@ import { Label } from "@acme/ui/label";
 import { toast } from "@acme/ui/toast";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
+import type {
+  ConsumableLaborMap,
+  ConsumablePriceMap,
+  GradeSaleValueMap,
+  RegradeActionChoice,
+  RegradeSearchState,
+  SupportedRegradeItem,
+} from "~/lib/regrade";
 import { ItemIcon } from "~/component/item-icon";
 import {
   CraftModeToggle,
@@ -43,27 +32,31 @@ import { resolveTieredManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
 import {
-  MANA_SEAL_USE_LABOR,
-  RECRAFT_START_GRADE,
-  getEffectiveSelectedRegradeTarget,
   getApplicableCharms,
+  getEffectiveSelectedRegradeTarget,
   getMagnificentGearTypes,
   getMagnificentVariantNames,
   getObsidianT2Name,
   getObsidianT3Name,
+  getObtainableRegradeCharms,
+  getReachableRegradeResults,
+  getRegradeTapProjection,
+  getResplendentScrollRightClickRecipe,
   getSupportedRegradeItems,
+  MANA_SEAL_USE_LABOR,
   parseRegradeSearch,
+  RECRAFT_START_GRADE,
   regradeData,
   serializeRegradeSearch,
   solveExpectedRegradeToTarget,
 } from "~/lib/regrade";
 import { variantsByTier } from "~/lib/salvage";
-import { parsePriceOverrideInput } from "~/lib/simulator-price-override";
 import {
-  GLOWING_PROC_RATE,
   detectPieceAndTier,
   getEffectiveCraftSuccessRate,
+  GLOWING_PROC_RATE,
 } from "~/lib/simulator";
+import { parsePriceOverrideInput } from "~/lib/simulator-price-override";
 import {
   deepCraftCost,
   getCraftEntryUnitCost,
@@ -80,7 +73,6 @@ const TARGET_GRADES = [3, 4, 5, 6, 7, 8, 9, 10, 11] as const;
 type ForItemOutput = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forItem"]>
 >;
-type ForItemsOutput = inferProcedureOutput<AppRouter["crafts"]["forItems"]>;
 type PriceMap = Map<
   number,
   { avg24h: string | null; avg7d: string | null; avg30d: string | null }
@@ -90,9 +82,20 @@ type CraftMode = "buy" | "craft";
 type CraftModeMap = Partial<Record<number, CraftMode>>;
 type ItemSearchRow = inferProcedureOutput<AppRouter["items"]["byName"]>[number];
 type SubcraftMap = ForItemOutput["subcraftsByItemId"];
-type SubcraftEntry = NonNullable<SubcraftMap[number]>[number];
+type CraftItem = ForItemOutput["item"];
+type PriceRow = ForItemOutput["prices"][number];
 
 const REGRADE_CRAFT_MODE_STORAGE_KEY = "regrade:craft-modes:v1";
+const RESPLENDENT_RIGHT_CLICK_CRAFT_ID_OFFSET = 9_000_000_000;
+const RESPLENDENT_RIGHT_CLICK_CRAFT_PRICE_IDS = [28300, 28308, 31930] as const;
+const REGRADE_SCROLL_CRAFT_ITEM_IDS = [
+  ...new Set(
+    regradeData.scrolls.flatMap((scroll) => {
+      const recipe = getResplendentScrollRightClickRecipe(scroll);
+      return recipe ? [recipe.normalScroll.id] : [scroll.id];
+    }),
+  ),
+];
 
 interface RecraftSummary {
   craft: ForItemOutput["crafts"][number];
@@ -190,6 +193,14 @@ function RegradePage() {
   const [collapsedCraftIds, setCollapsedCraftIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [projectionTargetCountInput, setProjectionTargetCountInput] =
+    useState("1");
+  const [projectionStepKey, setProjectionStepKey] = useState<string | null>(
+    null,
+  );
+  const [projectionTargetGrade, setProjectionTargetGrade] = useState<
+    number | null
+  >(null);
   const setPriceOverride = useMutation(
     trpc.profile.setPriceOverride.mutationOptions({
       onSuccess: async () => {
@@ -242,19 +253,23 @@ function RegradePage() {
   );
 
   const selectedMagnificentType =
-    magnificentGearTypes.find((type) => type.piece === selectedMagnificentPiece) ??
+    magnificentGearTypes.find(
+      (type) => type.piece === selectedMagnificentPiece,
+    ) ??
     magnificentGearTypes[0] ??
     null;
   const selectedObsidianItem =
     obsidianItems.find((item) => item.id === selectedObsidianItemId) ??
     obsidianItems[0] ??
     null;
-  const selectedItem: SupportedRegradeItem | null =
-    selectedFamily === "magnificent"
-      ? selectedMagnificentType
-        ? { ...selectedMagnificentType.representativeItem, family: "magnificent" }
-        : null
-      : selectedObsidianItem;
+  const selectedItem = useMemo<SupportedRegradeItem | null>(() => {
+    if (selectedFamily !== "magnificent") return selectedObsidianItem;
+    if (!selectedMagnificentType) return null;
+    return {
+      ...selectedMagnificentType.representativeItem,
+      family: "magnificent",
+    };
+  }, [selectedFamily, selectedMagnificentType, selectedObsidianItem]);
   const selectedDisplayName =
     selectedFamily === "magnificent"
       ? (selectedMagnificentType?.displayName ?? "Magnificent")
@@ -263,7 +278,8 @@ function RegradePage() {
   const consumableItemIds = useMemo(
     () => [
       ...regradeData.scrolls.map((scroll) => scroll.id),
-      ...regradeData.charms.map((charm) => charm.id),
+      ...getObtainableRegradeCharms().map((charm) => charm.id),
+      ...RESPLENDENT_RIGHT_CLICK_CRAFT_PRICE_IDS,
     ],
     [],
   );
@@ -299,7 +315,10 @@ function RegradePage() {
       selectedMagnificentType.sealedUpgradeNames.epherium,
       selectedMagnificentType.sealedUpgradeNames.delphinad,
       selectedMagnificentType.sealedUpgradeNames.ayanad,
-      ...getMagnificentVariantNames(selectedMagnificentType.piece, "Magnificent"),
+      ...getMagnificentVariantNames(
+        selectedMagnificentType.piece,
+        "Magnificent",
+      ),
       ...getMagnificentVariantNames(selectedMagnificentType.piece, "Epherium"),
       ...getMagnificentVariantNames(selectedMagnificentType.piece, "Delphinad"),
     ];
@@ -309,7 +328,10 @@ function RegradePage() {
     ...trpc.items.byExactNames.queryOptions(exactUpgradeNames),
     enabled: exactUpgradeNames.length > 0,
   });
-  const exactUpgradeRows = exactUpgradeQuery.data ?? [];
+  const exactUpgradeRows = useMemo(
+    () => exactUpgradeQuery.data ?? [],
+    [exactUpgradeQuery.data],
+  );
   const exactUpgradeMap = useMemo(() => {
     return new Map(exactUpgradeRows.map((row) => [row.item.name, row.item]));
   }, [exactUpgradeRows]);
@@ -322,7 +344,10 @@ function RegradePage() {
     ...trpc.items.byName.queryOptions(ayanadSearchPattern),
     enabled: !!ayanadSearchPattern,
   });
-  const ayanadSearchResults = ayanadSearchQuery.data ?? [];
+  const ayanadSearchResults = useMemo(
+    () => ayanadSearchQuery.data ?? [],
+    [ayanadSearchQuery.data],
+  );
   const ayanadCandidates = useMemo(() => {
     if (!selectedItem || !selectedMagnificentType) return [] as ItemSearchRow[];
     const suffix = ` ${selectedMagnificentType.piece}`.toLowerCase();
@@ -359,18 +384,17 @@ function RegradePage() {
     null;
   const ayanadSealName = useMemo(() => {
     if (!ayanadTargetItem) return null;
-    const equip =
-      detectPieceAndTier(ayanadTargetItem.name) ?? {
-        tier: "ayanad" as const,
-        category:
-          selectedItem?.type === "accessory"
-            ? "jewelry"
-            : selectedItem?.type === "armor"
-              ? "armor"
-              : "weapon",
-        piece: null,
-        pieceToken: null,
-      };
+    const equip = detectPieceAndTier(ayanadTargetItem.name) ?? {
+      tier: "ayanad" as const,
+      category:
+        selectedItem?.type === "accessory"
+          ? "jewelry"
+          : selectedItem?.type === "armor"
+            ? "armor"
+            : "weapon",
+      piece: null,
+      pieceToken: null,
+    };
     return resolveTieredManaSealName("ayanad", {
       name: ayanadTargetItem.name,
       category: ayanadTargetItem.category,
@@ -378,7 +402,9 @@ function RegradePage() {
     });
   }, [ayanadTargetItem, selectedItem?.type]);
   const ayanadSealQuery = useQuery({
-    ...trpc.items.byExactNames.queryOptions(ayanadSealName ? [ayanadSealName] : []),
+    ...trpc.items.byExactNames.queryOptions(
+      ayanadSealName ? [ayanadSealName] : [],
+    ),
     enabled: !!ayanadSealName,
   });
   const ayanadSealRows = ayanadSealQuery.data ?? [];
@@ -387,19 +413,21 @@ function RegradePage() {
     if (!selectedMagnificentType) return [] as string[];
     return [
       ...new Set(
-        getMagnificentVariantNames(selectedMagnificentType.piece, "Delphinad")
-          .flatMap((name) => {
-            const item = exactUpgradeMap.get(name);
-            if (!item) return [];
-            const equip = detectPieceAndTier(item.name);
-            if (!equip) return [];
-            const sealName = resolveTieredManaSealName("delphinad", {
-              name: item.name,
-              category: item.category,
-              equip,
-            });
-            return sealName ? [sealName] : [];
-          }),
+        getMagnificentVariantNames(
+          selectedMagnificentType.piece,
+          "Delphinad",
+        ).flatMap((name) => {
+          const item = exactUpgradeMap.get(name);
+          if (!item) return [];
+          const equip = detectPieceAndTier(item.name);
+          if (!equip) return [];
+          const sealName = resolveTieredManaSealName("delphinad", {
+            name: item.name,
+            category: item.category,
+            equip,
+          });
+          return sealName ? [sealName] : [];
+        }),
       ),
     ];
   }, [exactUpgradeMap, selectedMagnificentType]);
@@ -407,30 +435,39 @@ function RegradePage() {
     ...trpc.items.byExactNames.queryOptions(delphinadSealNames),
     enabled: delphinadSealNames.length > 0,
   });
-  const delphinadSealRows = delphinadSealQuery.data ?? [];
+  const delphinadSealRows = useMemo(
+    () => delphinadSealQuery.data ?? [],
+    [delphinadSealQuery.data],
+  );
   const delphinadSealItemsByName = useMemo(() => {
     return new Map(delphinadSealRows.map((row) => [row.item.name, row.item]));
   }, [delphinadSealRows]);
   const craftedConsumableItemIds = useMemo(
     () =>
-      consumableItemIds.filter(
-        (itemId) => (manualCraftModes[itemId] ?? "buy") === "craft",
-      ),
+      consumableItemIds.filter((itemId) => {
+        if (REGRADE_SCROLL_CRAFT_ITEM_IDS.includes(itemId)) return false;
+        const scroll = regradeData.scrolls.find(
+          (scroll) => scroll.id === itemId,
+        );
+        if (scroll && getResplendentScrollRightClickRecipe(scroll))
+          return false;
+        return (manualCraftModes[itemId] ?? "buy") === "craft";
+      }),
     [consumableItemIds, manualCraftModes],
   );
   const craftDataItemIds = useMemo(
-    () =>
-      [
-        ...new Set(
-          [
-            ...craftedConsumableItemIds,
-            selectedItem?.id,
-            ...upgradeQueryItems.map((item) => item.id),
-            ayanadSealItem?.id,
-            ...delphinadSealRows.map((row) => row.item.id),
-          ].filter((id): id is number => Number.isInteger(id)),
-        ),
-      ],
+    () => [
+      ...new Set(
+        [
+          ...REGRADE_SCROLL_CRAFT_ITEM_IDS,
+          ...craftedConsumableItemIds,
+          selectedItem?.id,
+          ...upgradeQueryItems.map((item) => item.id),
+          ayanadSealItem?.id,
+          ...delphinadSealRows.map((row) => row.item.id),
+        ].filter((id): id is number => Number.isInteger(id)),
+      ),
+    ],
     [
       ayanadSealItem,
       craftedConsumableItemIds,
@@ -450,7 +487,7 @@ function RegradePage() {
     staleTime: 5 * 60 * 1000,
   });
   const craftDataByItemId = useMemo(() => {
-    const data = craftDataByItemIdOutput as ForItemsOutput;
+    const data = craftDataByItemIdOutput;
     return new Map(
       Object.entries(data).flatMap(([itemId, craftData]) =>
         craftData ? [[Number(itemId), craftData] as const] : [],
@@ -467,7 +504,25 @@ function RegradePage() {
       : null;
   const upgradeCraftDataByItemId = craftDataByItemId;
   const delphinadSealCraftDataByItemId = craftDataByItemId;
-  const consumableCraftDataByItemId = craftDataByItemId;
+  const consumableCraftDataByItemId = useMemo(() => {
+    const next = new Map(craftDataByItemId);
+    for (const scroll of regradeData.scrolls) {
+      const recipe = getResplendentScrollRightClickRecipe(scroll);
+      if (!recipe) continue;
+      next.set(
+        scroll.id,
+        buildResplendentScrollRightClickCraftData(
+          scroll,
+          recipe,
+          craftDataByItemId.get(recipe.normalScroll.id) ?? null,
+          consumablePrices,
+          overrideMap,
+          manualCraftModes,
+        ),
+      );
+    }
+    return next;
+  }, [craftDataByItemId, consumablePrices, manualCraftModes, overrideMap]);
 
   const consumablePriceMap = useMemo<ConsumablePriceMap>(() => {
     return new Map(
@@ -771,7 +826,9 @@ function RegradePage() {
         saleValuesByGrade,
         consumablePrices: consumablePriceMap,
         consumableLabor: consumableLaborMap,
-        candidateCharmIds: regradeData.charms.map((charm) => charm.id),
+        candidateCharmIds: getObtainableRegradeCharms().map(
+          (charm) => charm.id,
+        ),
       }),
     );
   }, [
@@ -782,17 +839,73 @@ function RegradePage() {
     selectedItem,
     upgradeCost,
   ]);
+  const reachableRegradeResults = useMemo(
+    () => getReachableRegradeResults(regradeResults, saleValuesByGrade),
+    [regradeResults, saleValuesByGrade],
+  );
+  const saleValuedRegradeResults = useMemo(
+    () =>
+      reachableRegradeResults.filter((result) =>
+        saleValuesByGrade.has(result.targetGrade),
+      ),
+    [reachableRegradeResults, saleValuesByGrade],
+  );
 
   const effectiveSelectedResultGrade = getEffectiveSelectedRegradeTarget(
-    regradeResults,
+    reachableRegradeResults,
     selectedResultGrade,
+    saleValuedRegradeResults,
   );
   const selectedResult =
-    regradeResults.find(
+    reachableRegradeResults.find(
       (result) => result.targetGrade === effectiveSelectedResultGrade,
     ) ??
-    regradeResults[0] ??
+    reachableRegradeResults[0] ??
     null;
+  const projectionSteps = selectedResult?.selectedSteps ?? [];
+  const defaultProjectionStep = projectionSteps.at(-1) ?? null;
+  const effectiveProjectionStepKey =
+    projectionStepKey &&
+    projectionSteps.some(
+      (step) => getProjectionStepKey(step) === projectionStepKey,
+    )
+      ? projectionStepKey
+      : defaultProjectionStep
+        ? getProjectionStepKey(defaultProjectionStep)
+        : null;
+  const projectionStep =
+    projectionSteps.find(
+      (step) => getProjectionStepKey(step) === effectiveProjectionStepKey,
+    ) ??
+    defaultProjectionStep ??
+    null;
+  const projectionTargetGrades = projectionStep
+    ? [...new Set([projectionStep.normalToGrade, projectionStep.greatToGrade])]
+        .filter((grade) => Number.isFinite(grade))
+        .sort((a, b) => a - b)
+    : [];
+  const defaultProjectionTargetGrade =
+    selectedResult &&
+    projectionTargetGrades.includes(selectedResult.targetGrade)
+      ? selectedResult.targetGrade
+      : (projectionTargetGrades[0] ?? null);
+  const effectiveProjectionTargetGrade =
+    projectionTargetGrade != null &&
+    projectionTargetGrades.includes(projectionTargetGrade)
+      ? projectionTargetGrade
+      : defaultProjectionTargetGrade;
+  const projectionTargetCount = Math.max(
+    0,
+    Number.parseFloat(projectionTargetCountInput) || 0,
+  );
+  const tapProjection =
+    projectionStep && effectiveProjectionTargetGrade != null
+      ? getRegradeTapProjection(
+          projectionStep,
+          effectiveProjectionTargetGrade,
+          projectionTargetCount,
+        )
+      : null;
 
   return (
     <main className="container py-10">
@@ -857,9 +970,13 @@ function RegradePage() {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => updateRegradeSearch({ obsidianItemId: item.id })}
+                  onClick={() =>
+                    updateRegradeSearch({ obsidianItemId: item.id })
+                  }
                   className={`flex w-full items-center gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 ${
-                    selectedItem?.id === item.id ? "bg-muted" : "hover:bg-muted/60"
+                    selectedItem?.id === item.id
+                      ? "bg-muted"
+                      : "hover:bg-muted/60"
                   }`}
                 >
                   <ItemIcon icon={item.icon} name={item.name} size="sm" />
@@ -869,7 +986,7 @@ function RegradePage() {
             </div>
           )}
 
-          {baseRecraft && upgradeCost && baseCraftData ? (
+          {selectedItem && baseRecraft && upgradeCost && baseCraftData ? (
             <RegradeMaterialsSection
               selectedItem={selectedItem}
               selectedTargetGrade={selectedResult?.targetGrade ?? null}
@@ -906,7 +1023,9 @@ function RegradePage() {
                   size="lg"
                 />
                 <div>
-                  <h2 className="text-xl font-semibold">{selectedDisplayName}</h2>
+                  <h2 className="text-xl font-semibold">
+                    {selectedDisplayName}
+                  </h2>
                   <p className="text-muted-foreground text-sm">
                     {selectedItem.type} · level {selectedItem.level} · slot{" "}
                     {selectedItem.slot}
@@ -918,7 +1037,9 @@ function RegradePage() {
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <Button
                     type="button"
-                    variant={ayanadTargetMode === "specific" ? "default" : "outline"}
+                    variant={
+                      ayanadTargetMode === "specific" ? "default" : "outline"
+                    }
                     onClick={() =>
                       updateRegradeSearch({ ayanadTargetMode: "specific" })
                     }
@@ -928,7 +1049,9 @@ function RegradePage() {
                   <Button
                     type="button"
                     variant={ayanadTargetMode === "any" ? "default" : "outline"}
-                    onClick={() => updateRegradeSearch({ ayanadTargetMode: "any" })}
+                    onClick={() =>
+                      updateRegradeSearch({ ayanadTargetMode: "any" })
+                    }
                   >
                     Any Ayanad
                   </Button>
@@ -939,7 +1062,8 @@ function RegradePage() {
                       value={effectiveAyanadTargetItemId ?? ""}
                       onChange={(event) =>
                         updateRegradeSearch({
-                          ayanadTargetItemId: Number(event.target.value) || null,
+                          ayanadTargetItemId:
+                            Number(event.target.value) || null,
                         })
                       }
                     >
@@ -980,7 +1104,8 @@ function RegradePage() {
                 </p>
               ) : (
                 <>
-                  {selectedItem.family === "magnificent" && selectedMagnificentType ? (
+                  {selectedItem.family === "magnificent" &&
+                  selectedMagnificentType ? (
                     <div className="mt-6 rounded-md border p-3 text-sm">
                       <div className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase">
                         <span>Resolved chain</span>
@@ -1028,7 +1153,7 @@ function RegradePage() {
                         <tr className="text-left">
                           <TableHeader
                             label="Target"
-                            helpText="Grade you are trying to reach before selling or stopping. Click a target row to inspect the selected policy steps for that target."
+                            helpText="Grade you are trying to reach before selling or stopping. Rows without sale values still show expected cost; higher selected sale tiers reached by great-success overshoot are included in the earlier row's revenue."
                           />
                           <TableHeader
                             label="Expected cost"
@@ -1047,52 +1172,62 @@ function RegradePage() {
                             helpText="Expected labor consumed by regrade retries, destructive recrafts, upgrade crafts, and included mana-seal rerolls."
                           />
                           <TableHeader
+                            label="Attempts"
+                            helpText="Expected number of regrade taps for this strategy. This excludes base recrafts, upgrade crafts, and mana-seal rerolls."
+                          />
+                          <TableHeader
                             label="Silver/labor"
                             helpText="EV converted to silver and divided by expected labor. This is EV * 100 / labor."
                           />
                         </tr>
                       </thead>
                       <tbody>
-                        {regradeResults.map((result) => (
-                          <tr
-                            key={result.targetGrade}
-                            className={`border-t ${
-                              selectedResult?.targetGrade === result.targetGrade
-                                ? "bg-muted/40"
-                                : ""
-                            }`}
-                          >
-                            <td className="px-3 py-2">
-                              <button
-                                type="button"
-                                className="font-medium hover:underline"
-                                onClick={() =>
-                                  updateRegradeSearch({
-                                    selectedTargetGrade: result.targetGrade,
-                                  })
-                                }
-                              >
-                                {regradeData.grades[result.targetGrade]?.name ??
-                                  `Grade ${result.targetGrade}`}
-                              </button>
-                            </td>
-                            <td className="px-3 py-2">
-                              {formatGold(result.expectedCostGold)}
-                            </td>
-                            <td className="px-3 py-2">
-                              {formatGold(result.expectedRevenueGold)}
-                            </td>
-                            <td className="px-3 py-2">
-                              {formatGold(result.expectedProfitGold)}
-                            </td>
-                            <td className="px-3 py-2">
-                              {result.expectedLabor.toFixed(1)}
-                            </td>
-                            <td className="px-3 py-2">
-                              {result.silverPerLabor.toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
+                        {reachableRegradeResults.map((result) => {
+                          return (
+                            <tr
+                              key={result.targetGrade}
+                              className={`border-t ${
+                                selectedResult?.targetGrade ===
+                                result.targetGrade
+                                  ? "bg-muted/40"
+                                  : ""
+                              }`}
+                            >
+                              <td className="px-3 py-2">
+                                <button
+                                  type="button"
+                                  className="font-medium hover:underline"
+                                  onClick={() =>
+                                    updateRegradeSearch({
+                                      selectedTargetGrade: result.targetGrade,
+                                    })
+                                  }
+                                >
+                                  {regradeData.grades[result.targetGrade]
+                                    ?.name ?? `Grade ${result.targetGrade}`}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2">
+                                {formatGold(result.expectedCostGold)}
+                              </td>
+                              <td className="px-3 py-2">
+                                {formatGold(result.expectedRevenueGold)}
+                              </td>
+                              <td className="px-3 py-2">
+                                {formatGold(result.expectedProfitGold)}
+                              </td>
+                              <td className="px-3 py-2">
+                                {result.expectedLabor.toFixed(1)}
+                              </td>
+                              <td className="px-3 py-2">
+                                {result.expectedAttempts.toFixed(1)}
+                              </td>
+                              <td className="px-3 py-2">
+                                {result.silverPerLabor.toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1105,6 +1240,82 @@ function RegradePage() {
                           <li key={reason}>{reason}</li>
                         ))}
                       </ul>
+                    </div>
+                  ) : null}
+
+                  {selectedResult?.revenueBreakdown.length ? (
+                    <div className="mt-4 rounded-md border p-4">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-sm font-medium">
+                          Revenue breakdown
+                        </h3>
+                        <InfoTooltip text="Expected revenue, cost, and EV split by final sale grade. Probability is the chance this strategy exits at that grade; revenue is probability times the sale value entered for that grade." />
+                      </div>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-muted-foreground text-left">
+                            <tr>
+                              <th className="py-1 pr-3 font-medium">Grade</th>
+                              <th className="py-1 pr-3 font-medium">
+                                Probability
+                              </th>
+                              <th className="py-1 pr-3 font-medium">
+                                Sale value
+                              </th>
+                              <th className="py-1 pr-3 text-right font-medium">
+                                Revenue
+                              </th>
+                              <th className="py-1 pr-3 text-right font-medium">
+                                Cost
+                              </th>
+                              <th className="py-1 text-right font-medium">
+                                EV
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedResult.revenueBreakdown.map((entry) => (
+                              <tr key={entry.grade} className="border-t">
+                                <td className="py-1.5 pr-3">
+                                  {regradeData.grades[entry.grade]?.name ??
+                                    `Grade ${entry.grade}`}
+                                </td>
+                                <td className="py-1.5 pr-3">
+                                  {formatPercent(entry.probability)}
+                                </td>
+                                <td className="py-1.5 pr-3">
+                                  {formatGold(entry.saleValueGold)}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {formatGold(entry.expectedRevenueGold)}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {formatGold(entry.expectedCostGold)}
+                                </td>
+                                <td className="py-1.5 text-right">
+                                  {formatGold(entry.expectedProfitGold)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t font-medium">
+                              <td className="py-1.5 pr-3" colSpan={3}>
+                                Total
+                              </td>
+                              <td className="py-1.5 pr-3 text-right">
+                                {formatGold(selectedResult.expectedRevenueGold)}
+                              </td>
+                              <td className="py-1.5 pr-3 text-right">
+                                {formatGold(selectedResult.expectedCostGold)}
+                              </td>
+                              <td className="py-1.5 text-right">
+                                {formatGold(selectedResult.expectedProfitGold)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
                     </div>
                   ) : null}
 
@@ -1129,6 +1340,17 @@ function RegradePage() {
                                 {step.scroll.name}
                                 {step.charm ? ` + ${step.charm.name}` : ""}
                               </div>
+                              <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                                <span>
+                                  Regrade{" "}
+                                  {formatPercent(step.successProbability)}
+                                </span>
+                                {step.greatProbability > 0 ? (
+                                  <span>
+                                    Lucky {formatPercent(step.greatProbability)}
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
                             <div className="text-right">
                               <div>{formatGold(step.attemptCostGold)}</div>
@@ -1147,6 +1369,128 @@ function RegradePage() {
                           </div>
                         ))}
                       </div>
+                      {projectionStep && tapProjection ? (
+                        <div className="mt-4 rounded-md border p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="text-sm font-medium">
+                                Target projection
+                              </h4>
+                              <InfoTooltip text="Expected taps needed to get the requested number of pieces at the selected target grade or better from this one regrade step. Normal and lucky outcomes are shown separately so overshoot byproducts are visible. This does not include recovery after failures, recrafts, or earlier chain steps." />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <label className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">
+                                  Step
+                                </span>
+                                <select
+                                  className="bg-background h-8 rounded-md border px-2 text-sm"
+                                  value={effectiveProjectionStepKey ?? ""}
+                                  onChange={(event) =>
+                                    setProjectionStepKey(event.target.value)
+                                  }
+                                >
+                                  {projectionSteps.map((step) => (
+                                    <option
+                                      key={getProjectionStepKey(step)}
+                                      value={getProjectionStepKey(step)}
+                                    >
+                                      {formatProjectionStepLabel(step)}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">
+                                  Target
+                                </span>
+                                <select
+                                  className="bg-background h-8 rounded-md border px-2 text-sm"
+                                  value={effectiveProjectionTargetGrade ?? ""}
+                                  onChange={(event) =>
+                                    setProjectionTargetGrade(
+                                      Number.parseInt(event.target.value, 10),
+                                    )
+                                  }
+                                >
+                                  {projectionTargetGrades.map((grade) => (
+                                    <option key={grade} value={grade}>
+                                      {regradeData.grades[grade]?.name ??
+                                        `Grade ${grade}`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">
+                                  Wanted
+                                </span>
+                                <Input
+                                  className="h-8 w-20"
+                                  inputMode="decimal"
+                                  value={projectionTargetCountInput}
+                                  onChange={(event) =>
+                                    setProjectionTargetCountInput(
+                                      event.target.value,
+                                    )
+                                  }
+                                />
+                              </label>
+                            </div>
+                          </div>
+                          <div className="text-muted-foreground mt-1 text-xs">
+                            Final step:{" "}
+                            {regradeData.grades[projectionStep.fromGrade]
+                              ?.name ??
+                              `Grade ${projectionStep.fromGrade}`}{" "}
+                            to{" "}
+                            {regradeData.grades[projectionStep.normalToGrade]
+                              ?.name ?? `Grade ${projectionStep.normalToGrade}`}
+                            {projectionStep.greatProbability > 0 ? (
+                              <>
+                                {" "}
+                                / lucky to{" "}
+                                {regradeData.grades[projectionStep.greatToGrade]
+                                  ?.name ??
+                                  `Grade ${projectionStep.greatToGrade}`}
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                            <ProjectionStat
+                              label="Needed taps"
+                              value={tapProjection.requiredTaps}
+                            />
+                            <ProjectionStat
+                              label={`Target+ (${
+                                regradeData.grades[tapProjection.targetGrade]
+                                  ?.name ?? `Grade ${tapProjection.targetGrade}`
+                              })`}
+                              value={tapProjection.expectedTargetOrBetter}
+                            />
+                            <ProjectionStat
+                              label={`Normal (${
+                                regradeData.grades[projectionStep.normalToGrade]
+                                  ?.name ??
+                                `Grade ${projectionStep.normalToGrade}`
+                              })`}
+                              value={tapProjection.expectedNormalHits}
+                            />
+                            <ProjectionStat
+                              label={`Lucky (${
+                                regradeData.grades[projectionStep.greatToGrade]
+                                  ?.name ??
+                                `Grade ${projectionStep.greatToGrade}`
+                              })`}
+                              value={tapProjection.expectedLuckyHits}
+                            />
+                            <ProjectionStat
+                              label="Failed taps"
+                              value={tapProjection.expectedFailures}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -1181,9 +1525,45 @@ function SummaryCard({
         {helpText ? <InfoTooltip text={helpText} /> : null}
       </div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
-      {detail ? <div className="text-muted-foreground mt-1 text-sm">{detail}</div> : null}
+      {detail ? (
+        <div className="text-muted-foreground mt-1 text-sm">{detail}</div>
+      ) : null}
     </div>
   );
+}
+
+function ProjectionStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-muted/30 rounded-md px-3 py-2">
+      <div className="text-muted-foreground text-xs">{label}</div>
+      <div className="mt-0.5 font-medium">
+        {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      </div>
+    </div>
+  );
+}
+
+function getProjectionStepKey(step: RegradeActionChoice): string {
+  return [
+    step.fromGrade,
+    step.normalToGrade,
+    step.greatToGrade,
+    step.scroll.id,
+    step.charm?.id ?? "none",
+  ].join(":");
+}
+
+function formatProjectionStepLabel(step: RegradeActionChoice): string {
+  const fromGrade =
+    regradeData.grades[step.fromGrade]?.name ?? `Grade ${step.fromGrade}`;
+  const normalGrade =
+    regradeData.grades[step.normalToGrade]?.name ??
+    `Grade ${step.normalToGrade}`;
+  const luckyGrade =
+    regradeData.grades[step.greatToGrade]?.name ?? `Grade ${step.greatToGrade}`;
+  return step.greatProbability > 0
+    ? `${fromGrade} -> ${normalGrade} / ${luckyGrade}`
+    : `${fromGrade} -> ${normalGrade}`;
 }
 
 function UpgradeCostBreakdown({
@@ -1213,7 +1593,8 @@ function UpgradeCostBreakdown({
           <InfoTooltip text="Fixed cost added when the regrade target is reached. Craft stages are deterministic recipe costs. Reroll stages are expected mana-seal failures needed to hit the required variant." />
         </div>
         <div className="text-muted-foreground text-sm">
-          {formatGold(upgradeCost.costGold)} · {upgradeCost.labor.toFixed(1)} labor
+          {formatGold(upgradeCost.costGold)} · {upgradeCost.labor.toFixed(1)}{" "}
+          labor
         </div>
       </div>
 
@@ -1306,13 +1687,7 @@ function UpgradeCostBreakdown({
   );
 }
 
-function TableHeader({
-  label,
-  helpText,
-}: {
-  label: string;
-  helpText: string;
-}) {
+function TableHeader({ label, helpText }: { label: string; helpText: string }) {
   return (
     <th className="px-3 py-2">
       <span className="flex items-center gap-1.5">
@@ -1362,20 +1737,24 @@ function SaleValueInputs({
   onCommit: (values: Record<number, string>) => void;
   onSelectedGradesChange: (grades: number[]) => void;
 }) {
-  const [draftValues, setDraftValues] = useState(values);
   const valuesKey = useMemo(() => JSON.stringify(values), [values]);
-  const draftValuesKey = useMemo(() => JSON.stringify(draftValues), [draftValues]);
-  const previousValuesKeyRef = useRef(valuesKey);
+  const [draftState, setDraftState] = useState(() => ({
+    values,
+    valuesKey,
+  }));
+  if (draftState.valuesKey !== valuesKey) {
+    setDraftState({ values, valuesKey });
+  }
+  const draftValues =
+    draftState.valuesKey === valuesKey ? draftState.values : values;
+  const draftValuesKey = useMemo(
+    () => JSON.stringify(draftValues),
+    [draftValues],
+  );
   const selectedGradeSet = useMemo(
     () => new Set(selectedGrades),
     [selectedGrades],
   );
-
-  useEffect(() => {
-    if (previousValuesKeyRef.current === valuesKey) return;
-    previousValuesKeyRef.current = valuesKey;
-    setDraftValues(values);
-  }, [values, valuesKey]);
 
   useEffect(() => {
     if (draftValuesKey === valuesKey) return;
@@ -1387,9 +1766,12 @@ function SaleValueInputs({
   }, [draftValues, draftValuesKey, onCommit, valuesKey]);
 
   function updateDraftValue(grade: number, value: string) {
-    setDraftValues((current) => ({
-      ...current,
-      [grade]: value,
+    setDraftState((current) => ({
+      valuesKey: current.valuesKey,
+      values: {
+        ...current.values,
+        [grade]: value,
+      },
     }));
   }
 
@@ -1428,14 +1810,17 @@ function SaleValueInputs({
             <label key={grade} className="space-y-1 text-sm">
               <span className="text-muted-foreground flex items-center gap-1.5">
                 <span>
-                  {regradeData.grades[grade]?.name ?? `Grade ${grade}`} sale value
+                  {regradeData.grades[grade]?.name ?? `Grade ${grade}`} sale
+                  value
                 </span>
                 <InfoTooltip text="Gold you expect to receive if the item is sold at this grade. This value is only used while this tier is selected in Sell tiers." />
               </span>
               <Input
                 inputMode="decimal"
                 value={draftValues[grade] ?? ""}
-                onChange={(event) => updateDraftValue(grade, event.target.value)}
+                onChange={(event) =>
+                  updateDraftValue(grade, event.target.value)
+                }
                 placeholder="Gold"
               />
             </label>
@@ -1735,15 +2120,14 @@ function RegradeConsumableRow({
   const isCustom = overrideMap.has(consumable.id);
   const isCraftable = !!craftData?.crafts.length;
   const mode = manualCraftModes[consumable.id] ?? "buy";
-  const craft =
-    isCraftable && craftData
-      ? pickPreferredRegradeConsumableCraft(
-          consumable.id,
-          craftData,
-          overrideMap,
-          manualCraftModes,
-        )
-      : null;
+  const craft = isCraftable
+    ? pickPreferredRegradeConsumableCraft(
+        consumable.id,
+        craftData,
+        overrideMap,
+        manualCraftModes,
+      )
+    : null;
 
   return (
     <Fragment>
@@ -1768,7 +2152,9 @@ function RegradeConsumableRow({
               step="0.01"
               defaultValue={unitPrice > 0 ? unitPrice.toFixed(2) : ""}
               onBlur={(event) => {
-                const parsed = parsePriceOverrideInput(event.currentTarget.value);
+                const parsed = parsePriceOverrideInput(
+                  event.currentTarget.value,
+                );
                 if (parsed != null && parsed !== unitPrice) {
                   onSavePriceOverride(consumable.id, parsed);
                 }
@@ -1784,7 +2170,7 @@ function RegradeConsumableRow({
               <span className="text-primary text-xs">(custom)</span>
             ) : null}
             {selected ? (
-              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+              <span className="bg-primary/10 text-primary rounded px-1.5 py-0.5 text-xs">
                 selected
               </span>
             ) : null}
@@ -1838,7 +2224,7 @@ function RegradeCraftBreakdown({
   depth = 0,
 }: {
   title?: string;
-  entry: ForItemOutput["crafts"][number] | SubcraftEntry;
+  entry: ForItemOutput["crafts"][number];
   itemId: number;
   craftData: ForItemOutput;
   excludedItemIds?: number[];
@@ -1853,7 +2239,9 @@ function RegradeCraftBreakdown({
 }) {
   const priceMap = buildPriceMap(craftData.prices);
   const excludedIds = new Set(excludedItemIds);
-  const materials = entry.materials.filter(({ item }) => !excludedIds.has(item.id));
+  const materials = entry.materials.filter(
+    ({ item }) => !excludedIds.has(item.id),
+  );
   const isCollapsed =
     depth === 0
       ? !collapsedCraftIds.has(entry.craft.id)
@@ -1882,7 +2270,9 @@ function RegradeCraftBreakdown({
   const hasPrices = !isCollapsed && (priceMap.size > 0 || overrideMap.size > 0);
   const hasCraftable =
     !isCollapsed &&
-    materials.some(({ item }) => !!craftData.subcraftsByItemId[item.id]?.length);
+    materials.some(
+      ({ item }) => !!craftData.subcraftsByItemId[item.id]?.length,
+    );
 
   return (
     <RecipeCardShell depth={depth}>
@@ -1920,7 +2310,8 @@ function RegradeCraftBreakdown({
         <>
           <ul className="flex flex-col gap-1">
             {materials.map(({ item, amount }) => {
-              const isCraftable = !!craftData.subcraftsByItemId[item.id]?.length;
+              const isCraftable =
+                !!craftData.subcraftsByItemId[item.id]?.length;
               const mode = modes[item.id] ?? "buy";
               const customPrice = overrideMap.get(item.id);
               const price = priceMap.get(item.id);
@@ -2009,7 +2400,9 @@ function RegradeCraftBreakdown({
                             className="bg-background w-20 rounded-md border px-2 py-1 text-right text-xs tabular-nums"
                           />
                           {isCustom && mode === "buy" ? (
-                            <span className="text-primary text-xs">(custom)</span>
+                            <span className="text-primary text-xs">
+                              (custom)
+                            </span>
                           ) : null}
                           {mode === "craft" &&
                           isCraftable &&
@@ -2117,7 +2510,11 @@ function readRegradeCraftModePreferences(): Record<string, CraftModeMap> {
 
     return Object.fromEntries(
       Object.entries(parsed).flatMap(([scope, rawModes]) => {
-        if (!rawModes || typeof rawModes !== "object" || Array.isArray(rawModes)) {
+        if (
+          !rawModes ||
+          typeof rawModes !== "object" ||
+          Array.isArray(rawModes)
+        ) {
           return [];
         }
 
@@ -2157,6 +2554,115 @@ function buildPriceMap(prices: ForItemOutput["prices"]): PriceMap {
   return new Map(prices.map((price) => [price.itemId, price]));
 }
 
+function buildResplendentScrollRightClickCraftData(
+  scroll: (typeof regradeData.scrolls)[number],
+  recipe: NonNullable<ReturnType<typeof getResplendentScrollRightClickRecipe>>,
+  normalScrollCraftData: ForItemOutput | null,
+  consumablePrices: PriceRow[],
+  overrideMap: OverrideMap,
+  manualCraftModes: CraftModeMap,
+): ForItemOutput {
+  const rootItem = buildRegradeConsumableCraftItem(scroll, "Talisman");
+  const normalScrollItem = buildRegradeConsumableCraftItem(
+    recipe.normalScroll,
+    "Talisman",
+  );
+  const luckyPointItem = buildRegradeConsumableCraftItem(
+    recipe.luckyPoint,
+    "Gem",
+  );
+  const craftId = RESPLENDENT_RIGHT_CLICK_CRAFT_ID_OFFSET + scroll.id;
+  const directMaterialIds = new Set([
+    scroll.id,
+    recipe.normalScroll.id,
+    recipe.luckyPoint.id,
+  ]);
+  const directPrices = consumablePrices.filter((price) =>
+    directMaterialIds.has(price.itemId),
+  );
+  const normalScrollCraft = normalScrollCraftData?.crafts.length
+    ? pickPreferredRegradeConsumableCraft(
+        recipe.normalScroll.id,
+        normalScrollCraftData,
+        overrideMap,
+        manualCraftModes,
+      )
+    : null;
+
+  return {
+    item: rootItem,
+    crafts: [
+      {
+        craft: {
+          id: craftId,
+          name: `${scroll.name}: Right-click Conversion`,
+          labor: 0,
+          castDelayMs: 0,
+          primaryProductId: scroll.id,
+          proficiency: null,
+        },
+        materials: [
+          {
+            craftId,
+            amount: 1,
+            item: normalScrollItem,
+          },
+          {
+            craftId,
+            amount: 1,
+            item: luckyPointItem,
+          },
+        ],
+        products: [
+          {
+            craftId,
+            amount: 1,
+            rate: null,
+            item: rootItem,
+          },
+        ],
+      },
+    ],
+    prices: dedupePriceRowsByItemId([
+      ...directPrices,
+      ...(normalScrollCraftData?.prices ?? []),
+    ]),
+    subcraftsByItemId: {
+      ...(normalScrollCraftData?.subcraftsByItemId ?? {}),
+      [recipe.normalScroll.id]: normalScrollCraft ? [normalScrollCraft] : [],
+    },
+  };
+}
+
+function buildRegradeConsumableCraftItem(
+  item: { id: number; name: string; icon: string },
+  category: string,
+): CraftItem {
+  return {
+    id: item.id,
+    name: item.name,
+    description: null,
+    category,
+    level: 0,
+    price: 0,
+    refund: 0,
+    bindId: 0,
+    sellable: false,
+    implId: 0,
+    fixedGrade: -1,
+    gradable: false,
+    maxStackSize: 1,
+    levelRequirement: 0,
+    levelLimit: 0,
+    icon: item.icon,
+    overIcon: null,
+  };
+}
+
+function dedupePriceRowsByItemId(prices: PriceRow[]): PriceRow[] {
+  return [...new Map(prices.map((price) => [price.itemId, price])).values()];
+}
+
 function dedupeItemsById<T extends { id: number }>(items: T[]): T[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
@@ -2187,7 +2693,10 @@ function getDefaultBuyCraftModes(
 ): CraftModeMap {
   return {
     ...Object.fromEntries(
-      Object.keys(subcraftMap).map((itemId) => [Number(itemId), "buy" as const]),
+      Object.keys(subcraftMap).map((itemId) => [
+        Number(itemId),
+        "buy" as const,
+      ]),
     ),
     ...manualCraftModes,
   };
@@ -2200,12 +2709,11 @@ function pickPreferredRegradeConsumableCraft(
   manualCraftModes: CraftModeMap,
 ): ForItemOutput["crafts"][number] {
   const itemName = craftData.item.name.toLowerCase();
-  const preferredMaterial =
-    itemName.includes("weapon regrade scroll")
-      ? "sunpoint"
-      : itemName.includes("armor regrade scroll")
-        ? "moonpoint"
-        : null;
+  const preferredMaterial = itemName.includes("weapon regrade scroll")
+    ? "sunpoint"
+    : itemName.includes("armor regrade scroll")
+      ? "moonpoint"
+      : null;
 
   if (preferredMaterial) {
     const preferredCraft = craftData.crafts.find((craft) =>
@@ -2393,7 +2901,7 @@ function getChosenMaterialLabor(
 }
 
 function getSelectedCraftUnitLabor(
-  entry: ForItemOutput["crafts"][number] | SubcraftEntry,
+  entry: ForItemOutput["crafts"][number],
   itemId: number,
   subcraftMap: ForItemOutput["subcraftsByItemId"],
   priceMap: PriceMap,

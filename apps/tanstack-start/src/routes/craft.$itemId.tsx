@@ -96,8 +96,7 @@ type PageData = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forItem"]>
 >;
 type CraftEntry = PageData["crafts"][number];
-type SubcraftEntry = PageData["subcraftsByItemId"][number][number];
-type AnyCraftEntry = CraftEntry | SubcraftEntry;
+type AnyCraftEntry = CraftEntry;
 type PageSubcraftMap = SubcraftMap<AnyCraftEntry>;
 
 function serializeCraftModeSearch(modes: ModesMap): string | undefined {
