@@ -74,6 +74,7 @@ export const MANA_SEAL_USE_LABOR = 10;
 const REGRADE_FEE_K = 0.0041636529;
 const REGRADE_FEE_BASE_COPPER = 160000;
 const COPPER_PER_GOLD = 10000;
+const MAX_SOLVER_ITERATIONS = 500;
 
 export interface RegradeFeeInput {
   ratioCost: number;
@@ -108,6 +109,7 @@ export interface RegradeStep {
 }
 
 export type ConsumablePriceMap = Map<number, number>;
+export type ConsumableLaborMap = Map<number, number>;
 export type GradeSaleValueMap = Map<number, number>;
 
 export interface RegradeActionChoice {
@@ -116,6 +118,7 @@ export interface RegradeActionChoice {
   charm: RegradeCharm | null;
   expectedValueGold: number;
   attemptCostGold: number;
+  attemptLabor: number;
 }
 
 export interface ExpectedRegradeInput {
@@ -127,6 +130,7 @@ export interface ExpectedRegradeInput {
   upgradeLabor: number;
   saleValuesByGrade: GradeSaleValueMap;
   consumablePrices: ConsumablePriceMap;
+  consumableLabor?: ConsumableLaborMap;
   candidateCharmIds: number[];
   startGrade?: number;
   data?: RegradeData;
@@ -144,9 +148,208 @@ export interface ExpectedRegradeResult {
   skippedReasons: string[];
 }
 
+export interface RegradeSearchState {
+  family: RegradeFamily;
+  piece: string | null;
+  obsidianItemId: number | null;
+  selectedTargetGrade: number | null;
+  ayanadTargetMode: "specific" | "any";
+  ayanadTargetItemId: number | null;
+  glowingProcEnabled: boolean;
+  selectedSaleGrades: number[];
+  saleValuesByGradeInput: Record<number, string>;
+}
+
+export interface RegradeSearchParams {
+  family?: RegradeFamily;
+  piece?: string;
+  obsidian?: number;
+  target?: number;
+  ayanad?: "specific" | "any";
+  ayanadItem?: number;
+  glowing?: 1;
+  sell?: string;
+  [key: string]: unknown;
+}
+
+export const DEFAULT_REGRADE_SALE_GRADES = [8, 9, 10] as const;
+
+const DEFAULT_REGRADE_SEARCH_STATE: RegradeSearchState = {
+  family: "magnificent",
+  piece: null,
+  obsidianItemId: null,
+  selectedTargetGrade: null,
+  ayanadTargetMode: "specific",
+  ayanadTargetItemId: null,
+  glowingProcEnabled: false,
+  selectedSaleGrades: [...DEFAULT_REGRADE_SALE_GRADES],
+  saleValuesByGradeInput: {},
+};
+
+function readSearchString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readSearchFloat(value: unknown): number {
+  const raw = readSearchString(value);
+  if (!raw) return Number.NaN;
+  const unquoted = raw.replace(/^"(.*)"$/, "$1");
+  return Number.parseFloat(unquoted);
+}
+
+function readSearchNumber(value: unknown): number | null {
+  const raw =
+    typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+function readSearchNumberList(value: unknown): number[] {
+  const raw = readSearchString(value);
+  if (!raw) return [];
+
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((part) => Number.parseInt(part.trim(), 10))
+        .filter((grade) => Number.isFinite(grade) && grade > 0),
+    ),
+  ].sort((a, b) => a - b);
+}
+
+function sameNumberList(left: readonly number[], right: readonly number[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+export function parseRegradeSearch(
+  search: Record<string, unknown>,
+): RegradeSearchState {
+  const family = search.family === "obsidian-t1" ? "obsidian-t1" : "magnificent";
+  const ayanadTargetMode = search.ayanad === "any" ? "any" : "specific";
+  const saleValuesByGradeInput: Record<number, string> = {};
+  const selectedSaleGrades = readSearchNumberList(search.sell);
+
+  for (const [key, value] of Object.entries(search)) {
+    const match = /^g(\d+)$/.exec(key);
+    const raw = readSearchString(value);
+    if (!match || !raw) continue;
+    const grade = Number.parseInt(match[1] ?? "", 10);
+    const parsed = readSearchFloat(raw);
+    if (Number.isFinite(grade) && Number.isFinite(parsed) && parsed > 0) {
+      saleValuesByGradeInput[grade] = String(parsed);
+    }
+  }
+
+  return {
+    ...DEFAULT_REGRADE_SEARCH_STATE,
+    family,
+    piece: readSearchString(search.piece),
+    obsidianItemId: readSearchNumber(search.obsidian),
+    selectedTargetGrade: readSearchNumber(search.target),
+    ayanadTargetMode,
+    ayanadTargetItemId: readSearchNumber(search.ayanadItem),
+    glowingProcEnabled: search.glowing === 1 || search.glowing === "1",
+    selectedSaleGrades:
+      selectedSaleGrades.length > 0
+        ? selectedSaleGrades
+        : [...DEFAULT_REGRADE_SALE_GRADES],
+    saleValuesByGradeInput,
+  };
+}
+
+export function serializeRegradeSearch(
+  state: Partial<RegradeSearchState>,
+): RegradeSearchParams {
+  const resolved = { ...DEFAULT_REGRADE_SEARCH_STATE, ...state };
+  const search: RegradeSearchParams = {};
+
+  if (resolved.family !== DEFAULT_REGRADE_SEARCH_STATE.family) {
+    search.family = resolved.family;
+  }
+  if (resolved.family === "magnificent" && resolved.piece) {
+    search.piece = resolved.piece;
+  }
+  if (resolved.family === "obsidian-t1" && resolved.obsidianItemId != null) {
+    search.obsidian = resolved.obsidianItemId;
+  }
+  if (resolved.selectedTargetGrade != null) {
+    search.target = resolved.selectedTargetGrade;
+  }
+  if (resolved.ayanadTargetMode !== DEFAULT_REGRADE_SEARCH_STATE.ayanadTargetMode) {
+    search.ayanad = resolved.ayanadTargetMode;
+  }
+  if (resolved.ayanadTargetItemId != null) {
+    search.ayanadItem = resolved.ayanadTargetItemId;
+  }
+  if (resolved.glowingProcEnabled) {
+    search.glowing = 1;
+  }
+  const selectedSaleGrades = [...new Set(resolved.selectedSaleGrades)].sort(
+    (a, b) => a - b,
+  );
+  if (!sameNumberList(selectedSaleGrades, DEFAULT_REGRADE_SALE_GRADES)) {
+    search.sell = selectedSaleGrades.join(",");
+  }
+
+  for (const [grade, raw] of Object.entries(resolved.saleValuesByGradeInput)) {
+    const value = raw.trim();
+    const parsed = Number.parseFloat(value);
+    if (value && Number.isFinite(parsed) && parsed > 0) {
+      search[`g${grade}`] = value;
+    }
+  }
+
+  return search;
+}
+
+export function getEffectiveSelectedRegradeTarget(
+  results: ExpectedRegradeResult[],
+  selectedTargetGrade: number | null,
+): number | null {
+  if (
+    selectedTargetGrade != null &&
+    results.some((result) => result.targetGrade === selectedTargetGrade)
+  ) {
+    return selectedTargetGrade;
+  }
+
+  const finiteResults = results.filter((result) =>
+    Number.isFinite(result.expectedProfitGold),
+  );
+  const candidates = finiteResults.length > 0 ? finiteResults : results;
+  const best = candidates.reduce<ExpectedRegradeResult | null>(
+    (currentBest, result) =>
+      !currentBest || result.expectedProfitGold > currentBest.expectedProfitGold
+        ? result
+        : currentBest,
+    null,
+  );
+
+  return best?.targetGrade ?? null;
+}
+
 export interface MagnificentVariantParts {
   prefix: string;
   piece: string;
+}
+
+export type MagnificentUpgradeTier = "Magnificent" | "Epherium" | "Delphinad";
+
+export interface MagnificentGearType {
+  piece: string;
+  displayName: string;
+  representativeItem: RegradeItem;
+  variantNames: string[];
+  sealedUpgradeNames: MagnificentSealedUpgradeNames;
+}
+
+export interface MagnificentSealedUpgradeNames {
+  epherium: string;
+  delphinad: string;
+  ayanad: string;
 }
 
 export const regradeData = regradeDataJson as RegradeData;
@@ -165,6 +368,12 @@ interface SolverValue {
   revenue: number;
   labor: number;
   steps: RegradeActionChoice[];
+}
+
+interface SolverAction {
+  step: RegradeStep;
+  attemptCostGold: number;
+  attemptLabor: number;
 }
 
 const ZERO_SOLVER_VALUE: SolverValue = {
@@ -230,6 +439,71 @@ export function getSupportedRegradeItems(
       return [];
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getMagnificentVariantNames(
+  piece: string,
+  tier: MagnificentUpgradeTier,
+  data: RegradeData = regradeData,
+): string[] {
+  const suffix = ` ${piece}`.toLowerCase();
+  return data.items
+    .filter(
+      (item) =>
+        item.name.startsWith(`${tier} `) &&
+        item.name.toLowerCase().endsWith(suffix) &&
+        item.group === 4 &&
+        (item.type === "weapon" ||
+          item.type === "armor" ||
+          item.type === "accessory"),
+    )
+    .map((item) => item.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export function getMagnificentSealedUpgradeNames(
+  piece: string,
+): MagnificentSealedUpgradeNames {
+  return {
+    epherium: `Sealed Epherium ${piece}`,
+    delphinad: `Sealed Delphinad ${piece}`,
+    ayanad: `Sealed Ayanad ${piece}`,
+  };
+}
+
+export function getMagnificentGearTypes(
+  data: RegradeData = regradeData,
+): MagnificentGearType[] {
+  const byPiece = new Map<string, RegradeItem[]>();
+
+  for (const item of data.items) {
+    if (!isSupportedMagnificentBase(item)) continue;
+    const parts = parseMagnificentVariant(item.name);
+    if (!parts) continue;
+    const items = byPiece.get(parts.piece) ?? [];
+    items.push(item);
+    byPiece.set(parts.piece, items);
+  }
+
+  return [...byPiece.entries()]
+    .map(([piece, items]) => {
+      const sortedItems = [...items].sort((a, b) => a.name.localeCompare(b.name));
+      const representativeItem =
+        sortedItems.find((item) => item.name.includes("Squall ")) ??
+        sortedItems[0];
+
+      if (!representativeItem) return null;
+
+      return {
+        piece,
+        displayName: `Magnificent ${piece}`,
+        representativeItem,
+        variantNames: sortedItems.map((item) => item.name),
+        sealedUpgradeNames: getMagnificentSealedUpgradeNames(piece),
+      };
+    })
+    .filter((type): type is MagnificentGearType => type != null)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 export function getRegradeFeeGold(input: RegradeFeeInput): number {
@@ -359,37 +633,50 @@ export function solveExpectedRegradeToTarget(
   const data = input.data ?? regradeData;
   const startGrade = input.startGrade ?? RECRAFT_START_GRADE;
   const skippedReasons: string[] = [];
-  const memo = new Map<number, SolverValue>();
-  const visiting = new Set<number>();
+  const stateGrades = Array.from(
+    { length: Math.max(0, input.targetGrade - startGrade) },
+    (_, index) => startGrade + index,
+  );
+  const impossibleValue: SolverValue = {
+    value: Number.NEGATIVE_INFINITY,
+    cost: Number.POSITIVE_INFINITY,
+    revenue: 0,
+    labor: 0,
+    steps: [],
+  };
 
-  const solve = (grade: number): SolverValue => {
+  const terminalValue = (grade: number): SolverValue => {
+    const saleValue = getSaleValueForLandingGrade(input.saleValuesByGrade, grade);
+    return {
+      value: saleValue - input.upgradeCostGold,
+      cost: input.upgradeCostGold,
+      revenue: saleValue,
+      labor: input.upgradeLabor,
+      steps: [],
+    };
+  };
+  const valueForGrade = (
+    grade: number,
+    values: Map<number, SolverValue>,
+  ): SolverValue => {
     if (grade >= input.targetGrade) {
-      const saleValue = getSaleValueForLandingGrade(input.saleValuesByGrade, grade);
-      return {
-        value: saleValue - input.upgradeCostGold,
-        cost: input.upgradeCostGold,
-        revenue: saleValue,
-        labor: input.upgradeLabor,
-        steps: [],
-      };
+      return terminalValue(grade);
     }
-
-    const existing = memo.get(grade);
-    if (existing) return existing;
-    if (visiting.has(grade)) {
-      return {
-        value: Number.NEGATIVE_INFINITY,
-        cost: Number.POSITIVE_INFINITY,
-        revenue: 0,
-        labor: 0,
-        steps: [],
-      };
+    return values.get(grade) ?? ZERO_SOLVER_VALUE;
+  };
+  const metricDelta = (next: number, previous: number): number => {
+    if (next === previous) return 0;
+    if (!Number.isFinite(next) || !Number.isFinite(previous)) {
+      return Number.POSITIVE_INFINITY;
     }
-    visiting.add(grade);
+    return Math.abs(next - previous);
+  };
 
+  const actionsByGrade = new Map<number, SolverAction[]>();
+  for (const grade of stateGrades) {
     const scrollModes = [false, true];
     const charmIds = [null, ...input.candidateCharmIds] as (number | null)[];
-    let best: SolverValue | null = null;
+    const actions: SolverAction[] = [];
 
     for (const resplendent of scrollModes) {
       for (const charmId of charmIds) {
@@ -414,89 +701,140 @@ export function solveExpectedRegradeToTarget(
           continue;
         }
 
-        const attemptCost = step.feeGold + scrollPrice + charmPrice;
-        const normal = solve(step.normalToGrade);
-        const great =
-          step.greatProbability > 0
-            ? solve(step.greatToGrade)
-            : ZERO_SOLVER_VALUE;
-        const downgraded =
-          step.downgradeProbability > 0 && step.downgradeGrade != null
-            ? solve(step.downgradeGrade)
-            : ZERO_SOLVER_VALUE;
-        const restarted =
-          step.destroyProbability > 0 ? solve(startGrade) : ZERO_SOLVER_VALUE;
-
-        const nonStayValue =
-          step.normalSuccessProbability * normal.value +
-          step.greatProbability * great.value +
-          step.destroyProbability *
-            (restarted.value - input.baseRecraftCostGold) +
-          step.downgradeProbability * downgraded.value -
-          attemptCost;
-        const denominator = Math.max(0.000001, 1 - step.stayProbability);
-        const expectedValue = nonStayValue / denominator;
-
-        const nonStayCost =
-          attemptCost +
-          step.normalSuccessProbability * normal.cost +
-          step.greatProbability * great.cost +
-          step.destroyProbability *
-            (input.baseRecraftCostGold + restarted.cost) +
-          step.downgradeProbability * downgraded.cost;
-        const expectedCost = nonStayCost / denominator;
-
-        const expectedRevenue =
-          (step.normalSuccessProbability * normal.revenue +
-            step.greatProbability * great.revenue +
-            step.destroyProbability * restarted.revenue +
-            step.downgradeProbability * downgraded.revenue) /
-          denominator;
-        const expectedLabor =
-          (step.normalSuccessProbability * normal.labor +
-            step.greatProbability * great.labor +
-            step.destroyProbability *
-              (input.baseRecraftLabor + restarted.labor) +
-            step.downgradeProbability * downgraded.labor) /
-          denominator;
-
-        const candidate: SolverValue = {
-          value: expectedValue,
-          cost: expectedCost,
-          revenue: expectedRevenue,
-          labor: expectedLabor,
-          steps: [
-            {
-              fromGrade: grade,
-              scroll: step.scroll,
-              charm: step.charm,
-              expectedValueGold: expectedValue,
-              attemptCostGold: attemptCost,
-            },
-            ...normal.steps,
-          ],
-        };
-
-        if (!best || candidate.value > best.value) {
-          best = candidate;
-        }
+        actions.push({
+          step,
+          attemptCostGold: step.feeGold + scrollPrice + charmPrice,
+          attemptLabor:
+            (input.consumableLabor?.get(step.scroll.id) ?? 0) +
+            (step.charm ? (input.consumableLabor?.get(step.charm.id) ?? 0) : 0),
+        });
       }
     }
+    actionsByGrade.set(grade, actions);
+  }
 
-    visiting.delete(grade);
-    const resolved =
-      best ?? {
-        value: Number.NEGATIVE_INFINITY,
-        cost: Number.POSITIVE_INFINITY,
-        revenue: 0,
-        labor: 0,
-        steps: [],
-      };
-    memo.set(grade, resolved);
-    return resolved;
+  const evaluateAction = (
+    action: SolverAction,
+    values: Map<number, SolverValue>,
+  ): SolverValue => {
+    const { attemptCostGold, attemptLabor, step } = action;
+    const normal = valueForGrade(step.normalToGrade, values);
+    const great =
+      step.greatProbability > 0
+        ? valueForGrade(step.greatToGrade, values)
+        : ZERO_SOLVER_VALUE;
+    const downgraded =
+      step.downgradeProbability > 0 && step.downgradeGrade != null
+        ? valueForGrade(step.downgradeGrade, values)
+        : ZERO_SOLVER_VALUE;
+    const restarted =
+      step.destroyProbability > 0
+        ? valueForGrade(startGrade, values)
+        : ZERO_SOLVER_VALUE;
+
+    const denominator = Math.max(0.000001, 1 - step.stayProbability);
+    const expectedValue =
+      (step.normalSuccessProbability * normal.value +
+        step.greatProbability * great.value +
+        step.destroyProbability * (restarted.value - input.baseRecraftCostGold) +
+        step.downgradeProbability * downgraded.value -
+        attemptCostGold) /
+      denominator;
+    const expectedCost =
+      (attemptCostGold +
+        step.normalSuccessProbability * normal.cost +
+        step.greatProbability * great.cost +
+        step.destroyProbability * (input.baseRecraftCostGold + restarted.cost) +
+        step.downgradeProbability * downgraded.cost) /
+      denominator;
+    const expectedRevenue =
+      (step.normalSuccessProbability * normal.revenue +
+        step.greatProbability * great.revenue +
+        step.destroyProbability * restarted.revenue +
+        step.downgradeProbability * downgraded.revenue) /
+      denominator;
+    const expectedLabor =
+      (attemptLabor +
+        step.normalSuccessProbability * normal.labor +
+        step.greatProbability * great.labor +
+        step.destroyProbability * (input.baseRecraftLabor + restarted.labor) +
+        step.downgradeProbability * downgraded.labor) /
+      denominator;
+
+    return {
+      value: expectedValue,
+      cost: expectedCost,
+      revenue: expectedRevenue,
+      labor: expectedLabor,
+      steps: [],
+    };
   };
 
-  const solved = solve(startGrade);
+  let values = new Map<number, SolverValue>(
+    stateGrades.map((grade) => [grade, ZERO_SOLVER_VALUE] as const),
+  );
+  let selectedActions = new Map<number, SolverAction>();
+
+  for (let iteration = 0; iteration < MAX_SOLVER_ITERATIONS; iteration += 1) {
+    const nextValues = new Map<number, SolverValue>();
+    const nextActions = new Map<number, SolverAction>();
+    let maxDelta = 0;
+
+    for (const grade of stateGrades) {
+      let best: SolverValue | null = null;
+      let bestAction: SolverAction | null = null;
+
+      for (const action of actionsByGrade.get(grade) ?? []) {
+        const candidate = evaluateAction(action, values);
+        if (!best || candidate.value > best.value) {
+          best = candidate;
+          bestAction = action;
+        }
+      }
+
+      const resolved = best ?? impossibleValue;
+      nextValues.set(grade, resolved);
+      if (bestAction) nextActions.set(grade, bestAction);
+
+      const previous = values.get(grade) ?? ZERO_SOLVER_VALUE;
+      maxDelta = Math.max(
+        maxDelta,
+        metricDelta(resolved.value, previous.value),
+        metricDelta(resolved.cost, previous.cost),
+        metricDelta(resolved.revenue, previous.revenue),
+        metricDelta(resolved.labor, previous.labor),
+      );
+    }
+
+    values = nextValues;
+    selectedActions = nextActions;
+    if (maxDelta < 0.000001) break;
+  }
+
+  const steps: RegradeActionChoice[] = [];
+  const seenStepGrades = new Set<number>();
+  let stepGrade = startGrade;
+  while (stepGrade < input.targetGrade && !seenStepGrades.has(stepGrade)) {
+    seenStepGrades.add(stepGrade);
+    const action = selectedActions.get(stepGrade);
+    if (!action?.step.scroll) break;
+    const solvedAtGrade = values.get(stepGrade) ?? impossibleValue;
+    steps.push({
+      fromGrade: stepGrade,
+      scroll: action.step.scroll,
+      charm: action.step.charm,
+      expectedValueGold: solvedAtGrade.value,
+      attemptCostGold: action.attemptCostGold,
+      attemptLabor: action.attemptLabor,
+    });
+    if (action.step.normalToGrade <= stepGrade) break;
+    stepGrade = action.step.normalToGrade;
+  }
+
+  const solved =
+    startGrade >= input.targetGrade
+      ? terminalValue(startGrade)
+      : (values.get(startGrade) ?? impossibleValue);
   const expectedLabor = solved.labor;
 
   return {
@@ -506,8 +844,11 @@ export function solveExpectedRegradeToTarget(
     expectedCostGold: solved.cost,
     expectedRevenueGold: solved.revenue,
     expectedLabor,
-    silverPerLabor: expectedLabor > 0 ? (solved.value * 100) / expectedLabor : 0,
-    selectedSteps: solved.steps,
+    silverPerLabor:
+      expectedLabor > 0 && Number.isFinite(solved.value)
+        ? (solved.value * 100) / expectedLabor
+        : 0,
+    selectedSteps: steps,
     skippedReasons: [...new Set(skippedReasons)],
   };
 }
