@@ -50,6 +50,8 @@ export interface TradePackMaterial {
 }
 
 export interface TradePackCraftData {
+  id?: number;
+  name?: string;
   labor: number;
   proficiency: string | null;
   materials: TradePackMaterial[];
@@ -64,6 +66,7 @@ export interface TradePackInputs {
   gildaStarValue?: number;
   larderCostPerPack?: number;
   larderLaborPerPack?: number;
+  deliveryPercentage?: number;
   turnInLabor?: number;
 }
 
@@ -76,7 +79,9 @@ export interface TradePackMetrics {
 }
 
 export interface TradePackResult {
+  rowKey: string;
   pack: TradePack;
+  craft: TradePackCraftData | null;
   metrics: TradePackMetrics;
 }
 
@@ -90,7 +95,14 @@ export interface TradePackRunSummary extends TradePackMetrics {
   count: number;
 }
 
+export interface TradePackCraftingRow {
+  key: string;
+  pack: TradePack;
+  craft: TradePackCraftData | null;
+}
+
 const DEFAULT_TURN_IN_LABOR = 110;
+const MAX_DELIVERY_PERCENTAGE = 130;
 
 function getOverrideMap(input?: OverrideMap): OverrideMap {
   return input ?? new Map<number, number>();
@@ -103,6 +115,14 @@ function getProficiencyMap(input?: ProficiencyMap): ProficiencyMap {
 function getSilverPerLabor(profit: number, labor: number): number | null {
   if (labor <= 0) return null;
   return (profit * 100) / labor;
+}
+
+function getDeliveryMultiplier(deliveryPercentage?: number): number {
+  const percentage = Math.min(
+    MAX_DELIVERY_PERCENTAGE,
+    Math.max(0, deliveryPercentage ?? MAX_DELIVERY_PERCENTAGE),
+  );
+  return percentage / MAX_DELIVERY_PERCENTAGE;
 }
 
 export function getRewardUnitValue(
@@ -176,6 +196,7 @@ export function calculatePackMetrics(
   );
   const revenue =
     pack.payout *
+    getDeliveryMultiplier(inputs.deliveryPercentage) *
     getRewardUnitValue(pack.rewardItemName, {
       priceMap: inputs.priceMap,
       overrideMap,
@@ -235,6 +256,45 @@ export function filterTradePacks(
       (rewardItemName === "all" || pack.rewardItemName === rewardItemName)
     );
   });
+}
+
+export function getTradePackCraftingRows(
+  packs: TradePack[],
+  craftMap: Map<number, TradePackCraftData[]>,
+): TradePackCraftingRow[] {
+  return packs.flatMap((pack): TradePackCraftingRow[] => {
+    if (pack.isLarder || pack.isFreePack) {
+      return [
+        { key: getTradePackCraftingRowKey(pack, null), pack, craft: null },
+      ];
+    }
+
+    const crafts = craftMap.get(pack.itemId) ?? [];
+    if (crafts.length === 0) {
+      return [
+        { key: getTradePackCraftingRowKey(pack, null), pack, craft: null },
+      ];
+    }
+
+    return crafts.map((craft) => ({
+      key: getTradePackCraftingRowKey(pack, craft),
+      pack,
+      craft,
+    }));
+  });
+}
+
+export function getTradePackCraftingRowKey(
+  pack: TradePack,
+  craft: TradePackCraftData | null,
+): string {
+  return [
+    pack.itemId,
+    pack.name,
+    pack.destination,
+    pack.rewardItemName,
+    craft?.id ?? "none",
+  ].join(":");
 }
 
 export function getTopPacksByProfitSilverPerLabor(

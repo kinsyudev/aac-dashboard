@@ -15,6 +15,7 @@ import type {
   RewardItemName,
   TradePack,
   TradePackCraftData,
+  TradePackCraftingRow,
   TradePackFilters,
   TradePackMetrics,
   TradePackResult,
@@ -26,6 +27,7 @@ import {
   filterTradePacks,
   getTopPacksByProfitSilverPerLabor,
   getTopPacksByRevenue,
+  getTradePackCraftingRows,
   summarizePackRun,
 } from "~/lib/trade-packs";
 import { useTRPC } from "~/lib/trpc";
@@ -123,6 +125,7 @@ function TradePacksContent() {
   const [routeDestination, setRouteDestination] = useState("");
   const [selectedPackKey, setSelectedPackKey] = useState("");
   const [packCount, setPackCount] = useState("1");
+  const [routeDeliveryPercentage, setRouteDeliveryPercentage] = useState("130");
 
   const priceMap = useMemo<PriceMap>(
     () => new Map(data.prices.map((price) => [price.itemId, price])),
@@ -137,9 +140,20 @@ function TradePacksContent() {
       gildaStarValue: parseNonNegativeNumber(gildaStarValue, 4),
       larderCostPerPack: parseNonNegativeNumber(larderCostPerPack, 0),
       larderLaborPerPack: parseNonNegativeNumber(larderLaborPerPack, 75),
+      routeDeliveryPercentage: parseClampedNumber(
+        routeDeliveryPercentage,
+        130,
+        0,
+        130,
+      ),
       turnInLabor: STATIC_TURN_IN_LABOR,
     }),
-    [gildaStarValue, larderCostPerPack, larderLaborPerPack],
+    [
+      gildaStarValue,
+      larderCostPerPack,
+      larderLaborPerPack,
+      routeDeliveryPercentage,
+    ],
   );
   const filteredPacks = useMemo(() => {
     const filters: TradePackFilters = {
@@ -149,12 +163,15 @@ function TradePacksContent() {
     };
     return filterByPackType(filterTradePacks(allPacks, filters), packType);
   }, [destination, origin, packType, rewardItemName]);
+  const filteredPackRows = useMemo(
+    () => getTradePackCraftingRows(filteredPacks, craftMap),
+    [craftMap, filteredPacks],
+  );
   const calculationRows = useMemo(
     () =>
-      filteredPacks.map((pack) =>
+      filteredPackRows.map((row) =>
         calculatePackSafely({
-          pack,
-          craftMap,
+          row,
           priceMap,
           overrideMap,
           proficiencyMap,
@@ -165,8 +182,7 @@ function TradePacksContent() {
         }),
       ),
     [
-      craftMap,
-      filteredPacks,
+      filteredPackRows,
       numericInputs.gildaStarValue,
       numericInputs.larderCostPerPack,
       numericInputs.larderLaborPerPack,
@@ -215,33 +231,33 @@ function TradePacksContent() {
     : (routeDestinationOptions[0] ?? "");
   const packsForRoute = useMemo(
     () =>
-      filteredPacks.filter(
-        (pack) =>
-          pack.origin === effectiveRouteOrigin &&
-          pack.destination === effectiveRouteDestination,
+      filteredPackRows.filter(
+        (row) =>
+          row.pack.origin === effectiveRouteOrigin &&
+          row.pack.destination === effectiveRouteDestination,
       ),
-    [effectiveRouteDestination, effectiveRouteOrigin, filteredPacks],
+    [effectiveRouteDestination, effectiveRouteOrigin, filteredPackRows],
   );
   const routeCalculationRows = useMemo(
     () =>
-      packsForRoute.map((pack) =>
+      packsForRoute.map((row) =>
         calculatePackSafely({
-          pack,
-          craftMap,
+          row,
           priceMap,
           overrideMap,
           proficiencyMap,
           gildaStarValue: numericInputs.gildaStarValue,
           larderCostPerPack: numericInputs.larderCostPerPack,
           larderLaborPerPack: numericInputs.larderLaborPerPack,
+          deliveryPercentage: numericInputs.routeDeliveryPercentage,
           turnInLabor: numericInputs.turnInLabor,
         }),
       ),
     [
-      craftMap,
       numericInputs.gildaStarValue,
       numericInputs.larderCostPerPack,
       numericInputs.larderLaborPerPack,
+      numericInputs.routeDeliveryPercentage,
       numericInputs.turnInLabor,
       overrideMap,
       packsForRoute,
@@ -261,7 +277,7 @@ function TradePacksContent() {
   );
   const selectedPack = useMemo(() => {
     const matchingPack = packsForRoute.find(
-      (pack) => getPackKey(pack) === selectedPackKey,
+      (row) => row.key === selectedPackKey,
     );
     return matchingPack ?? packsForRoute[0] ?? null;
   }, [packsForRoute, selectedPackKey]);
@@ -269,22 +285,22 @@ function TradePacksContent() {
     () =>
       selectedPack
         ? calculatePackSafely({
-            pack: selectedPack,
-            craftMap,
+            row: selectedPack,
             priceMap,
             overrideMap,
             proficiencyMap,
             gildaStarValue: numericInputs.gildaStarValue,
             larderCostPerPack: numericInputs.larderCostPerPack,
             larderLaborPerPack: numericInputs.larderLaborPerPack,
+            deliveryPercentage: numericInputs.routeDeliveryPercentage,
             turnInLabor: numericInputs.turnInLabor,
           })
         : null,
     [
-      craftMap,
       numericInputs.gildaStarValue,
       numericInputs.larderCostPerPack,
       numericInputs.larderLaborPerPack,
+      numericInputs.routeDeliveryPercentage,
       numericInputs.turnInLabor,
       overrideMap,
       priceMap,
@@ -433,7 +449,7 @@ function TradePacksContent() {
           </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.5fr_auto_0.5fr]">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.5fr_0.75fr_auto_0.5fr]">
           <SelectField
             id="route-origin-selector"
             label="Origin"
@@ -464,12 +480,22 @@ function TradePacksContent() {
           <SelectField
             id="pack-selector"
             label="Pack"
-            value={selectedPack ? getPackKey(selectedPack) : ""}
+            value={selectedPack?.key ?? ""}
             onChange={setSelectedPackKey}
-            options={packsForRoute.map((pack) => ({
-              value: getPackKey(pack),
-              label: `${pack.name} - ${pack.rewardItemName}`,
+            options={packsForRoute.map((row) => ({
+              value: row.key,
+              label: getPackRowLabel(row),
             }))}
+          />
+          <NumberField
+            id="route-delivery-percentage"
+            label="Delivery %"
+            helpText="Scales route revenue from the 130% payout baseline. Values are capped between 0% and 130%."
+            value={routeDeliveryPercentage}
+            onChange={setRouteDeliveryPercentage}
+            min={0}
+            max={130}
+            step="1"
           />
           <div className="flex items-end">
             <Button
@@ -479,7 +505,7 @@ function TradePacksContent() {
               disabled={bestRouteResult === null}
               onClick={() => {
                 if (bestRouteResult === null) return;
-                setSelectedPackKey(getPackKey(bestRouteResult.pack));
+                setSelectedPackKey(bestRouteResult.rowKey);
               }}
             >
               <Trophy className="size-4" aria-hidden="true" />
@@ -505,6 +531,11 @@ function TradePacksContent() {
               <Badge variant="secondary">
                 {selectedCalculation.result.pack.rewardItemName}
               </Badge>
+              {selectedCalculation.result.craft?.name ? (
+                <Badge variant="outline">
+                  {selectedCalculation.result.craft.name}
+                </Badge>
+              ) : null}
               {selectedCalculation.result.pack.isLarder ? (
                 <Badge variant="outline">Larder</Badge>
               ) : null}
@@ -532,6 +563,7 @@ function NumberField({
   value,
   onChange,
   min,
+  max,
   step,
 }: {
   id: string;
@@ -540,6 +572,7 @@ function NumberField({
   value: string;
   onChange: (value: string) => void;
   min?: number;
+  max?: number;
   step?: string;
 }) {
   return (
@@ -553,6 +586,7 @@ function NumberField({
         type="number"
         inputMode="decimal"
         min={min}
+        max={max}
         step={step}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -643,16 +677,18 @@ function RankingTable({
           <tbody>
             {rows.length > 0 ? (
               rows.map((row, index) => (
-                <tr
-                  key={`${getPackKey(row.pack)}-${index}`}
-                  className="border-t"
-                >
+                <tr key={`${row.rowKey}-${index}`} className="border-t">
                   <Td>{index + 1}</Td>
                   <Td>
                     <div className="font-medium">{row.pack.name}</div>
                     <div className="text-muted-foreground text-xs">
                       Item {row.pack.itemId}
                     </div>
+                    {row.craft?.name ? (
+                      <div className="text-muted-foreground text-xs">
+                        {row.craft.name}
+                      </div>
+                    ) : null}
                   </Td>
                   <Td>
                     <Badge variant="outline">{row.pack.rewardItemName}</Badge>
@@ -748,54 +784,59 @@ function buildCraftMap(
   craftsByItemId: Record<
     number,
     {
-      craft: { id: number; labor: number; proficiency: string | null };
+      craft: {
+        id: number;
+        name: string;
+        labor: number;
+        proficiency: string | null;
+      };
       materials: { item: { id: number }; amount: number }[];
     }[]
   >,
-): Map<number, TradePackCraftData> {
-  const craftMap = new Map<number, TradePackCraftData>();
+): Map<number, TradePackCraftData[]> {
+  const craftMap = new Map<number, TradePackCraftData[]>();
   for (const [itemId, entries] of Object.entries(craftsByItemId)) {
-    const entry = [...entries].sort(
-      (left, right) => left.craft.id - right.craft.id,
-    )[0];
-    if (!entry) continue;
-    craftMap.set(Number(itemId), {
-      labor: entry.craft.labor,
-      proficiency: entry.craft.proficiency,
-      materials: entry.materials.map((material) => ({
-        itemId: material.item.id,
-        amount: material.amount,
-      })),
-    });
+    const crafts = [...entries]
+      .sort((left, right) => left.craft.id - right.craft.id)
+      .map((entry) => ({
+        id: entry.craft.id,
+        name: entry.craft.name,
+        labor: entry.craft.labor,
+        proficiency: entry.craft.proficiency,
+        materials: entry.materials.map((material) => ({
+          itemId: material.item.id,
+          amount: material.amount,
+        })),
+      }));
+    if (crafts.length > 0) {
+      craftMap.set(Number(itemId), crafts);
+    }
   }
   return craftMap;
 }
 
 function calculatePackSafely({
-  pack,
-  craftMap,
+  row,
   priceMap,
   overrideMap,
   proficiencyMap,
   gildaStarValue,
   larderCostPerPack,
   larderLaborPerPack,
+  deliveryPercentage,
   turnInLabor,
 }: {
-  pack: TradePack;
-  craftMap: Map<number, TradePackCraftData>;
+  row: TradePackCraftingRow;
   priceMap: PriceMap;
   overrideMap: Map<number, number>;
   proficiencyMap: Map<string, number>;
   gildaStarValue: number;
   larderCostPerPack: number;
   larderLaborPerPack: number;
+  deliveryPercentage?: number;
   turnInLabor: number;
 }): { result: TradePackResult | null; unavailableReason?: string } {
-  const craft =
-    pack.isLarder || pack.isFreePack
-      ? null
-      : (craftMap.get(pack.itemId) ?? null);
+  const { pack, craft } = row;
 
   if (!pack.isLarder && !pack.isFreePack && craft === null) {
     return {
@@ -814,10 +855,11 @@ function calculatePackSafely({
       gildaStarValue,
       larderCostPerPack,
       larderLaborPerPack,
+      deliveryPercentage,
       turnInLabor,
     });
 
-    return { result: { pack, metrics } };
+    return { result: { rowKey: row.key, pack, craft, metrics } };
   } catch (error) {
     if (
       error instanceof Error &&
@@ -876,10 +918,26 @@ function getPackKey(pack: TradePack): string {
   ].join(":");
 }
 
+function getPackRowLabel(row: TradePackCraftingRow): string {
+  const baseLabel = `${row.pack.name} - ${row.pack.rewardItemName}`;
+  return row.craft?.name ? `${baseLabel} - ${row.craft.name}` : baseLabel;
+}
+
 function parseNonNegativeNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(0, parsed);
+}
+
+function parseClampedNumber(
+  value: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 function parsePositiveInteger(value: string, fallback: number): number {

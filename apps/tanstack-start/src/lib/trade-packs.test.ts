@@ -28,6 +28,7 @@ const {
   calculateMaterialCost,
   calculatePackMetrics,
   filterTradePacks,
+  getTradePackCraftingRows,
   getRewardUnitValue,
   getTopPacksByProfitSilverPerLabor,
   getTopPacksByRevenue,
@@ -171,6 +172,32 @@ void test("calculatePackMetrics uses buy-price materials and Commerce turn-in la
   assert.equal(metrics.silverPerLabor, (13.5 * 100) / 235);
 });
 
+void test("calculatePackMetrics scales revenue by delivery percentage capped from 0 to 130", () => {
+  const halfDeliveryMetrics = calculatePackMetrics({
+    pack: basePack,
+    craft: baseCraft,
+    priceMap,
+    deliveryPercentage: 65,
+  });
+  const overCapMetrics = calculatePackMetrics({
+    pack: basePack,
+    craft: baseCraft,
+    priceMap,
+    deliveryPercentage: 140,
+  });
+  const underCapMetrics = calculatePackMetrics({
+    pack: basePack,
+    craft: baseCraft,
+    priceMap,
+    deliveryPercentage: -10,
+  });
+
+  assert.equal(halfDeliveryMetrics.revenue, 9.75);
+  assert.equal(halfDeliveryMetrics.profit, 3.75);
+  assert.equal(overCapMetrics.revenue, 19.5);
+  assert.equal(underCapMetrics.revenue, 0);
+});
+
 void test("calculatePackMetrics throws when normal pack craft data is missing", () => {
   assert.throws(
     () =>
@@ -307,9 +334,46 @@ void test("filterTradePacks filters by origin, destination, and reward item name
   assert.equal(filterTradePacks(packs, { origin: "all" }).length, 3);
 });
 
+void test("getTradePackCraftingRows duplicates normal packs for each craft variant", () => {
+  const rows = getTradePackCraftingRows(
+    [basePack],
+    new Map([
+      [
+        basePack.itemId,
+        [
+          { ...baseCraft, id: 10, name: "Solis Alchemy Oil" },
+          { ...baseCraft, id: 20, name: "Solis Alchemy Oil (Resident Only)" },
+        ],
+      ],
+    ]),
+  );
+
+  assert.deepEqual(
+    rows.map((row) => ({
+      key: row.key,
+      craftId: row.craft?.id,
+      craftName: row.craft?.name,
+    })),
+    [
+      {
+        key: "31842:Solis Alchemy Oil:Arcum Iris:Gold:10",
+        craftId: 10,
+        craftName: "Solis Alchemy Oil",
+      },
+      {
+        key: "31842:Solis Alchemy Oil:Arcum Iris:Gold:20",
+        craftId: 20,
+        craftName: "Solis Alchemy Oil (Resident Only)",
+      },
+    ],
+  );
+});
+
 void test("rankings sort by profit silver per labor and single-pack revenue", () => {
   const lowerRevenueBetterProfitLabor = {
+    rowKey: "lean",
     pack: { ...basePack, name: "Lean Pack" },
+    craft: baseCraft,
     metrics: {
       revenue: 15,
       cost: 1,
@@ -319,7 +383,9 @@ void test("rankings sort by profit silver per labor and single-pack revenue", ()
     },
   };
   const higherRevenueWorseProfitLabor = {
+    rowKey: "rich",
     pack: { ...basePack, name: "Rich Pack" },
+    craft: baseCraft,
     metrics: {
       revenue: 30,
       cost: 25,
