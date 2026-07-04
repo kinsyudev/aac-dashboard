@@ -879,6 +879,14 @@ function RegradePage() {
     ) ??
     defaultProjectionStep ??
     null;
+  const projectionStepIndex = projectionStep
+    ? projectionSteps.findIndex(
+        (step) =>
+          getProjectionStepKey(step) === getProjectionStepKey(projectionStep),
+      )
+    : -1;
+  const projectionContinuationSteps =
+    projectionStepIndex >= 0 ? projectionSteps.slice(projectionStepIndex) : [];
   const projectionTargetGrades = projectionStep
     ? [...new Set([projectionStep.normalToGrade, projectionStep.greatToGrade])]
         .filter((grade) => Number.isFinite(grade))
@@ -904,6 +912,7 @@ function RegradePage() {
           projectionStep,
           effectiveProjectionTargetGrade,
           projectionTargetCount,
+          projectionContinuationSteps,
         )
       : null;
 
@@ -1456,9 +1465,13 @@ function RegradePage() {
                               </>
                             ) : null}
                           </div>
-                          <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
                             <ProjectionStat
-                              label="Needed taps"
+                              label="Starting taps"
+                              value={tapProjection.requiredStartingTaps}
+                            />
+                            <ProjectionStat
+                              label="Total taps"
                               value={tapProjection.requiredTaps}
                             />
                             <ProjectionStat
@@ -1469,24 +1482,47 @@ function RegradePage() {
                               value={tapProjection.expectedTargetOrBetter}
                             />
                             <ProjectionStat
-                              label={`Normal (${
-                                regradeData.grades[projectionStep.normalToGrade]
-                                  ?.name ??
-                                `Grade ${projectionStep.normalToGrade}`
-                              })`}
+                              label="Normal successes"
                               value={tapProjection.expectedNormalHits}
                             />
                             <ProjectionStat
-                              label={`Lucky (${
-                                regradeData.grades[projectionStep.greatToGrade]
-                                  ?.name ??
-                                `Grade ${projectionStep.greatToGrade}`
-                              })`}
+                              label="Lucky successes"
                               value={tapProjection.expectedLuckyHits}
                             />
                             <ProjectionStat
                               label="Failed taps"
                               value={tapProjection.expectedFailures}
+                            />
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <ProjectionBreakdown
+                              title="Tap stages"
+                              entries={tapProjection.tapBreakdown.map(
+                                (entry) => ({
+                                  key: entry.fromGrade,
+                                  label:
+                                    regradeData.grades[entry.fromGrade]?.name ??
+                                    `Grade ${entry.fromGrade}`,
+                                  value: entry.expectedTaps,
+                                }),
+                              )}
+                            />
+                            <ProjectionBreakdown
+                              title="Final outcomes"
+                              entries={tapProjection.gradeOutcomes.map(
+                                (entry) => ({
+                                  key: entry.grade,
+                                  label: `${
+                                    regradeData.grades[entry.grade]?.name ??
+                                    `Grade ${entry.grade}`
+                                  }${
+                                    entry.grade > tapProjection.targetGrade
+                                      ? " byproduct"
+                                      : ""
+                                  }`,
+                                  value: entry.expectedCount,
+                                }),
+                              )}
                             />
                           </div>
                         </div>
@@ -1538,6 +1574,41 @@ function ProjectionStat({ label, value }: { label: string; value: number }) {
       <div className="text-muted-foreground text-xs">{label}</div>
       <div className="mt-0.5 font-medium">
         {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      </div>
+    </div>
+  );
+}
+
+function ProjectionBreakdown({
+  title,
+  entries,
+}: {
+  title: string;
+  entries: { key: number; label: string; value: number }[];
+}) {
+  const visibleEntries = entries.filter((entry) => entry.value > 0.000001);
+
+  return (
+    <div className="rounded-md border px-3 py-2">
+      <div className="text-muted-foreground text-xs uppercase">{title}</div>
+      <div className="mt-2 space-y-1 text-sm">
+        {visibleEntries.length ? (
+          visibleEntries.map((entry) => (
+            <div
+              key={entry.key}
+              className="flex items-center justify-between gap-3"
+            >
+              <span>{entry.label}</span>
+              <span className="font-medium">
+                {entry.value.toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="text-muted-foreground">No expected outcomes.</div>
+        )}
       </div>
     </div>
   );

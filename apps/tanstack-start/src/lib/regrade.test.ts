@@ -464,6 +464,7 @@ void test("solver includes crafted consumable labor in regrade attempts", () => 
 void test("tap projection estimates taps needed for target grade", () => {
   const projection = getRegradeTapProjection(
     {
+      fromGrade: 8,
       normalToGrade: 9,
       greatToGrade: 10,
       successProbability: 0.3,
@@ -479,6 +480,53 @@ void test("tap projection estimates taps needed for target grade", () => {
   assert.ok(Math.abs(projection.expectedNormalHits - 0.8) < 1e-9);
   assert.ok(Math.abs(projection.expectedLuckyHits - 0.2) < 1e-9);
   assert.ok(Math.abs(projection.expectedFailures - 2.3333333333333335) < 1e-9);
+});
+
+void test("tap projection continues intermediate grades toward target", () => {
+  const projection = getRegradeTapProjection(
+    {
+      fromGrade: 7,
+      normalToGrade: 8,
+      greatToGrade: 9,
+      successProbability: 0.36,
+      greatProbability: 0.06,
+    },
+    9,
+    1,
+    [
+      {
+        fromGrade: 7,
+        normalToGrade: 8,
+        greatToGrade: 9,
+        successProbability: 0.36,
+        greatProbability: 0.06,
+      },
+      {
+        fromGrade: 8,
+        normalToGrade: 9,
+        greatToGrade: 10,
+        successProbability: 0.25,
+        greatProbability: 0.05,
+      },
+    ],
+  );
+
+  assert.ok(Math.abs(projection.targetProbability - 0.135) < 1e-9);
+  assert.ok(Math.abs(projection.requiredStartingTaps - 7.4074074074074066) < 1e-9);
+  assert.ok(Math.abs(projection.requiredTaps - 9.629629629629628) < 1e-9);
+  assert.ok(Math.abs(projection.expectedTargetOrBetter - 1) < 1e-9);
+  assert.ok(
+    Math.abs(
+      (projection.gradeOutcomes.find((outcome) => outcome.grade === 10)
+        ?.expectedCount ?? 0) - 0.1111111111111111,
+    ) < 1e-9,
+  );
+  assert.ok(
+    Math.abs(
+      (projection.tapBreakdown.find((entry) => entry.fromGrade === 8)
+        ?.expectedTaps ?? 0) - 2.222222222222222,
+    ) < 1e-9,
+  );
 });
 
 void test("effective selected target follows best EV when no target is pinned", () => {

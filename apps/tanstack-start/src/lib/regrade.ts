@@ -138,11 +138,25 @@ export interface RegradeTapProjection {
   targetGrade: number;
   desiredTargetCount: number;
   targetProbability: number;
+  requiredStartingTaps: number;
   requiredTaps: number;
   expectedNormalHits: number;
   expectedLuckyHits: number;
   expectedTargetOrBetter: number;
   expectedFailures: number;
+  tapBreakdown: RegradeTapProjectionTapBreakdownEntry[];
+  gradeOutcomes: RegradeTapProjectionGradeOutcome[];
+}
+
+export interface RegradeTapProjectionTapBreakdownEntry {
+  fromGrade: number;
+  expectedTaps: number;
+}
+
+export interface RegradeTapProjectionGradeOutcome {
+  grade: number;
+  expectedCount: number;
+  isTargetOrBetter: boolean;
 }
 
 export interface ExpectedRevenueBreakdownEntry {
@@ -467,38 +481,223 @@ function basisPointsToProbability(value: number): number {
 export function getRegradeTapProjection(
   step: Pick<
     RegradeActionChoice,
-    "normalToGrade" | "greatToGrade" | "successProbability" | "greatProbability"
+    | "fromGrade"
+    | "normalToGrade"
+    | "greatToGrade"
+    | "successProbability"
+    | "greatProbability"
   >,
   targetGrade: number,
   desiredTargetCount: number,
+  continuationSteps: readonly Pick<
+    RegradeActionChoice,
+    | "fromGrade"
+    | "normalToGrade"
+    | "greatToGrade"
+    | "successProbability"
+    | "greatProbability"
+  >[] = [step],
 ): RegradeTapProjection {
-  const normalProbability = Math.max(
-    0,
-    step.successProbability - step.greatProbability,
+  const perStartingTap = getRegradeTapProjectionUnitValue(
+    step,
+    targetGrade,
+    new Map(continuationSteps.map((entry) => [entry.fromGrade, entry])),
+    new Set(),
   );
-  const normalQualifies = step.normalToGrade >= targetGrade;
-  const luckyQualifies =
-    step.greatProbability > 0 && step.greatToGrade >= targetGrade;
-  const targetProbability =
-    (normalQualifies ? normalProbability : 0) +
-    (luckyQualifies ? step.greatProbability : 0);
   const desiredCount =
     Number.isFinite(desiredTargetCount) && desiredTargetCount > 0
       ? desiredTargetCount
       : 0;
-  const requiredTaps =
-    targetProbability > 0 ? desiredCount / targetProbability : 0;
+  const requiredStartingTaps =
+    perStartingTap.targetOrBetter > 0
+      ? desiredCount / perStartingTap.targetOrBetter
+      : 0;
+  const scale = requiredStartingTaps;
+  const tapBreakdown = [...perStartingTap.tapBreakdown.entries()]
+    .map(([fromGrade, expectedTaps]) => ({
+      fromGrade,
+      expectedTaps: expectedTaps * scale,
+    }))
+    .sort((left, right) => left.fromGrade - right.fromGrade);
+  const gradeOutcomes = [...perStartingTap.gradeOutcomes.entries()]
+    .map(([grade, expectedCount]) => ({
+      grade,
+      expectedCount: expectedCount * scale,
+      isTargetOrBetter: grade >= targetGrade,
+    }))
+    .sort((left, right) => left.grade - right.grade);
 
   return {
     targetGrade,
     desiredTargetCount: desiredCount,
-    targetProbability,
-    requiredTaps,
-    expectedNormalHits: requiredTaps * normalProbability,
-    expectedLuckyHits: requiredTaps * step.greatProbability,
-    expectedTargetOrBetter: requiredTaps * targetProbability,
-    expectedFailures: Math.max(0, requiredTaps * (1 - step.successProbability)),
+    targetProbability: perStartingTap.targetOrBetter,
+    requiredStartingTaps,
+    requiredTaps: tapBreakdown.reduce(
+      (sum, entry) => sum + entry.expectedTaps,
+      0,
+    ),
+    expectedNormalHits: requiredStartingTaps * perStartingTap.normalHits,
+    expectedLuckyHits: requiredStartingTaps * perStartingTap.luckyHits,
+    expectedTargetOrBetter: requiredStartingTaps * perStartingTap.targetOrBetter,
+    expectedFailures: requiredStartingTaps * perStartingTap.failures,
+    tapBreakdown,
+    gradeOutcomes,
   };
+}
+
+interface RegradeTapProjectionUnitValue {
+  targetOrBetter: number;
+  failures: number;
+  normalHits: number;
+  luckyHits: number;
+  tapBreakdown: Map<number, number>;
+  gradeOutcomes: Map<number, number>;
+}
+
+function getRegradeTapProjectionUnitValue(
+  step: Pick<
+    RegradeActionChoice,
+    | "fromGrade"
+    | "normalToGrade"
+    | "greatToGrade"
+    | "successProbability"
+    | "greatProbability"
+  >,
+  targetGrade: number,
+  continuationStepsByFromGrade: Map<
+    number,
+    Pick<
+      RegradeActionChoice,
+      | "fromGrade"
+      | "normalToGrade"
+      | "greatToGrade"
+      | "successProbability"
+      | "greatProbability"
+    >
+  >,
+  visitedFromGrades: Set<number>,
+): RegradeTapProjectionUnitValue {
+  const value: RegradeTapProjectionUnitValue = {
+    targetOrBetter: 0,
+    failures: Math.max(0, 1 - step.successProbability),
+    normalHits: 0,
+    luckyHits: 0,
+    tapBreakdown: new Map([[step.fromGrade, 1]]),
+    gradeOutcomes: new Map(),
+  };
+  const normalProbability = Math.max(
+    0,
+    step.successProbability - step.greatProbability,
+  );
+
+  addTapProjectionOutcome(
+    value,
+    step.normalToGrade,
+    normalProbability,
+    targetGrade,
+    continuationStepsByFromGrade,
+    visitedFromGrades,
+    "normal",
+  );
+  if (step.greatProbability > 0) {
+    addTapProjectionOutcome(
+      value,
+      step.greatToGrade,
+      step.greatProbability,
+      targetGrade,
+      continuationStepsByFromGrade,
+      visitedFromGrades,
+      "lucky",
+    );
+  }
+
+  return value;
+}
+
+function addTapProjectionOutcome(
+  value: RegradeTapProjectionUnitValue,
+  grade: number,
+  probability: number,
+  targetGrade: number,
+  continuationStepsByFromGrade: Map<
+    number,
+    Pick<
+      RegradeActionChoice,
+      | "fromGrade"
+      | "normalToGrade"
+      | "greatToGrade"
+      | "successProbability"
+      | "greatProbability"
+    >
+  >,
+  visitedFromGrades: Set<number>,
+  outcomeType: "normal" | "lucky",
+) {
+  if (probability <= 0) return;
+
+  if (outcomeType === "normal") {
+    value.normalHits += probability;
+  } else {
+    value.luckyHits += probability;
+  }
+
+  if (grade >= targetGrade || visitedFromGrades.has(grade)) {
+    addTapProjectionGradeOutcome(value, grade, probability, targetGrade);
+    return;
+  }
+
+  const continuationStep = continuationStepsByFromGrade.get(grade);
+  if (!continuationStep) {
+    addTapProjectionGradeOutcome(value, grade, probability, targetGrade);
+    return;
+  }
+
+  const continuationValue = getRegradeTapProjectionUnitValue(
+    continuationStep,
+    targetGrade,
+    continuationStepsByFromGrade,
+    new Set([...visitedFromGrades, continuationStep.fromGrade]),
+  );
+  mergeScaledTapProjectionValue(value, continuationValue, probability);
+}
+
+function addTapProjectionGradeOutcome(
+  value: RegradeTapProjectionUnitValue,
+  grade: number,
+  probability: number,
+  targetGrade: number,
+) {
+  value.gradeOutcomes.set(
+    grade,
+    (value.gradeOutcomes.get(grade) ?? 0) + probability,
+  );
+  if (grade >= targetGrade) {
+    value.targetOrBetter += probability;
+  }
+}
+
+function mergeScaledTapProjectionValue(
+  target: RegradeTapProjectionUnitValue,
+  source: RegradeTapProjectionUnitValue,
+  scale: number,
+) {
+  target.targetOrBetter += source.targetOrBetter * scale;
+  target.failures += source.failures * scale;
+  target.normalHits += source.normalHits * scale;
+  target.luckyHits += source.luckyHits * scale;
+
+  for (const [fromGrade, expectedTaps] of source.tapBreakdown) {
+    target.tapBreakdown.set(
+      fromGrade,
+      (target.tapBreakdown.get(fromGrade) ?? 0) + expectedTaps * scale,
+    );
+  }
+  for (const [grade, expectedCount] of source.gradeOutcomes) {
+    target.gradeOutcomes.set(
+      grade,
+      (target.gradeOutcomes.get(grade) ?? 0) + expectedCount * scale,
+    );
+  }
 }
 
 interface SolverValue {
