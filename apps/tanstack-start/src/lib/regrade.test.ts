@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import type {
@@ -76,6 +77,13 @@ void test("supported Obsidian bases include T1 only", () => {
     }),
     false,
   );
+});
+
+void test("regrade data import uses tracked app data", () => {
+  const source = readFileSync(new URL("./regrade.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /regrade_data\/regrade\.json/);
+  assert.match(source, /\.\.\/data\/regrade\.json/);
 });
 
 void test("supported Magnificent bases exclude non-crafted lookalikes", () => {

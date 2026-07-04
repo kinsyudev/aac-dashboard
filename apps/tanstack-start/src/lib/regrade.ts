@@ -1,4 +1,4 @@
-import regradeDataJson from "../../../../regrade_data/regrade.json" with { type: "json" };
+import regradeDataJson from "../data/regrade.json" with { type: "json" };
 
 export type RegradeItemType = "weapon" | "armor" | "accessory" | "pet" | "ship";
 
