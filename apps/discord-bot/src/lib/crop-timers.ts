@@ -33,7 +33,7 @@ export function parseGrowthTimerSeconds(description: string | null) {
   if (!description) return null;
 
   const clean = stripArcheAgeMarkup(description);
-  const match = clean.match(/Matures in approx\.\s+((?:\d+\s*[dhms]\s*)+)/i);
+  const match = /Matures in approx\.\s+((?:\d+\s*[dhms]\s*)+)/i.exec(clean);
   if (!match?.[1]) return null;
 
   return parseDurationSeconds(match[1]);

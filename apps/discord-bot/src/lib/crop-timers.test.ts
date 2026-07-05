@@ -34,6 +34,12 @@ const items = [
   },
 ];
 
+function getItemDescription(index: number) {
+  const item = items[index];
+  assert.ok(item);
+  return item.description;
+}
+
 function expectMatchId(
   value: ReturnType<typeof resolveCropAlias>,
   expectedId: number,
@@ -43,18 +49,21 @@ function expectMatchId(
   assert.equal(value.item.id, expectedId);
 }
 
-test("strips ArcheAge color markup", () => {
+void test("strips ArcheAge color markup", () => {
   assert.equal(stripArcheAgeMarkup("|cFFFF9C275 h 43 m|r"), "5 h 43 m");
 });
 
-test("parses growth timers from item descriptions", () => {
-  assert.equal(parseGrowthTimerSeconds(items[0]!.description), 43 * 60);
-  assert.equal(parseGrowthTimerSeconds(items[1]!.description), 5 * 60 * 60 + 43 * 60);
-  assert.equal(parseGrowthTimerSeconds(items[2]!.description), 2 * 60 * 60);
+void test("parses growth timers from item descriptions", () => {
+  assert.equal(parseGrowthTimerSeconds(getItemDescription(0)), 43 * 60);
+  assert.equal(
+    parseGrowthTimerSeconds(getItemDescription(1)),
+    5 * 60 * 60 + 43 * 60,
+  );
+  assert.equal(parseGrowthTimerSeconds(getItemDescription(2)), 2 * 60 * 60);
   assert.equal(parseGrowthTimerSeconds("No timer here"), null);
 });
 
-test("builds aliases for seed, bundle, and greenhouse items", () => {
+void test("builds aliases for seed, bundle, and greenhouse items", () => {
   const aliases = buildCropAliases(items);
 
   expectMatchId(resolveCropAlias(aliases, "carrot"), 15661);
@@ -64,7 +73,7 @@ test("builds aliases for seed, bundle, and greenhouse items", () => {
   expectMatchId(resolveCropAlias(aliases, "carrot greenhouse"), 35187);
 });
 
-test("rejects ambiguous aliases", () => {
+void test("rejects ambiguous aliases", () => {
   const aliases = buildCropAliases([
     ...items,
     { id: 1, name: "Blue Seed", description: "Matures in approx. 1 h" },
