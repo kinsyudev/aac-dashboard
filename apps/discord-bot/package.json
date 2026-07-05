@@ -1,0 +1,32 @@
+{
+  "name": "@acme/discord-bot",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "pnpm with-env tsx watch src/index.ts",
+    "start": "pnpm with-env tsx src/index.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config",
+    "with-env": "dotenv -e ../../.env --"
+  },
+  "dependencies": {
+    "@acme/db": "workspace:*",
+    "@sapphire/framework": "^5.3.6",
+    "@t3-oss/env-core": "catalog:",
+    "discord.js": "^14.19.3",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@acme/eslint-config": "workspace:*",
+    "@acme/prettier-config": "workspace:*",
+    "@acme/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "tsx": "4.21.0",
+    "typescript": "catalog:"
+  },
+  "prettier": "@acme/prettier-config"
+}
