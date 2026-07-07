@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, or } from "@acme/db";
+import { and, asc, eq, ilike, or, sql } from "@acme/db";
 import type { db as appDb } from "@acme/db/client";
 import {
   discordFarmCropOverrides,
@@ -215,7 +215,7 @@ export async function cancelTimerByShortId(input: {
         eq(discordFarmTimers.guildId, input.guildId),
         eq(discordFarmTimers.ownerDiscordUserId, input.ownerDiscordUserId),
         eq(discordFarmTimers.status, "pending"),
-        ilike(discordFarmTimers.id, `${input.shortId}%`),
+        ilike(sql<string>`${discordFarmTimers.id}::text`, `${input.shortId}%`),
       ),
     );
 
