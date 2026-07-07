@@ -107,3 +107,23 @@ Non-allowlisted users must be in the configured Discord server and hold the conf
 App roles are stored in the `app_user_role` table. Non-allowlisted users are auto-provisioned as `member` on first successful login. `admin` is assigned manually in the database for now.
 
 For more on the Better Auth CLI, see the [official docs](https://www.better-auth.com/docs/concepts/cli#generate).
+
+## Discord Farm Bot
+
+The farm bot lives in `apps/discord-bot` and runs as a single long-running worker.
+
+Required environment variables:
+
+- `DATABASE_URL`
+- `AAC_DISCORD_BOT_TOKEN`
+- `AAC_DISCORD_GUILD_ID` for development guild command registration when needed
+
+Useful commands:
+
+```bash
+pnpm -F @acme/discord-bot dev
+pnpm -F @acme/discord-bot start
+pnpm -F @acme/discord-bot test
+pnpm -F @acme/discord-bot typecheck
+pnpm -F @acme/discord-bot lint
+```
