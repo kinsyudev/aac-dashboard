@@ -1,10 +1,7 @@
 import { db } from "@acme/db/client";
 import { Command } from "@sapphire/framework";
-import {
-  ApplicationCommandOptionType,
-  ChannelType,
-  type ChatInputCommandInteraction,
-} from "discord.js";
+import { ChannelType } from "discord.js";
+import type { ChatInputCommandInteraction } from "discord.js";
 
 import { buildCropAliases, resolveCropAlias } from "../lib/crop-timers";
 import { parseDurationSeconds } from "../lib/duration";
@@ -55,6 +52,23 @@ export class PlantCommand extends Command {
     );
   }
 
+  public override async autocompleteRun(
+    interaction: Command.AutocompleteInteraction,
+  ) {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name !== "crop") return interaction.respond([]);
+
+    const seedItems = await findSeedItemsWithTimers(db);
+    const query = String(focused.value).toLowerCase();
+
+    return interaction.respond(
+      seedItems
+        .filter((item) => item.name.toLowerCase().includes(query))
+        .slice(0, 25)
+        .map((item) => ({ name: item.name, value: item.name })),
+    );
+  }
+
   public override async chatInputRun(interaction: ChatInputCommandInteraction) {
     if (!interaction.guildId) {
       return interaction.reply({
@@ -62,6 +76,7 @@ export class PlantCommand extends Command {
         ephemeral: true,
       });
     }
+    const { guildId } = interaction;
 
     const cropInput = interaction.options.getString("crop", true);
     const durationInput = interaction.options.getString("duration");
@@ -109,7 +124,7 @@ export class PlantCommand extends Command {
       ? await db.query.discordFarms.findFirst({
           where: (fields, { and, eq }) =>
             and(
-              eq(fields.guildId, interaction.guildId!),
+              eq(fields.guildId, guildId),
               eq(fields.ownerDiscordUserId, interaction.user.id),
               eq(fields.slug, farmSlug),
             ),
@@ -151,7 +166,7 @@ export class PlantCommand extends Command {
     const farmUser = await db.query.discordFarmUsers.findFirst({
       where: (fields, { and, eq }) =>
         and(
-          eq(fields.guildId, interaction.guildId!),
+          eq(fields.guildId, guildId),
           eq(fields.discordUserId, interaction.user.id),
         ),
     });
@@ -169,7 +184,7 @@ export class PlantCommand extends Command {
 
     const timer = await createFarmTimer({
       database: db,
-      guildId: interaction.guildId,
+      guildId,
       ownerDiscordUserId: interaction.user.id,
       userId,
       farmId: farm?.id ?? null,
