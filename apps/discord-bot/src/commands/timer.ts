@@ -1,5 +1,6 @@
 import { db } from "@acme/db/client";
 import { Command } from "@sapphire/framework";
+import { MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
 import { cancelTimerByShortId } from "../lib/timers";
@@ -28,7 +29,7 @@ export class TimerCommand extends Command {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Farm timers can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -36,7 +37,7 @@ export class TimerCommand extends Command {
     if (subcommand !== "cancel") {
       return interaction.reply({
         content: "Unknown timer command.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -54,7 +55,7 @@ export class TimerCommand extends Command {
         canceled == null
           ? `No active timer found for \`${shortId}\`.`
           : `Canceled timer \`${shortId}\`.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

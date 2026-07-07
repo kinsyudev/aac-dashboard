@@ -39,7 +39,7 @@ export function parseGrowthTimerSeconds(description: string | null) {
   return parseDurationSeconds(match[1]);
 }
 
-function normalizeAlias(input: string) {
+export function normalizeAlias(input: string) {
   return input.trim().toLowerCase().replaceAll(/\s+/g, " ");
 }
 
@@ -48,10 +48,12 @@ function cropBaseName(name: string) {
     .replace(/\s+Seed Bundle$/i, "")
     .replace(/\s+Seed$/i, "")
     .replace(/\s+Greenhouse$/i, "")
+    .replace(/\s+Sapling$/i, "")
+    .replace(/\s+Brazier(?:s)?$/i, "")
     .trim();
 }
 
-function aliasesForItem(name: string) {
+export function aliasesForItem(name: string) {
   const normalizedName = normalizeAlias(name);
   const base = normalizeAlias(cropBaseName(name));
   const aliases = new Set<string>([normalizedName]);
@@ -68,6 +70,17 @@ function aliasesForItem(name: string) {
 
   if (/ Greenhouse$/i.test(name)) {
     aliases.add(`${base} greenhouse`);
+  }
+
+  if (/ Sapling$/i.test(name)) {
+    aliases.add(base);
+    aliases.add(`${base} sapling`);
+  }
+
+  if (/ Brazier(?:s)?$/i.test(name)) {
+    aliases.add(base);
+    aliases.add(`${base} brazier`);
+    aliases.add(`${base} braziers`);
   }
 
   return Array.from(aliases);

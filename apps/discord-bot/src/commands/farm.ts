@@ -2,10 +2,11 @@ import { eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import { discordFarms } from "@acme/db/schema";
 import { Command } from "@sapphire/framework";
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
-import { buildCropAliases, resolveCropAlias } from "../lib/crop-timers";
+import { resolveCropAlias } from "../lib/crop-timers";
+import { findCropSuggestions, getCropCatalog } from "../lib/crop-catalog";
 import { parseDurationSeconds } from "../lib/duration";
 import {
   ensureDiscordFarmUser,
@@ -14,7 +15,6 @@ import {
   upsertFarmCropOverride,
 } from "../lib/farms";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
-import { findSeedItemsWithTimers } from "../lib/timers";
 
 export class FarmCommand extends Command {
   public override registerApplicationCommands(registry: Command.Registry) {
@@ -113,13 +113,8 @@ export class FarmCommand extends Command {
     const query = String(focused.value).toLowerCase();
 
     if (focused.name === "crop") {
-      const seedItems = await findSeedItemsWithTimers(db);
-      return interaction.respond(
-        seedItems
-          .filter((item) => item.name.toLowerCase().includes(query))
-          .slice(0, 25)
-          .map((item) => ({ name: item.name, value: item.name })),
-      );
+      const catalog = await getCropCatalog(db);
+      return interaction.respond(findCropSuggestions(catalog, query));
     }
 
     if (focused.name === "farm") {
@@ -147,7 +142,7 @@ export class FarmCommand extends Command {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Farm commands can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
     const { guildId } = interaction;
@@ -205,7 +200,7 @@ export class FarmCommand extends Command {
 
       return interaction.reply({
         content: `Saved farm \`${farm?.slug ?? slug}\`.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -224,7 +219,7 @@ export class FarmCommand extends Command {
           farms.length === 0
             ? "You have not added any farms."
             : farms.map((farm) => `\`${farm.slug}\` — ${farm.name}`).join("\n"),
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -242,7 +237,7 @@ export class FarmCommand extends Command {
     if (farmSlug != null && farm == null) {
       return interaction.reply({
         content: `You do not have a farm named \`${farmSlug}\`.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -258,7 +253,7 @@ export class FarmCommand extends Command {
 
       return interaction.reply({
         content: `Updated defaults for \`${farm.slug}\`.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -271,20 +266,17 @@ export class FarmCommand extends Command {
         return interaction.reply({
           content:
             "Duration must look like `45m`, `1h 30m`, `2d 4h`, or `3600s`, with a maximum of 14 days.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
-      const seedItems = await findSeedItemsWithTimers(db);
-      const crop = resolveCropAlias(
-        buildCropAliases(seedItems),
-        interaction.options.getString("crop", true),
-      );
+      const catalog = await getCropCatalog(db);
+      const crop = resolveCropAlias(catalog.aliases, interaction.options.getString("crop", true));
 
       if (crop == null || crop.kind === "ambiguous") {
         return interaction.reply({
           content: "That crop did not resolve to one seed, bundle, or greenhouse.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
@@ -297,7 +289,7 @@ export class FarmCommand extends Command {
 
       return interaction.reply({
         content: `Saved ${crop.item.name} override for \`${farm.slug}\`.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -312,13 +304,13 @@ export class FarmCommand extends Command {
         ]
           .filter((line): line is string => line != null && line.length > 0)
           .join("\n"),
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
     return interaction.reply({
       content: "Unknown farm command.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

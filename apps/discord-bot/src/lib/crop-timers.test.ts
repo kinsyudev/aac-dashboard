@@ -32,6 +32,16 @@ const items = [
     name: "Cucumber Seed",
     description: "Matures in approx. 10 m",
   },
+  {
+    id: 40001,
+    name: "Radiant Archeum Tree Sapling",
+    description: "Can be planted.\n\nMatures in approx. 16 h",
+  },
+  {
+    id: 40002,
+    name: "Regrade Brazier",
+    description: "Can be placed.\n\nMatures in approx. 12 h",
+  },
 ];
 
 function getItemDescription(index: number) {
@@ -71,6 +81,10 @@ void test("builds aliases for seed, bundle, and greenhouse items", () => {
   expectMatchId(resolveCropAlias(aliases, "carrot bundle"), 26449);
   expectMatchId(resolveCropAlias(aliases, "carrot seed bundle"), 26449);
   expectMatchId(resolveCropAlias(aliases, "carrot greenhouse"), 35187);
+  expectMatchId(resolveCropAlias(aliases, "radiant archeum tree"), 40001);
+  expectMatchId(resolveCropAlias(aliases, "radiant archeum tree sapling"), 40001);
+  expectMatchId(resolveCropAlias(aliases, "regrade"), 40002);
+  expectMatchId(resolveCropAlias(aliases, "regrade brazier"), 40002);
 });
 
 void test("rejects ambiguous aliases", () => {

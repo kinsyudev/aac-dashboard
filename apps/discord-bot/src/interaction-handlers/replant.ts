@@ -3,15 +3,16 @@ import {
   InteractionHandler,
   InteractionHandlerTypes,
 } from "@sapphire/framework";
+import { MessageFlags } from "discord.js";
 import type { ButtonInteraction } from "discord.js";
 
-import { buildCropAliases, resolveCropAlias } from "../lib/crop-timers";
+import { resolveCropAlias } from "../lib/crop-timers";
+import { getCropCatalog } from "../lib/crop-catalog";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
 import {
   chooseReplantDurationMode,
   createFarmTimer,
   findFarmCropOverride,
-  findSeedItemsWithTimers,
 } from "../lib/timers";
 
 export class ReplantInteractionHandler extends InteractionHandler {
@@ -41,7 +42,7 @@ export class ReplantInteractionHandler extends InteractionHandler {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Replant can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
     const { guildId } = interaction;
@@ -53,14 +54,14 @@ export class ReplantInteractionHandler extends InteractionHandler {
     if (original == null) {
       return interaction.reply({
         content: "The original timer could not be found.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
     if (original.ownerDiscordUserId !== interaction.user.id) {
       return interaction.reply({
         content: "Only the planting user can replant this timer.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -90,13 +91,13 @@ export class ReplantInteractionHandler extends InteractionHandler {
         durationSource = "farm_crop_override";
         explicitDurationSeconds = null;
       } else {
-        const seedItems = await findSeedItemsWithTimers(db);
-        const crop = resolveCropAlias(buildCropAliases(seedItems), original.cropName);
+        const catalog = await getCropCatalog(db);
+        const crop = resolveCropAlias(catalog.aliases, original.cropName);
         if (crop == null || crop.kind === "ambiguous") {
           return interaction.reply({
             content:
               "I could not recompute this crop timer. Run `/plant` manually with a duration.",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
         }
 
@@ -127,7 +128,7 @@ export class ReplantInteractionHandler extends InteractionHandler {
 
     return interaction.reply({
       content: `Replanted ${timer.cropName}. New timer \`${timer.id.slice(0, 8)}\` is ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

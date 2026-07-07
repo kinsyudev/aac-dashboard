@@ -5,6 +5,7 @@ import {
   buildTimerNotifications,
   chooseDuration,
   chooseReplantDurationMode,
+  isLikelyPlantableTimerItem,
   shortTimerId,
 } from "./timers";
 
@@ -122,5 +123,43 @@ void test("short timer id uses first eight uuid characters", () => {
   assert.equal(
     shortTimerId("12345678-90ab-cdef-1234-567890abcdef"),
     "12345678",
+  );
+});
+
+void test("plantable timer filter includes saplings and braziers", () => {
+  assert.equal(
+    isLikelyPlantableTimerItem({
+      name: "Radiant Archeum Tree Sapling",
+      description: "Plants an Archeum Tree that can convert Auroria Mineral Water into Archeum.",
+    }),
+    true,
+  );
+  assert.equal(
+    isLikelyPlantableTimerItem({
+      name: "Regrade Brazier",
+      description: "Places a Regrade Brazier imbued with the magic of Auroria.",
+    }),
+    true,
+  );
+  assert.equal(
+    isLikelyPlantableTimerItem({
+      name: "Clockwork Battery",
+      description: "Matures in approx. 12 h",
+    }),
+    false,
+  );
+  assert.equal(
+    isLikelyPlantableTimerItem({
+      name: "Radiant Archeum Tree Sapling",
+      description: null,
+    }),
+    false,
+  );
+  assert.equal(
+    isLikelyPlantableTimerItem({
+      name: "Lucky Sapling Pouch",
+      description: "Contains the following items.",
+    }),
+    false,
   );
 });

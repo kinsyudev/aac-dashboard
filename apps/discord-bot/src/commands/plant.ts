@@ -1,16 +1,20 @@
 import { db } from "@acme/db/client";
 import { Command } from "@sapphire/framework";
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
-import { buildCropAliases, resolveCropAlias } from "../lib/crop-timers";
+import { resolveCropAlias } from "../lib/crop-timers";
+import {
+  findCropSuggestions,
+  getCropCatalog,
+  resolveCatalogItem,
+} from "../lib/crop-catalog";
 import { parseDurationSeconds } from "../lib/duration";
 import { resolveReminderDefaults } from "../lib/farms";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
 import {
   createFarmTimer,
   findFarmCropOverride,
-  findSeedItemsWithTimers,
 } from "../lib/timers";
 
 export class PlantCommand extends Command {
@@ -58,25 +62,19 @@ export class PlantCommand extends Command {
     const focused = interaction.options.getFocused(true);
     if (focused.name !== "crop") return interaction.respond([]);
 
-    const seedItems = await findSeedItemsWithTimers(db);
-    const query = String(focused.value).toLowerCase();
-
-    return interaction.respond(
-      seedItems
-        .filter((item) => item.name.toLowerCase().includes(query))
-        .slice(0, 25)
-        .map((item) => ({ name: item.name, value: item.name })),
-    );
+    const catalog = await getCropCatalog(db);
+    return interaction.respond(findCropSuggestions(catalog, String(focused.value)));
   }
 
   public override async chatInputRun(interaction: ChatInputCommandInteraction) {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Farm timers can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
     const { guildId } = interaction;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const cropInput = interaction.options.getString("crop", true);
     const durationInput = interaction.options.getString("duration");
@@ -85,37 +83,54 @@ export class PlantCommand extends Command {
     const channel = interaction.options.getChannel("channel");
     const note = interaction.options.getString("note");
 
-    const seedItems = await findSeedItemsWithTimers(db);
-    const aliases = buildCropAliases(seedItems);
-    const crop = resolveCropAlias(aliases, cropInput);
+    const explicitDurationSeconds =
+      durationInput != null ? parseDurationSeconds(durationInput) : null;
 
-    if (crop == null) {
-      return interaction.reply({
-        content: `I do not have an in-game timer for "${cropInput}". Add a duration override like \`duration:45m\`.`,
-        ephemeral: true,
+    if (durationInput != null && explicitDurationSeconds == null) {
+      return interaction.editReply({
+        content:
+          "Duration must look like `45m`, `1h 30m`, `2d 4h`, or `3600s`, with a maximum of 14 days.",
       });
     }
 
-    if (crop.kind === "ambiguous") {
+    const catalog = await getCropCatalog(db);
+    const crop = resolveCropAlias(catalog.aliases, cropInput);
+    const exactItem = resolveCatalogItem(catalog, cropInput);
+
+    if (crop?.kind === "ambiguous") {
       const suggestions = crop.matches
         .slice(0, 5)
         .map((match) => match.item.name)
         .join(", ");
 
-      return interaction.reply({
+      return interaction.editReply({
         content: `That crop is ambiguous. Try one of: ${suggestions}.`,
-        ephemeral: true,
       });
     }
 
-    const explicitDurationSeconds =
-      durationInput != null ? parseDurationSeconds(durationInput) : null;
+    if (crop == null && exactItem?.kind === "ambiguous") {
+      const suggestions = exactItem.matches
+        .slice(0, 5)
+        .map((match) => match.name)
+        .join(", ");
 
-    if (durationInput != null && explicitDurationSeconds == null) {
-      return interaction.reply({
-        content:
-          "Duration must look like `45m`, `1h 30m`, `2d 4h`, or `3600s`, with a maximum of 14 days.",
-        ephemeral: true,
+      return interaction.editReply({
+        content: `That crop is ambiguous. Try one of: ${suggestions}.`,
+      });
+    }
+
+    if (crop == null && !(explicitDurationSeconds != null && exactItem?.kind === "match")) {
+      return interaction.editReply({
+        content: `I do not have an in-game timer for "${cropInput}". Add a duration override like \`duration:45m\`.`,
+      });
+    }
+
+    const resolvedItem =
+      crop?.item ??
+      (exactItem?.kind === "match" ? exactItem.item : null);
+    if (resolvedItem == null) {
+      return interaction.editReply({
+        content: `I do not have an in-game timer for "${cropInput}". Add a duration override like \`duration:45m\`.`,
       });
     }
 
@@ -132,16 +147,15 @@ export class PlantCommand extends Command {
       : null;
 
     if (farmSlug != null && farm == null) {
-      return interaction.reply({
+      return interaction.editReply({
         content: `You do not have a farm named \`${farmSlug}\`. Create it with \`/farm add\`.`,
-        ephemeral: true,
       });
     }
 
     const farmCropOverrideSeconds = await findFarmCropOverride({
       database: db,
       farmId: farm?.id ?? null,
-      itemId: crop.item.id,
+      itemId: resolvedItem.id,
     });
 
     const duration =
@@ -158,7 +172,7 @@ export class PlantCommand extends Command {
               explicitDurationSeconds: null,
             }
           : {
-              durationSeconds: crop.growthSeconds,
+              durationSeconds: crop?.growthSeconds ?? 0,
               source: "game_timer" as const,
               explicitDurationSeconds: null,
             };
@@ -188,8 +202,8 @@ export class PlantCommand extends Command {
       ownerDiscordUserId: interaction.user.id,
       userId,
       farmId: farm?.id ?? null,
-      cropItemId: crop.item.id,
-      cropName: crop.item.name,
+      cropItemId: resolvedItem.id,
+      cropName: resolvedItem.name,
       durationSeconds: duration.durationSeconds,
       durationSource: duration.source,
       explicitDurationSeconds: duration.explicitDurationSeconds,
@@ -201,9 +215,8 @@ export class PlantCommand extends Command {
       reminderMinutes: farmUser?.reminderMinutes ?? 15,
     });
 
-    return interaction.reply({
-      content: `Created timer \`${timer.id.slice(0, 8)}\` for ${crop.item.name}. It will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
-      ephemeral: true,
+    return interaction.editReply({
+      content: `Created timer \`${timer.id.slice(0, 8)}\` for ${resolvedItem.name}. It will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
     });
   }
 }

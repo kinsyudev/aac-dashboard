@@ -1,4 +1,4 @@
-import { relations, sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
 import {
   index,
   integer,
@@ -53,7 +53,7 @@ export const discordFarmUsers = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdateFn(() => sql`now()`),
+      .$onUpdate(() => /* @__PURE__ */ new Date()),
   },
   (table) => [
     primaryKey({ columns: [table.guildId, table.discordUserId] }),
@@ -85,7 +85,7 @@ export const discordFarms = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdateFn(() => sql`now()`),
+      .$onUpdate(() => /* @__PURE__ */ new Date()),
   },
   (table) => [
     uniqueIndex("idx_discord_farms_owner_slug").on(
@@ -113,7 +113,7 @@ export const discordFarmCropOverrides = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdateFn(() => sql`now()`),
+      .$onUpdate(() => /* @__PURE__ */ new Date()),
   },
   (table) => [
     primaryKey({ columns: [table.farmId, table.itemId] }),
@@ -162,7 +162,7 @@ export const discordFarmTimers = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdateFn(() => sql`now()`),
+      .$onUpdate(() => /* @__PURE__ */ new Date()),
   },
   (table) => [
     index("idx_discord_farm_timers_owner_status").on(
@@ -196,7 +196,7 @@ export const discordFarmNotifications = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdateFn(() => sql`now()`),
+      .$onUpdate(() => /* @__PURE__ */ new Date()),
   },
   (table) => [
     uniqueIndex("idx_discord_farm_notifications_timer_kind").on(

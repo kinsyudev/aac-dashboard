@@ -3,6 +3,7 @@ import { LogLevel, SapphireClient } from "@sapphire/framework";
 import { GatewayIntentBits } from "discord.js";
 
 import { botEnv } from "./env";
+import { initializeCropCatalog } from "./lib/crop-catalog";
 import { startFarmNotificationScheduler } from "./lib/scheduler";
 
 const env = botEnv();
@@ -20,4 +21,5 @@ client.once("ready", () => {
   startFarmNotificationScheduler({ database: db, client });
 });
 
+await initializeCropCatalog(db);
 await client.login(env.AAC_DISCORD_BOT_TOKEN);

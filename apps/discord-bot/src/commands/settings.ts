@@ -2,6 +2,7 @@ import { and, eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import { discordFarmUsers } from "@acme/db/schema";
 import { Command } from "@sapphire/framework";
+import { MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
 import { ensureDiscordFarmUser } from "../lib/farms";
@@ -36,7 +37,7 @@ export class SettingsCommand extends Command {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Settings can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -68,7 +69,7 @@ export class SettingsCommand extends Command {
           reminderMinutes === 0
             ? "Advance reminders disabled."
             : `Advance reminders set to ${reminderMinutes} minutes.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -87,13 +88,13 @@ export class SettingsCommand extends Command {
             ? `Default channel: <#${farmUser.defaultChannelId}>`
             : "Default channel: current / farm / command channel",
         ].join("\n"),
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
     return interaction.reply({
       content: "Unknown settings command.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

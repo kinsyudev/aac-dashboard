@@ -1,5 +1,6 @@
 import { db } from "@acme/db/client";
 import { Command } from "@sapphire/framework";
+import { MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
 import { listActiveTimers, shortTimerId } from "../lib/timers";
@@ -15,7 +16,7 @@ export class TimersCommand extends Command {
     if (!interaction.guildId) {
       return interaction.reply({
         content: "Farm timers can only be used inside a Discord server.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -28,7 +29,7 @@ export class TimersCommand extends Command {
     if (timers.length === 0) {
       return interaction.reply({
         content: "You do not have any active farm timers.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -40,7 +41,7 @@ export class TimersCommand extends Command {
           return `\`${shortTimerId(timer.id)}\` ${timer.cropName}${farm}: <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>${note}`;
         })
         .join("\n"),
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

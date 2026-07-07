@@ -82,6 +82,18 @@ export function shortTimerId(id: string) {
   return id.slice(0, 8);
 }
 
+export function isLikelyPlantableTimerItem(input: {
+  name: string;
+  description: string | null;
+}) {
+  if (input.description == null) return false;
+  if (!/Seed(?: Bundle)?$|Greenhouse$|Sapling$|Brazier(?:s)?$/i.test(input.name)) {
+    return false;
+  }
+
+  return /(?:^|\s)(Plants?|Places?)\b/i.test(input.description);
+}
+
 export async function findFarmCropOverride(input: {
   database: typeof appDb;
   farmId: string | null;
@@ -228,7 +240,7 @@ export async function cancelTimerByShortId(input: {
 }
 
 export async function findSeedItemsWithTimers(database: typeof appDb) {
-  return database
+  const candidateItems = await database
     .select({
       id: items.id,
       name: items.name,
@@ -236,14 +248,15 @@ export async function findSeedItemsWithTimers(database: typeof appDb) {
     })
     .from(items)
     .where(
-      and(
-        eq(items.category, "Seed"),
-        or(
-          ilike(items.description, "%Matures in approx.%"),
-          ilike(items.name, "%Seed%"),
-          ilike(items.name, "%Greenhouse%"),
-        ),
+      or(
+        ilike(items.name, "%Seed%"),
+        ilike(items.name, "%Bundle%"),
+        ilike(items.name, "%Greenhouse%"),
+        ilike(items.name, "%Sapling%"),
+        ilike(items.name, "%Brazier%"),
       ),
     )
     .orderBy(asc(items.name));
+
+  return candidateItems.filter((item) => isLikelyPlantableTimerItem(item));
 }
