@@ -5,9 +5,9 @@ import {
   discordFarmNotifications,
   discordFarmTimers,
   discordFarms,
-  farmTimerDurationSourceEnum,
   items,
 } from "@acme/db/schema";
+import type { farmTimerDurationSourceEnum } from "@acme/db/schema";
 
 export type DurationSource =
   (typeof farmTimerDurationSourceEnum.enumValues)[number];

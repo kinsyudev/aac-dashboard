@@ -7,6 +7,7 @@ import {
 } from "@acme/db/schema";
 import type { SapphireClient } from "@sapphire/framework";
 
+import { logSchedulerEvent } from "./logging";
 import { buildReminderMessage } from "./messages";
 
 const MAX_DELIVERY_ATTEMPTS = 5;
@@ -20,6 +21,7 @@ export async function pollDueFarmNotifications(input: {
   client: SapphireClient;
   now?: Date;
 }) {
+  const startedAt = Date.now();
   const now = input.now ?? new Date();
 
   const dueRows = await input.database
@@ -54,13 +56,30 @@ export async function pollDueFarmNotifications(input: {
     .orderBy(asc(discordFarmNotifications.notifyAt))
     .limit(25);
 
+  logSchedulerEvent(input.client.logger, {
+    event: "scheduler_poll",
+    dueCount: dueRows.length,
+    durationMs: Date.now() - startedAt,
+  });
+
   for (const row of dueRows) {
     if (!shouldRetryNotification({ attemptCount: row.notificationAttemptCount })) {
       await markNotificationFailed(input.database, row.notificationId, now, "Max delivery attempts reached.");
+      logSchedulerEvent(input.client.logger, {
+        event: "notification_give_up",
+        timerId: row.timerId,
+        notificationId: row.notificationId,
+        notificationKind: row.notificationKind,
+        guildId: row.guildId,
+        channelId: row.reminderChannelId,
+        attemptCount: row.notificationAttemptCount,
+        error: "Max delivery attempts reached.",
+      });
       continue;
     }
 
     try {
+      const attemptStartedAt = Date.now();
       const channel = await input.client.channels.fetch(row.reminderChannelId);
       if (!channel?.isSendable()) {
         throw new Error(
@@ -112,6 +131,17 @@ export async function pollDueFarmNotifications(input: {
           })
           .where(eq(discordFarmTimers.id, row.timerId));
       }
+
+      logSchedulerEvent(input.client.logger, {
+        event: "notification_delivered",
+        timerId: row.timerId,
+        notificationId: row.notificationId,
+        notificationKind: row.notificationKind,
+        guildId: row.guildId,
+        channelId: row.reminderChannelId,
+        attemptCount: row.notificationAttemptCount + 1,
+        durationMs: Date.now() - attemptStartedAt,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await recordNotificationAttemptFailure(input.database, {
@@ -121,6 +151,20 @@ export async function pollDueFarmNotifications(input: {
         error: message,
         isReadyNotification: row.notificationKind === "ready",
         nextAttemptCount: row.notificationAttemptCount + 1,
+      });
+
+      logSchedulerEvent(input.client.logger, {
+        event:
+          row.notificationAttemptCount + 1 >= MAX_DELIVERY_ATTEMPTS
+            ? "notification_give_up"
+            : "notification_failed",
+        timerId: row.timerId,
+        notificationId: row.notificationId,
+        notificationKind: row.notificationKind,
+        guildId: row.guildId,
+        channelId: row.reminderChannelId,
+        attemptCount: row.notificationAttemptCount + 1,
+        error,
       });
     }
   }
@@ -193,12 +237,18 @@ export function startFarmNotificationScheduler(input: {
     try {
       await pollDueFarmNotifications(input);
     } catch (error) {
-      input.client.logger.error(error);
+      logSchedulerEvent(input.client.logger, {
+        event: "scheduler_failed",
+        error,
+      });
     } finally {
       inFlight = false;
     }
   };
 
+  logSchedulerEvent(input.client.logger, {
+    event: "scheduler_started",
+  });
   void run();
   return setInterval(() => {
     void run();
