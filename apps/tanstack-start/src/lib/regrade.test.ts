@@ -512,7 +512,9 @@ void test("tap projection continues intermediate grades toward target", () => {
   );
 
   assert.ok(Math.abs(projection.targetProbability - 0.135) < 1e-9);
-  assert.ok(Math.abs(projection.requiredStartingTaps - 7.4074074074074066) < 1e-9);
+  assert.ok(
+    Math.abs(projection.requiredStartingTaps - 7.4074074074074066) < 1e-9,
+  );
   assert.ok(Math.abs(projection.requiredTaps - 9.629629629629628) < 1e-9);
   assert.ok(Math.abs(projection.expectedTargetOrBetter - 1) < 1e-9);
   assert.ok(

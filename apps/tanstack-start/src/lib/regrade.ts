@@ -538,7 +538,8 @@ export function getRegradeTapProjection(
     ),
     expectedNormalHits: requiredStartingTaps * perStartingTap.normalHits,
     expectedLuckyHits: requiredStartingTaps * perStartingTap.luckyHits,
-    expectedTargetOrBetter: requiredStartingTaps * perStartingTap.targetOrBetter,
+    expectedTargetOrBetter:
+      requiredStartingTaps * perStartingTap.targetOrBetter,
     expectedFailures: requiredStartingTaps * perStartingTap.failures,
     tapBreakdown,
     gradeOutcomes,
