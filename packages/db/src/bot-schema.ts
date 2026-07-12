@@ -31,10 +31,12 @@ export const farmNotificationKindEnum = pgEnum("farm_notification_kind", [
   "ready",
 ]);
 
-export const farmNotificationStatusEnum = pgEnum(
-  "farm_notification_status",
-  ["pending", "delivered", "failed", "skipped"],
-);
+export const farmNotificationStatusEnum = pgEnum("farm_notification_status", [
+  "pending",
+  "delivered",
+  "failed",
+  "skipped",
+]);
 
 export const discordFarmUsers = pgTable(
   "discord_farm_users",
@@ -151,7 +153,9 @@ export const discordFarmTimers = pgTable(
     status: farmTimerStatusEnum("status").notNull().default("pending"),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
-    deliveryAttemptCount: integer("delivery_attempt_count").notNull().default(0),
+    deliveryAttemptCount: integer("delivery_attempt_count")
+      .notNull()
+      .default(0),
     lastDeliveryAttemptAt: timestamp("last_delivery_attempt_at", {
       withTimezone: true,
     }),

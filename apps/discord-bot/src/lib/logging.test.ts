@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { BotLogger } from "./logging";
 import {
   logInteractionError,
   logInteractionFinish,
   logInteractionStart,
   logSchedulerEvent,
 } from "./logging";
-import type { BotLogger } from "./logging";
 
 function createLogger() {
   const entries: { level: string; payload: Record<string, unknown> }[] = [];
@@ -30,6 +30,14 @@ function createLogger() {
   };
 
   return { logger, entries };
+}
+
+function firstEntry(
+  entries: { level: string; payload: Record<string, unknown> }[],
+) {
+  const entry = entries[0];
+  assert.ok(entry);
+  return entry;
 }
 
 void test("logs interaction start with normalized option payloads", () => {
@@ -88,9 +96,10 @@ void test("logs interaction finish with outcome and result metadata", () => {
     },
   });
 
-  assert.equal(entries[0].level, "info");
-  assert.match(String(entries[0].payload.timestamp), /^\d{4}-\d{2}-\d{2}T/);
-  assert.deepEqual(entries[0].payload.result, {
+  const entry = firstEntry(entries);
+  assert.equal(entry.level, "info");
+  assert.match(String(entry.payload.timestamp), /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(entry.payload.result, {
     timerId: "abc123",
     readyAt: "2026-07-09T12:00:00.000Z",
   });
@@ -109,13 +118,11 @@ void test("logs serialized errors for failed interactions", () => {
     error: new Error("boom"),
   });
 
-  assert.equal(entries[0].level, "error");
-  assert.match(String(entries[0].payload.timestamp), /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(entries[0].payload.event, "interaction_failed");
-  assert.equal(
-    (entries[0].payload.error as { message?: string }).message,
-    "boom",
-  );
+  const entry = firstEntry(entries);
+  assert.equal(entry.level, "error");
+  assert.match(String(entry.payload.timestamp), /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(entry.payload.event, "interaction_failed");
+  assert.equal((entry.payload.error as { message?: string }).message, "boom");
 });
 
 void test("logs scheduler delivery events", () => {
