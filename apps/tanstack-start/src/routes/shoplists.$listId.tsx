@@ -1,5 +1,6 @@
+import type { inferProcedureOutput } from "@trpc/server";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -8,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
+import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import {
   DropdownMenu,
@@ -19,7 +21,28 @@ import {
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
+import type {
+  ModesMap,
+  PriceMap,
+  SelectedCraftMap,
+} from "~/lib/craft-optimizer";
 import { ItemIcon } from "~/component/item-icon";
+import { ProficiencyBadge } from "~/component/proficiency";
+import {
+  CraftModeToggle,
+  RecipeCardShell,
+  RecipeCollapseToggle,
+  RecipeHeader,
+  RecipeItemRow,
+  RecipeLegend,
+} from "~/component/recipe-breakdown";
+import {
+  buildCraftRequirementSummary,
+  computeManualCraftMetrics,
+  getItemPrice,
+  getSelectedEntry,
+  MAX_CRAFT_DEPTH,
+} from "~/lib/craft-optimizer";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
@@ -46,37 +69,13 @@ const COIN_ITEM_ID = 500;
 const STOCK_INPUT_CLASS_NAME =
   "bg-background w-24 rounded-md border px-3 py-1.5 text-sm tabular-nums";
 
-function coerceFiniteNumber(value: number | string | null | undefined) {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-  const parsed = Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function parseFinitePrice(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function getMarketPrice(
-  price:
-    | {
-        avg24h: string | null;
-        avg7d: string | null;
-        avg30d: string | null;
-      }
-    | null
-    | undefined,
-) {
-  return (
-    parseFinitePrice(price?.avg24h) ??
-    parseFinitePrice(price?.avg7d) ??
-    parseFinitePrice(price?.avg30d) ??
-    0
-  );
-}
+type ForItemOutput = NonNullable<
+  inferProcedureOutput<AppRouter["crafts"]["forItem"]>
+>;
+type InlineRecipeEntry = ForItemOutput["crafts"][number];
+type InlineSubcraftEntry = ForItemOutput["subcraftsByItemId"][number][number];
+type InlineSubcraftMap = Record<number, InlineSubcraftEntry[]>;
+type InlineRecipeLike = InlineRecipeEntry;
 
 function isCoinItem(item: { itemId: number; item: { name: string } }) {
   return item.itemId === COIN_ITEM_ID || item.item.name === "Coin";
@@ -179,6 +178,21 @@ function RowLinkOrContent({
   );
 }
 
+function getInlineSelectedEntry(
+  itemId: number,
+  entries: InlineRecipeEntry[],
+  selectedCrafts: SelectedCraftMap,
+): InlineRecipeEntry | null {
+  const selectedCraftId = selectedCrafts[itemId];
+  if (selectedCraftId != null) {
+    const selected = entries.find(
+      (entry) => entry.craft.id === selectedCraftId,
+    );
+    if (selected) return selected;
+  }
+  return entries[0] ?? null;
+}
+
 function ShoppingListDetailPage() {
   const { listId } = Route.useParams();
   const trpc = useTRPC();
@@ -186,12 +200,24 @@ function ShoppingListDetailPage() {
   const queryClient = useQueryClient();
   const listQueryOptions = trpc.shoppingLists.getById.queryOptions(listId);
   const { data } = useSuspenseQuery(listQueryOptions);
-  const { overrideMap } = useUserData();
+  const { proficiencyMap, overrideMap } = useUserData();
 
   const [itemDrafts, setItemDrafts] = useState<Record<number, string>>({});
   const [craftDrafts, setCraftDrafts] = useState<Record<number, string>>({});
   const [sourceDrafts, setSourceDrafts] = useState<Record<string, string>>({});
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [expandedRecipeItemIds, setExpandedRecipeItemIds] = useState<
+    Set<number>
+  >(() => new Set());
+  const [recipeCraftModes, setRecipeCraftModes] = useState<
+    Record<number, ModesMap>
+  >(() => ({}));
+  const [recipeSelectedCrafts, setRecipeSelectedCrafts] = useState<
+    Record<number, SelectedCraftMap>
+  >(() => ({}));
+  const [collapsedRecipeCraftIds, setCollapsedRecipeCraftIds] = useState<
+    Record<number, Set<number>>
+  >(() => ({}));
   const inviteBase =
     typeof window === "undefined" ? "" : window.location.origin;
   const itemIds = useMemo(
@@ -202,10 +228,24 @@ function ShoppingListDetailPage() {
     ...trpc.items.pricesBatch.queryOptions(itemIds),
     enabled: itemIds.length > 0,
   });
+  const { data: craftableItems = [] } = useQuery(
+    trpc.items.craftable.queryOptions(),
+  );
 
   const priceMap = useMemo(
     () => new Map(prices.map((price) => [price.itemId, price])),
     [prices],
+  );
+  const craftableItemIds = useMemo(
+    () => new Set(craftableItems.map((item) => item.id)),
+    [craftableItems],
+  );
+  const savedCraftModes = useMemo<ModesMap>(
+    () =>
+      Object.fromEntries(
+        data.list.craftModeItemIds.map((itemId) => [itemId, "craft" as const]),
+      ),
+    [data.list.craftModeItemIds],
   );
   const coinRow = useMemo(
     () => data.items.find((item) => isCoinItem(item)) ?? null,
@@ -503,12 +543,7 @@ function ShoppingListDetailPage() {
     () =>
       materialItems.reduce((sum, itemRow) => {
         const remainingQuantity = itemRow.remainingQuantity;
-        const override = overrideMap.get(itemRow.itemId);
-        const market = priceMap.get(itemRow.itemId);
-        const unitPrice =
-          override != null
-            ? coerceFiniteNumber(override)
-            : getMarketPrice(market);
+        const unitPrice = getItemPrice(itemRow.itemId, priceMap, overrideMap);
         return sum + remainingQuantity * unitPrice;
       }, 0),
     [materialItems, overrideMap, priceMap],
@@ -519,16 +554,12 @@ function ShoppingListDetailPage() {
       [...materialItems].sort((left, right) => {
         const leftRemaining = left.remainingQuantity;
         const rightRemaining = right.remainingQuantity;
-        const leftOverride = overrideMap.get(left.itemId);
-        const rightOverride = overrideMap.get(right.itemId);
-        const leftUnitPrice =
-          leftOverride != null
-            ? coerceFiniteNumber(leftOverride)
-            : getMarketPrice(priceMap.get(left.itemId));
-        const rightUnitPrice =
-          rightOverride != null
-            ? coerceFiniteNumber(rightOverride)
-            : getMarketPrice(priceMap.get(right.itemId));
+        const leftUnitPrice = getItemPrice(left.itemId, priceMap, overrideMap);
+        const rightUnitPrice = getItemPrice(
+          right.itemId,
+          priceMap,
+          overrideMap,
+        );
         const costDelta =
           rightRemaining * rightUnitPrice - leftRemaining * leftUnitPrice;
         return costDelta !== 0
@@ -537,6 +568,44 @@ function ShoppingListDetailPage() {
       }),
     [materialItems, overrideMap, priceMap],
   );
+
+  const toggleRecipeExpansion = (itemId: number) => {
+    setExpandedRecipeItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const setInlineCraftModes = (itemId: number, modes: ModesMap) => {
+    setRecipeCraftModes((current) => ({
+      ...current,
+      [itemId]: modes,
+    }));
+  };
+
+  const setInlineSelectedCrafts = (
+    itemId: number,
+    selectedCrafts: SelectedCraftMap,
+  ) => {
+    setRecipeSelectedCrafts((current) => ({
+      ...current,
+      [itemId]: selectedCrafts,
+    }));
+  };
+
+  const toggleInlineCollapsedCraft = (itemId: number, craftId: number) => {
+    setCollapsedRecipeCraftIds((current) => {
+      const nextSet = new Set(current[itemId] ?? []);
+      if (nextSet.has(craftId)) nextSet.delete(craftId);
+      else nextSet.add(craftId);
+      return {
+        ...current,
+        [itemId]: nextSet,
+      };
+    });
+  };
 
   const commitItemProgress = (itemId: number, totalQuantity: number) => {
     const raw = itemDrafts[itemId];
@@ -944,97 +1013,154 @@ function ShoppingListDetailPage() {
           <div className="rounded-xl border p-5">
             <h2 className="text-lg font-semibold">Shopping Items</h2>
             <div className="mt-4 flex flex-col gap-2">
-              {sortedItems.map((itemRow) => (
-                <div
-                  key={itemRow.itemId}
-                  className={`flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-opacity ${
-                    itemRow.remainingQuantity === 0 ? "opacity-45" : ""
-                  }`}
-                >
-                  <RowLinkOrContent to="/item/$itemId" itemId={itemRow.itemId}>
-                    <ItemIcon
-                      icon={itemRow.item.icon}
-                      name={itemRow.item.name}
-                      size="md"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate font-medium hover:underline">
-                        {itemRow.item.name}
-                      </p>
-                      <p className="text-muted-foreground text-sm">
-                        {itemRow.remainingQuantity.toLocaleString()} remaining •{" "}
-                        {itemRow.stockQuantity.toLocaleString()} stock •{" "}
-                        {itemRow.usedQuantity.toLocaleString()} used •{" "}
-                        {itemRow.totalQuantity.toLocaleString()} total
-                      </p>
-                      <ItemCost
-                        itemId={itemRow.itemId}
-                        remainingQuantity={itemRow.remainingQuantity}
-                        overrideMap={overrideMap}
-                        priceMap={priceMap}
-                      />
-                    </div>
-                  </RowLinkOrContent>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      max={String(itemRow.totalQuantity)}
-                      disabled={!data.canWrite}
-                      className={STOCK_INPUT_CLASS_NAME}
-                      value={
-                        itemDrafts[itemRow.itemId] ??
-                        String(itemRow.stockQuantity)
-                      }
-                      onChange={(event) =>
-                        setDraftValue(
-                          setItemDrafts,
-                          itemRow.itemId,
-                          event.target.value,
-                        )
-                      }
-                      onBlur={() =>
-                        commitItemProgress(
-                          itemRow.itemId,
-                          itemRow.totalQuantity,
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
-                        }
-                        if (event.key === "Escape") {
-                          resetItemDraft(itemRow.itemId);
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!data.canWrite}
-                      loading={
-                        updateItemProgress.isPending &&
-                        updateItemProgress.variables.itemId === itemRow.itemId
-                      }
-                      onClick={() => {
-                        setDraftValue(
-                          setItemDrafts,
-                          itemRow.itemId,
-                          String(itemRow.totalQuantity),
-                        );
-                        updateItemProgress.mutate({
-                          listId,
-                          itemId: itemRow.itemId,
-                          obtainedQuantity: itemRow.totalQuantity,
-                        });
-                      }}
+              {sortedItems.map((itemRow) => {
+                const canShowRecipes =
+                  itemRow.remainingQuantity > 0 &&
+                  craftableItemIds.has(itemRow.itemId);
+                const isRecipeExpanded = expandedRecipeItemIds.has(
+                  itemRow.itemId,
+                );
+
+                return (
+                  <div key={itemRow.itemId} className="flex flex-col gap-2">
+                    <div
+                      className={`flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-opacity ${
+                        itemRow.remainingQuantity === 0 ? "opacity-45" : ""
+                      }`}
                     >
-                      Fill
-                    </Button>
+                      <RowLinkOrContent
+                        to="/item/$itemId"
+                        itemId={itemRow.itemId}
+                      >
+                        <ItemIcon
+                          icon={itemRow.item.icon}
+                          name={itemRow.item.name}
+                          size="md"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium hover:underline">
+                            {itemRow.item.name}
+                          </p>
+                          <p className="text-muted-foreground text-sm">
+                            {itemRow.remainingQuantity.toLocaleString()}{" "}
+                            remaining • {itemRow.stockQuantity.toLocaleString()}{" "}
+                            stock • {itemRow.usedQuantity.toLocaleString()} used
+                            • {itemRow.totalQuantity.toLocaleString()} total
+                          </p>
+                          <ItemCost
+                            itemId={itemRow.itemId}
+                            remainingQuantity={itemRow.remainingQuantity}
+                            overrideMap={overrideMap}
+                            priceMap={priceMap}
+                          />
+                        </div>
+                      </RowLinkOrContent>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {canShowRecipes ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={isRecipeExpanded ? "secondary" : "outline"}
+                            onClick={() =>
+                              toggleRecipeExpansion(itemRow.itemId)
+                            }
+                          >
+                            {isRecipeExpanded ? "Hide recipes" : "Recipes"}
+                          </Button>
+                        ) : null}
+                        <Input
+                          type="number"
+                          min="0"
+                          max={String(itemRow.totalQuantity)}
+                          disabled={!data.canWrite}
+                          className={STOCK_INPUT_CLASS_NAME}
+                          value={
+                            itemDrafts[itemRow.itemId] ??
+                            String(itemRow.stockQuantity)
+                          }
+                          onChange={(event) =>
+                            setDraftValue(
+                              setItemDrafts,
+                              itemRow.itemId,
+                              event.target.value,
+                            )
+                          }
+                          onBlur={() =>
+                            commitItemProgress(
+                              itemRow.itemId,
+                              itemRow.totalQuantity,
+                            )
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.currentTarget.blur();
+                            }
+                            if (event.key === "Escape") {
+                              resetItemDraft(itemRow.itemId);
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!data.canWrite}
+                          loading={
+                            updateItemProgress.isPending &&
+                            updateItemProgress.variables.itemId ===
+                              itemRow.itemId
+                          }
+                          onClick={() => {
+                            setDraftValue(
+                              setItemDrafts,
+                              itemRow.itemId,
+                              String(itemRow.totalQuantity),
+                            );
+                            updateItemProgress.mutate({
+                              listId,
+                              itemId: itemRow.itemId,
+                              obtainedQuantity: itemRow.totalQuantity,
+                            });
+                          }}
+                        >
+                          Fill
+                        </Button>
+                      </div>
+                    </div>
+
+                    {isRecipeExpanded && canShowRecipes ? (
+                      <div className="pl-2">
+                        <InlineRecipePreview
+                          itemId={itemRow.itemId}
+                          itemName={itemRow.item.name}
+                          remainingQuantity={itemRow.remainingQuantity}
+                          initialModes={savedCraftModes}
+                          modes={recipeCraftModes[itemRow.itemId]}
+                          selectedCrafts={recipeSelectedCrafts[itemRow.itemId]}
+                          collapsedCraftIds={
+                            collapsedRecipeCraftIds[itemRow.itemId]
+                          }
+                          priceMap={priceMap}
+                          overrideMap={overrideMap}
+                          proficiencyMap={proficiencyMap}
+                          setModes={(modes) =>
+                            setInlineCraftModes(itemRow.itemId, modes)
+                          }
+                          setSelectedCrafts={(selectedCrafts) =>
+                            setInlineSelectedCrafts(
+                              itemRow.itemId,
+                              selectedCrafts,
+                            )
+                          }
+                          toggleCollapsed={(craftId) =>
+                            toggleInlineCollapsedCraft(itemRow.itemId, craftId)
+                          }
+                        />
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -1288,6 +1414,480 @@ function ShoppingListDetailPage() {
   );
 }
 
+function InlineRecipePreview({
+  itemId,
+  itemName,
+  remainingQuantity,
+  initialModes,
+  modes,
+  selectedCrafts,
+  collapsedCraftIds,
+  priceMap,
+  overrideMap,
+  proficiencyMap,
+  setModes,
+  setSelectedCrafts,
+  toggleCollapsed,
+}: {
+  itemId: number;
+  itemName: string;
+  remainingQuantity: number;
+  initialModes: ModesMap;
+  modes?: ModesMap;
+  selectedCrafts?: SelectedCraftMap;
+  collapsedCraftIds?: Set<number>;
+  priceMap: PriceMap;
+  overrideMap: Map<number, number>;
+  proficiencyMap: Map<string, number>;
+  setModes: (modes: ModesMap) => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
+  toggleCollapsed: (craftId: number) => void;
+}) {
+  const trpc = useTRPC();
+  const effectiveModes = modes ?? initialModes;
+  const effectiveSelectedCrafts = selectedCrafts ?? {};
+  const craftQuery = useQuery(trpc.crafts.forItem.queryOptions(itemId));
+  const craftData = craftQuery.data ?? null;
+
+  if (craftQuery.isLoading) {
+    return (
+      <div className="bg-muted/20 rounded-lg border px-3 py-3 text-sm">
+        Loading recipes for {itemName}...
+      </div>
+    );
+  }
+
+  if (craftQuery.isError) {
+    return (
+      <div className="bg-muted/20 rounded-lg border px-3 py-3 text-sm">
+        Could not load recipes for {itemName}.
+      </div>
+    );
+  }
+
+  if (!craftData || craftData.crafts.length === 0) {
+    return (
+      <div className="bg-muted/20 rounded-lg border px-3 py-3 text-sm">
+        No recipes available.
+      </div>
+    );
+  }
+
+  const selectedEntry =
+    getInlineSelectedEntry(itemId, craftData.crafts, effectiveSelectedCrafts) ??
+    craftData.crafts[0];
+  if (!selectedEntry) {
+    return (
+      <div className="bg-muted/20 rounded-lg border px-3 py-3 text-sm">
+        No recipes available.
+      </div>
+    );
+  }
+
+  const mergedPriceMap: PriceMap = new Map([
+    ...priceMap,
+    ...craftData.prices.map((price) => [price.itemId, price] as const),
+  ]);
+  const summary = buildCraftRequirementSummary({
+    entry: selectedEntry,
+    producedItemId: itemId,
+    requiredQuantity: remainingQuantity,
+    subcraftMap: craftData.subcraftsByItemId,
+    modes: effectiveModes,
+    selectedCrafts: effectiveSelectedCrafts,
+    priceMap: mergedPriceMap,
+    overrideMap,
+    proficiencyMap,
+  });
+  const buyCost =
+    remainingQuantity * getItemPrice(itemId, mergedPriceMap, overrideMap);
+  const craftCost = summary.materialCost;
+  const diff = craftCost - buyCost;
+
+  const selectTopRecipe = (craftId: number) => {
+    setSelectedCrafts({
+      ...effectiveSelectedCrafts,
+      [itemId]: craftId,
+    });
+  };
+  const setItemMode = (modeItemId: number, mode: "buy" | "craft") => {
+    setModes({
+      ...effectiveModes,
+      [modeItemId]: mode,
+    });
+  };
+
+  return (
+    <div className="bg-muted/10 rounded-lg border px-3 py-3">
+      <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Recipe preview</p>
+          <p className="text-muted-foreground text-xs">
+            {remainingQuantity.toLocaleString()} needed •{" "}
+            {summary.batches.toLocaleString()} batch
+            {summary.batches === 1 ? "" : "es"} • produces{" "}
+            {summary.producedQuantity.toLocaleString()}
+            {summary.producedQuantity > remainingQuantity
+              ? ` (${(
+                  summary.producedQuantity - remainingQuantity
+                ).toLocaleString()} extra)`
+              : ""}
+          </p>
+        </div>
+        {craftData.crafts.length > 1 ? (
+          <label className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Recipe</span>
+            <select
+              className="bg-background rounded-md border px-2 py-1 text-sm"
+              value={selectedEntry.craft.id}
+              onChange={(event) => selectTopRecipe(Number(event.target.value))}
+            >
+              {craftData.crafts.map((entry) => (
+                <option key={entry.craft.id} value={entry.craft.id}>
+                  {entry.craft.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
+        <InlineRecipeTree
+          entry={selectedEntry}
+          producedItemId={itemId}
+          priceMap={mergedPriceMap}
+          overrideMap={overrideMap}
+          proficiencyMap={proficiencyMap}
+          subcraftMap={craftData.subcraftsByItemId}
+          modes={effectiveModes}
+          selectedCrafts={effectiveSelectedCrafts}
+          setItemMode={setItemMode}
+          setSelectedCrafts={setSelectedCrafts}
+          collapsedCraftIds={collapsedCraftIds ?? new Set()}
+          toggleCollapsed={toggleCollapsed}
+        />
+
+        <div className="flex flex-col gap-3">
+          <div className="rounded-md border p-3">
+            <p className="text-sm font-semibold">Buy vs craft</p>
+            <div className="mt-2 flex flex-col gap-1 text-sm tabular-nums">
+              <p className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Buy remaining</span>
+                <span>
+                  {buyCost.toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}
+                  g
+                </span>
+              </p>
+              <p className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Craft materials</span>
+                <span>
+                  {craftCost.toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}
+                  g
+                </span>
+              </p>
+              <p className="flex justify-between gap-3 font-medium">
+                <span>Difference</span>
+                <span
+                  className={
+                    diff <= 0
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-red-500"
+                  }
+                >
+                  {diff <= 0 ? "Saves " : "Costs "}
+                  {Math.abs(diff).toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}
+                  g
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-md border p-3">
+            <p className="text-sm font-semibold">Raw materials</p>
+            {summary.materials.length === 0 ? (
+              <p className="text-muted-foreground mt-2 text-sm">
+                No raw materials.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col gap-1">
+                {summary.materials.map((material) => {
+                  const materialItem = material.item as {
+                    id: number;
+                    name?: string | null;
+                    icon?: string | null;
+                  };
+                  const materialName =
+                    materialItem.name ?? `Item ${materialItem.id}`;
+                  return (
+                    <RecipeItemRow
+                      key={materialItem.id}
+                      icon={
+                        <ItemIcon
+                          icon={materialItem.icon ?? null}
+                          name={materialName}
+                        />
+                      }
+                      name={materialName}
+                      amount={material.totalAmount}
+                      value={
+                        <span className="text-muted-foreground tabular-nums">
+                          {(
+                            material.totalAmount *
+                            getItemPrice(
+                              materialItem.id,
+                              mergedPriceMap,
+                              overrideMap,
+                            )
+                          ).toLocaleString(undefined, {
+                            maximumFractionDigits: 0,
+                          })}
+                          g
+                        </span>
+                      }
+                    />
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {summary.laborByProficiency.length > 0 ? (
+            <div className="rounded-md border p-3">
+              <p className="text-sm font-semibold">Labor</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {summary.laborByProficiency.map((entry) => (
+                  <span
+                    key={entry.proficiency}
+                    className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+                  >
+                    <ProficiencyBadge proficiency={entry.proficiency} />
+                    <span className="tabular-nums">
+                      {entry.labor.toLocaleString()}L
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <RecipeLegend />
+    </div>
+  );
+}
+
+function InlineRecipeTree({
+  entry,
+  producedItemId,
+  priceMap,
+  overrideMap,
+  proficiencyMap,
+  subcraftMap,
+  modes,
+  selectedCrafts,
+  setItemMode,
+  setSelectedCrafts,
+  collapsedCraftIds,
+  toggleCollapsed,
+  depth = 0,
+}: {
+  entry: InlineRecipeLike;
+  producedItemId: number;
+  priceMap: PriceMap;
+  overrideMap: Map<number, number>;
+  proficiencyMap: Map<string, number>;
+  subcraftMap: InlineSubcraftMap;
+  modes: ModesMap;
+  selectedCrafts: SelectedCraftMap;
+  setItemMode: (itemId: number, mode: "buy" | "craft") => void;
+  setSelectedCrafts: (selectedCrafts: SelectedCraftMap) => void;
+  collapsedCraftIds: Set<number>;
+  toggleCollapsed: (craftId: number) => void;
+  depth?: number;
+}) {
+  const isCollapsed = collapsedCraftIds.has(entry.craft.id);
+  const metrics = computeManualCraftMetrics(
+    entry,
+    producedItemId,
+    getItemPrice(producedItemId, priceMap, overrideMap),
+    {
+      subcraftMap,
+      priceMap,
+      overrideMap,
+      proficiencyMap,
+      maxDepth: MAX_CRAFT_DEPTH,
+    },
+    modes,
+    selectedCrafts,
+    depth,
+  );
+
+  return (
+    <RecipeCardShell depth={depth}>
+      <RecipeHeader
+        depth={depth}
+        title={entry.craft.name}
+        proficiency={entry.craft.proficiency}
+        laborLabel={
+          entry.craft.labor > 0
+            ? `${metrics.directLabor.toLocaleString()} labor`
+            : null
+        }
+        materialsLabel={`${metrics.materialsCost.toLocaleString(undefined, {
+          maximumFractionDigits: 0,
+        })}g`}
+        collapseToggle={
+          <RecipeCollapseToggle
+            collapsed={isCollapsed}
+            onToggle={() => toggleCollapsed(entry.craft.id)}
+          />
+        }
+      />
+
+      {!isCollapsed ? (
+        <ul className="flex flex-col gap-1">
+          {entry.materials.map(({ item, amount }) => {
+            const isCraftable =
+              depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id]?.length;
+            const mode = modes[item.id] ?? "buy";
+            const subEntry = isCraftable
+              ? getSelectedEntry(item.id, subcraftMap, selectedCrafts)
+              : null;
+            const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
+            const craftedMetrics = subEntry
+              ? computeManualCraftMetrics(
+                  subEntry,
+                  item.id,
+                  buyUnit,
+                  {
+                    subcraftMap,
+                    priceMap,
+                    overrideMap,
+                    proficiencyMap,
+                    maxDepth: MAX_CRAFT_DEPTH,
+                  },
+                  modes,
+                  selectedCrafts,
+                  depth + 1,
+                )
+              : null;
+            const craftUnit = craftedMetrics?.costPerUnit ?? 0;
+            const unit = mode === "craft" && isCraftable ? craftUnit : buyUnit;
+            const totalDiff =
+              isCraftable && buyUnit > 0
+                ? (buyUnit - craftUnit) * amount
+                : null;
+
+            return (
+              <Fragment key={item.id}>
+                <RecipeItemRow
+                  icon={<ItemIcon icon={item.icon} name={item.name} />}
+                  name={item.name}
+                  amount={amount}
+                  controls={
+                    isCraftable ? (
+                      <span className="inline-flex items-center gap-2">
+                        <CraftModeToggle
+                          mode={mode}
+                          onBuy={() => setItemMode(item.id, "buy")}
+                          onCraft={() => setItemMode(item.id, "craft")}
+                        />
+                        {mode === "craft" &&
+                        (subcraftMap[item.id]?.length ?? 0) > 1 ? (
+                          <select
+                            className="bg-background rounded-md border px-2 py-0.5 text-xs"
+                            value={subEntry?.craft.id ?? ""}
+                            onChange={(event) =>
+                              setSelectedCrafts({
+                                ...selectedCrafts,
+                                [item.id]: Number(event.target.value),
+                              })
+                            }
+                          >
+                            {(subcraftMap[item.id] ?? []).map((candidate) => (
+                              <option
+                                key={candidate.craft.id}
+                                value={candidate.craft.id}
+                              >
+                                {candidate.craft.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : null}
+                      </span>
+                    ) : null
+                  }
+                  value={
+                    <span className="text-muted-foreground tabular-nums">
+                      {unit.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}
+                      g
+                    </span>
+                  }
+                  diff={
+                    totalDiff !== null ? (
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
+                          totalDiff > 0
+                            ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                            : totalDiff < 0
+                              ? "bg-red-500/10 text-red-500"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {totalDiff > 0
+                          ? `↓ ${totalDiff.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })}g`
+                          : totalDiff < 0
+                            ? `↑ ${Math.abs(totalDiff).toLocaleString(
+                                undefined,
+                                {
+                                  maximumFractionDigits: 0,
+                                },
+                              )}g`
+                            : "="}
+                      </span>
+                    ) : null
+                  }
+                />
+
+                {mode === "craft" && isCraftable && subEntry ? (
+                  <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
+                    <InlineRecipeTree
+                      entry={subEntry}
+                      producedItemId={item.id}
+                      priceMap={priceMap}
+                      overrideMap={overrideMap}
+                      proficiencyMap={proficiencyMap}
+                      subcraftMap={subcraftMap}
+                      modes={modes}
+                      selectedCrafts={selectedCrafts}
+                      setItemMode={setItemMode}
+                      setSelectedCrafts={setSelectedCrafts}
+                      collapsedCraftIds={collapsedCraftIds}
+                      toggleCollapsed={toggleCollapsed}
+                      depth={depth + 1}
+                    />
+                  </li>
+                ) : null}
+              </Fragment>
+            );
+          })}
+        </ul>
+      ) : null}
+    </RecipeCardShell>
+  );
+}
+
 function HeaderActionMenu({
   canDelete,
   duplicateFreshPending,
@@ -1402,9 +2002,7 @@ function ItemCost({
   >;
 }) {
   const override = overrideMap.get(itemId);
-  const market = priceMap.get(itemId);
-  const unitPrice =
-    override != null ? coerceFiniteNumber(override) : getMarketPrice(market);
+  const unitPrice = getItemPrice(itemId, priceMap, overrideMap);
 
   if (unitPrice <= 0) {
     return (

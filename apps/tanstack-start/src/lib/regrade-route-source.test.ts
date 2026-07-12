@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 void test("resplendent scroll recipe nests the same preferred normal scroll craft", () => {
   const source = readFileSync(
-    new URL("./regrade.tsx", import.meta.url),
+    new URL("../routes/regrade.tsx", import.meta.url),
     "utf8",
   );
   const builderSource = source.slice(

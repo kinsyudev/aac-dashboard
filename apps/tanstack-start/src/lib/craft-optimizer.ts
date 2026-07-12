@@ -1,5 +1,5 @@
-import { pickPreferredCraft } from "~/lib/craft-helpers";
-import { getDiscountedLabor } from "~/lib/proficiency";
+import { pickPreferredCraft } from "./craft-helpers.ts";
+import { getDiscountedLabor } from "./proficiency.ts";
 
 export const MAX_CRAFT_DEPTH = 8;
 
@@ -58,6 +58,28 @@ export interface AutoPlan<T extends CraftEntryLike> {
   metrics: CraftMetrics;
 }
 
+export interface FlattenedMaterialRequirement<
+  TItem = CraftMaterialLike["item"],
+> {
+  item: TItem;
+  totalAmount: number;
+}
+
+export interface LaborRequirement {
+  proficiency: string;
+  labor: number;
+}
+
+export interface CraftRequirementSummary<TItem = CraftMaterialLike["item"]> {
+  batches: number;
+  producedAmount: number;
+  producedQuantity: number;
+  materials: FlattenedMaterialRequirement<TItem>[];
+  laborByProficiency: LaborRequirement[];
+  materialCost: number;
+  totalLabor: number;
+}
+
 interface Context<T extends CraftEntryLike> {
   subcraftMap: SubcraftMap<T>;
   priceMap: PriceMap;
@@ -91,6 +113,10 @@ function mergeSelectedCrafts(...parts: SelectedCraftMap[]): SelectedCraftMap {
     (acc, part) => ({ ...acc, ...part }),
     {},
   );
+}
+
+function addMapValue<TKey>(map: Map<TKey, number>, key: TKey, amount: number) {
+  map.set(key, (map.get(key) ?? 0) + amount);
 }
 
 export function parseFinitePrice(
@@ -171,6 +197,147 @@ export function getSelectedEntry<T extends CraftEntryLike>(
   }
 
   return fallback ?? pickPreferredCraft(entries, itemId);
+}
+
+export function buildCraftRequirementSummary<T extends CraftEntryLike>(input: {
+  entry: T;
+  producedItemId: number;
+  requiredQuantity: number;
+  subcraftMap: SubcraftMap<T>;
+  modes: ModesMap;
+  selectedCrafts: SelectedCraftMap;
+  priceMap: PriceMap;
+  overrideMap: OverrideMap;
+  proficiencyMap: ProficiencyMap;
+  maxDepth?: number;
+}): CraftRequirementSummary<T["materials"][number]["item"]> {
+  const maxDepth = input.maxDepth ?? MAX_CRAFT_DEPTH;
+  const materialMap = new Map<
+    number,
+    FlattenedMaterialRequirement<T["materials"][number]["item"]>
+  >();
+  const laborMap = new Map<string, number>();
+
+  const addRawMaterial = (
+    item: T["materials"][number]["item"],
+    amount: number,
+  ) => {
+    const nextAmount = Math.max(0, amount);
+    if (nextAmount <= 0) return;
+    const existing = materialMap.get(item.id);
+    if (existing) {
+      existing.totalAmount += nextAmount;
+      return;
+    }
+    materialMap.set(item.id, { item, totalAmount: nextAmount });
+  };
+
+  const visitEntry = (
+    entry: T,
+    producedItemId: number,
+    requiredQuantity: number,
+    depth: number,
+    visited: Set<string>,
+  ) => {
+    const producedAmount = getProducedAmount(entry, producedItemId);
+    const batches = Math.ceil(
+      Math.max(0, requiredQuantity) / Math.max(1, producedAmount),
+    );
+    if (batches <= 0) return;
+
+    if (entry.craft.labor > 0) {
+      addMapValue(
+        laborMap,
+        entry.craft.proficiency ?? "Unknown",
+        batches *
+          getDiscountedLabor(
+            entry.craft.labor,
+            entry.craft.proficiency,
+            input.proficiencyMap,
+          ),
+      );
+    }
+
+    for (const { item, amount } of entry.materials) {
+      const requiredMaterialAmount = amount * batches;
+      const isCraftable =
+        depth < maxDepth && !!input.subcraftMap[item.id]?.length;
+      const mode = input.modes[item.id] ?? "buy";
+      const cycleKey = `${item.id}:${
+        input.selectedCrafts[item.id] ?? "preferred"
+      }`;
+
+      if (!isCraftable || mode === "buy" || visited.has(cycleKey)) {
+        addRawMaterial(item, requiredMaterialAmount);
+        continue;
+      }
+
+      const subEntry = getSelectedEntry(
+        item.id,
+        input.subcraftMap,
+        input.selectedCrafts,
+      );
+      if (!subEntry) {
+        addRawMaterial(item, requiredMaterialAmount);
+        continue;
+      }
+
+      visitEntry(
+        subEntry,
+        item.id,
+        requiredMaterialAmount,
+        depth + 1,
+        new Set([...visited, cycleKey]),
+      );
+    }
+  };
+
+  const producedAmount = getProducedAmount(input.entry, input.producedItemId);
+  const batches = Math.ceil(
+    Math.max(0, input.requiredQuantity) / Math.max(1, producedAmount),
+  );
+  visitEntry(
+    input.entry,
+    input.producedItemId,
+    input.requiredQuantity,
+    0,
+    new Set(),
+  );
+
+  const materials = Array.from(materialMap.values())
+    .map((material) => ({
+      ...material,
+      totalAmount: Math.ceil(material.totalAmount),
+    }))
+    .sort(
+      (left, right) =>
+        (left.item.name ?? "").localeCompare(right.item.name ?? "") ||
+        left.item.id - right.item.id,
+    );
+  const laborByProficiency = Array.from(laborMap.entries())
+    .map(([proficiency, labor]) => ({ proficiency, labor }))
+    .sort((left, right) => left.proficiency.localeCompare(right.proficiency));
+  const materialCost = materials.reduce(
+    (sum, material) =>
+      sum +
+      material.totalAmount *
+        getItemPrice(material.item.id, input.priceMap, input.overrideMap),
+    0,
+  );
+  const totalLabor = laborByProficiency.reduce(
+    (sum, entry) => sum + entry.labor,
+    0,
+  );
+
+  return {
+    batches,
+    producedAmount,
+    producedQuantity: batches * producedAmount,
+    materials,
+    laborByProficiency,
+    materialCost,
+    totalLabor,
+  };
 }
 
 export function computeManualCraftMetrics<T extends CraftEntryLike>(
