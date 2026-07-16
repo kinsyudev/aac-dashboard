@@ -1,13 +1,25 @@
-import { sql } from "@acme/db";
+import { inArray, sql } from "@acme/db";
 import { db } from "@acme/db/client";
 import { craftMaterials, craftProducts, crafts, items } from "@acme/db/schema";
 
 import type { AlertItem } from "./item-alerts";
-import {
-  recordItemDiscoveries,
-  sendItemDiscoveryAlerts,
-} from "./item-alerts";
+import { recordItemDiscoveries, sendItemDiscoveryAlerts } from "./item-alerts";
 import { buildStaticApiCache } from "./static-api-cache";
+import { fetchJsonWithRetry } from "./sync-items-fetch";
+import {
+  parseCraftRefreshSelection,
+  selectCraftsToSync,
+} from "./sync-items-options";
+import {
+  dedupeCraftMaterials,
+  dedupeCraftProducts,
+} from "./sync-items-relations";
+import {
+  getSyncedItemName,
+  mergeSupplementalIndexEntries,
+  SUPPLEMENTAL_CRAFT_INDEX,
+  SUPPLEMENTAL_ITEM_INDEX,
+} from "./sync-items-supplements";
 
 const BASE_URL = "https://aa-classic.com/data";
 const HEADERS: Record<string, string> = {
@@ -75,15 +87,18 @@ interface CraftDetail {
 
 const BATCH = 200;
 const CONCURRENCY = 20;
+const API_ATTEMPTS = 3;
+const API_TIMEOUT_MS = 15_000;
 
 // --- Helpers ---
 
 async function api<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { ...HEADERS, cookie: `auth=${AUTH_COOKIE}` },
+  return fetchJsonWithRetry<T>({
+    url: `${BASE_URL}${path}`,
+    init: { headers: { ...HEADERS, cookie: `auth=${AUTH_COOKIE}` } },
+    attempts: API_ATTEMPTS,
+    timeoutMs: API_TIMEOUT_MS,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<T>;
 }
 
 async function fetchBatch<T>(paths: string[]): Promise<(T | null)[]> {
@@ -116,6 +131,7 @@ async function fetchBatch<T>(paths: string[]): Promise<(T | null)[]> {
 
 async function main() {
   const fullRefresh = process.argv.includes("--full-refresh");
+  const craftRefreshSelection = parseCraftRefreshSelection(process.argv);
   const notifyNewItems = process.argv.includes("--notify-new-items");
   const shouldNotifyNewItems = notifyNewItems && !fullRefresh;
   const discordBotToken = process.env.AAC_DISCORD_BOT_TOKEN;
@@ -139,7 +155,10 @@ async function main() {
   // ── Items ──────────────────────────────────────────────────────────────────
 
   console.log("Fetching item index...");
-  const remoteItems = await api<ItemIndex[]>("/items/_index.json");
+  const remoteItems = mergeSupplementalIndexEntries(
+    await api<ItemIndex[]>("/items/_index.json"),
+    SUPPLEMENTAL_ITEM_INDEX,
+  );
 
   const existingItemIds = new Set(
     (await db.select({ id: items.id }).from(items)).map((r) => r.id),
@@ -164,7 +183,7 @@ async function main() {
         .values(
           valid.map((d) => ({
             id: d.id,
-            name: d.name,
+            name: getSyncedItemName(d.id, d.name),
             description: d.description,
             category: d.category_name,
             level: d.level,
@@ -208,7 +227,7 @@ async function main() {
         for (const item of valid) {
           discoveredItems.push({
             id: item.id,
-            name: item.name,
+            name: getSyncedItemName(item.id, item.name),
             category: item.category_name,
             level: item.level,
             icon: item.icon_filename,
@@ -243,14 +262,33 @@ async function main() {
   // ── Crafts ─────────────────────────────────────────────────────────────────
 
   console.log("Fetching craft index...");
-  const remoteCrafts = await api<CraftIndex[]>("/crafts/_index.json");
+  const remoteCrafts = mergeSupplementalIndexEntries(
+    await api<CraftIndex[]>("/crafts/_index.json"),
+    SUPPLEMENTAL_CRAFT_INDEX,
+  );
 
   const existingCraftIds = new Set(
     (await db.select({ id: crafts.id }).from(crafts)).map((r) => r.id),
   );
   const missingCrafts = remoteCrafts.filter((c) => !existingCraftIds.has(c.id));
+  const craftsToSync = selectCraftsToSync(
+    remoteCrafts,
+    existingCraftIds,
+    craftRefreshSelection,
+  );
+  if (craftRefreshSelection.kind === "ids") {
+    const remoteCraftIds = new Set(remoteCrafts.map((craft) => craft.id));
+    const unknownIds = [...craftRefreshSelection.ids].filter(
+      (id) => !remoteCraftIds.has(id),
+    );
+    if (unknownIds.length > 0) {
+      throw new Error(
+        `Craft IDs not found in the upstream index: ${unknownIds.join(", ")}`,
+      );
+    }
+  }
   console.log(
-    `Crafts: ${remoteCrafts.length} remote, ${existingCraftIds.size} in DB, ${missingCrafts.length} to sync`,
+    `Crafts: ${remoteCrafts.length} remote, ${existingCraftIds.size} in DB, ${missingCrafts.length} missing, ${craftsToSync.length} to sync`,
   );
 
   const knownItemIds = new Set(
@@ -258,72 +296,98 @@ async function main() {
   );
 
   let craftsDone = 0;
-  for (let i = 0; i < missingCrafts.length; i += BATCH) {
-    const chunk = missingCrafts.slice(i, i + BATCH);
+  for (let i = 0; i < craftsToSync.length; i += BATCH) {
+    const chunk = craftsToSync.slice(i, i + BATCH);
     const details = await fetchBatch<CraftDetail>(
       chunk.map((c) => `/crafts/${c.id}.json`),
     );
 
-    const insertable = details.filter((d): d is CraftDetail => d !== null);
+    const fetched = details.filter((d): d is CraftDetail => d !== null);
+    const insertable = fetched.filter((detail) => {
+      if (!existingCraftIds.has(detail.id)) return true;
+
+      const unknownItemIds = [
+        ...detail.products.map((product) => product.item_id),
+        ...detail.materials.map((material) => material.item_id),
+      ].filter((itemId) => !knownItemIds.has(itemId));
+      if (unknownItemIds.length === 0) return true;
+
+      console.warn(
+        `  Skipping refresh for craft ${detail.id}: unknown item IDs ${[...new Set(unknownItemIds)].join(", ")}`,
+      );
+      return false;
+    });
 
     if (insertable.length > 0) {
-      await db
-        .insert(crafts)
-        .values(
-          insertable.map((d) => ({
-            id: d.id,
-            name: d.name,
-            labor: d.labor,
-            castDelayMs: d.cast_delay_ms,
-            // null if the primary product couldn't be fetched — craft is still usable via craft_products
-            primaryProductId: knownItemIds.has(d.primary_product_id)
-              ? d.primary_product_id
-              : null,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: crafts.id,
-          set: {
-            name: sql`excluded.name`,
-            labor: sql`excluded.labor`,
-            castDelayMs: sql`excluded.cast_delay_ms`,
-            primaryProductId: sql`excluded.primary_product_id`,
-          },
-        });
+      await db.transaction(async (tx) => {
+        await tx
+          .insert(crafts)
+          .values(
+            insertable.map((d) => ({
+              id: d.id,
+              name: d.name,
+              labor: d.labor,
+              castDelayMs: d.cast_delay_ms,
+              // null if the primary product couldn't be fetched — craft is still usable via craft_products
+              primaryProductId: knownItemIds.has(d.primary_product_id)
+                ? d.primary_product_id
+                : null,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: crafts.id,
+            set: {
+              name: sql`excluded.name`,
+              labor: sql`excluded.labor`,
+              castDelayMs: sql`excluded.cast_delay_ms`,
+              primaryProductId: sql`excluded.primary_product_id`,
+            },
+          });
 
-      const allProducts = insertable.flatMap((d) =>
-        d.products
-          .filter((p) => knownItemIds.has(p.item_id))
-          .map((p) => ({
-            craftId: d.id,
-            itemId: p.item_id,
-            amount: p.amount,
-            rate: p.rate,
-          })),
-      );
-      if (allProducts.length > 0) {
-        await db
-          .insert(craftProducts)
-          .values(allProducts)
-          .onConflictDoNothing();
-      }
+        const refreshedCraftIds = insertable.map((detail) => detail.id);
+        await tx
+          .delete(craftMaterials)
+          .where(inArray(craftMaterials.craftId, refreshedCraftIds));
+        await tx
+          .delete(craftProducts)
+          .where(inArray(craftProducts.craftId, refreshedCraftIds));
 
-      const allMaterials = insertable.flatMap((d) =>
-        d.materials
-          .filter((m) => knownItemIds.has(m.item_id))
-          .map((m) => ({ craftId: d.id, itemId: m.item_id, amount: m.amount })),
-      );
-      if (allMaterials.length > 0) {
-        await db
-          .insert(craftMaterials)
-          .values(allMaterials)
-          .onConflictDoNothing();
-      }
+        const allProducts = dedupeCraftProducts(
+          insertable.flatMap((d) =>
+            d.products
+              .filter((p) => knownItemIds.has(p.item_id))
+              .map((p) => ({
+                craftId: d.id,
+                itemId: p.item_id,
+                amount: p.amount,
+                rate: p.rate,
+              })),
+          ),
+        );
+        if (allProducts.length > 0) {
+          await tx.insert(craftProducts).values(allProducts);
+        }
+
+        const allMaterials = dedupeCraftMaterials(
+          insertable.flatMap((d) =>
+            d.materials
+              .filter((m) => knownItemIds.has(m.item_id))
+              .map((m) => ({
+                craftId: d.id,
+                itemId: m.item_id,
+                amount: m.amount,
+              })),
+          ),
+        );
+        if (allMaterials.length > 0) {
+          await tx.insert(craftMaterials).values(allMaterials);
+        }
+      });
     }
 
     craftsDone += chunk.length;
     console.log(
-      `  ${craftsDone}/${missingCrafts.length} processed, ${insertable.length}/${chunk.length} inserted`,
+      `  ${craftsDone}/${craftsToSync.length} processed, ${insertable.length}/${chunk.length} synced`,
     );
   }
 
