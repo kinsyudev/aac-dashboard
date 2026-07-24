@@ -104,8 +104,9 @@ void test("reseal loop with glowing applies the proc only to the initial sealed 
   });
 
   assertClose(result.successRate, 13 / 70);
-  assert.equal(result.expectedAttempts, 7);
+  assertClose(result.expectedAttempts, 67 / 10);
   assertClose(result.failedRetries, 5.7);
   assert.equal(result.glowingProcChance, 1 / 20);
   assertClose(result.totalManaSealRetryCost, 114);
+  assertClose(result.expectedValueSalvage, 262 / (67 / 10));
 });

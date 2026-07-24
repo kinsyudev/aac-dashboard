@@ -1684,8 +1684,11 @@ function StrategySummaryCard({
   title: string;
   result: SimulationResult;
 }) {
-  const successLabel =
-    result.glowingProcChance > 0
+  const hasInitialOnlyGlowingProc =
+    result.strategy === "reseal" && result.glowingProcChance > 0;
+  const successLabel = hasInitialOnlyGlowingProc
+    ? `${pct(result.successRate)} initial`
+    : result.glowingProcChance > 0
       ? `${pct(result.successRate)} success`
       : `1/${result.variants} (${pct(result.successRate)})`;
 
@@ -1697,7 +1700,9 @@ function StrategySummaryCard({
       </div>
       {result.glowingProcChance > 0 ? (
         <p className="text-muted-foreground mb-3 text-xs">
-          Includes {pct(result.glowingProcChance)} Glowing proc chance.
+          {hasInitialOnlyGlowingProc
+            ? `Initial craft includes the ${pct(result.glowingProcChance)} Glowing proc; reseals are 1/${result.variants} (${pct(1 / result.variants)}).`
+            : `Includes ${pct(result.glowingProcChance)} Glowing proc chance.`}
         </p>
       ) : null}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">

@@ -107,7 +107,7 @@ interface BaseSimulationInput {
 interface BaseSimulationResult {
   /** Number of variants at the RNG tier. */
   variants: number;
-  /** Success rate as a fraction (e.g. 0.1429). */
+  /** Fresh-craft success rate as a fraction (e.g. 0.1429). */
   successRate: number;
   /** Expected attempts represented by this strategy's success model. */
   expectedAttempts: number;
@@ -193,6 +193,7 @@ export interface ResealLoopSimulationInput extends BaseSimulationInput {
 
 export interface ResealLoopSimulationResult extends BaseSimulationResult {
   strategy: "reseal";
+  /** Expected mana-seal retries after the initial sealed craft. */
   failedRetries: number;
   initialSeedCost: number;
   initialSealedCraftCost: number;
@@ -326,8 +327,8 @@ export function computeResealLoopSimulation(
   const variants = variantsByTier[input.rngTier];
   const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
   const successRate = getEffectiveCraftSuccessRate(variants, glowingProcChance);
-  const expectedAttempts = variants;
   const failedRetries = (1 - successRate) * variants;
+  const expectedAttempts = 1 + failedRetries;
   const initialSetupCost = input.initialSeedCost + input.initialSealedCraftCost;
   const totalManaSealRetryCost = input.manaSealCost * failedRetries;
   const totalCost =
