@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   computeResealLoopSimulation,
   computeSalvageLoopSimulation,
+  getExpectedResealRetries,
 } from "./simulator.ts";
 
 const delphinadCuirass = {
@@ -19,6 +20,11 @@ function assertClose(actual: number, expected: number) {
     `expected ${actual} to be within tolerance of ${expected}`,
   );
 }
+
+void test("expected reseal retries only apply the Glowing proc to the initial craft", () => {
+  assert.equal(getExpectedResealRetries(7, 1 / 7), 6);
+  assertClose(getExpectedResealRetries(7, 13 / 70), 57 / 10);
+});
 
 void test("salvage loop without glowing preserves the existing Delphinad expectation", () => {
   const result = computeSalvageLoopSimulation({

@@ -54,6 +54,7 @@ import { variantsByTier } from "~/lib/salvage";
 import {
   detectPieceAndTier,
   getEffectiveCraftSuccessRate,
+  getExpectedResealRetries,
   GLOWING_PROC_RATE,
 } from "~/lib/simulator";
 import { parsePriceOverrideInput } from "~/lib/simulator-price-override";
@@ -124,6 +125,7 @@ interface RerollCostSummary {
   labor: number;
   expectedFailedRerolls: number;
   successRate: number;
+  resealSuccessRate: number;
 }
 
 interface UpgradeCostSummary {
@@ -754,7 +756,10 @@ function RegradePage() {
         variantsByTier.ayanad,
         procRate,
       );
-      const expectedFailedRerolls = Math.max(0, 1 / successRate - 1);
+      const expectedFailedRerolls = getExpectedResealRetries(
+        variantsByTier.ayanad,
+        successRate,
+      );
       ayanadRerollCostGold = sealSummary.costGold * expectedFailedRerolls;
       ayanadRerollLabor =
         (sealSummary.labor + MANA_SEAL_USE_LABOR) * expectedFailedRerolls;
@@ -769,6 +774,7 @@ function RegradePage() {
           labor: ayanadRerollLabor,
           expectedFailedRerolls,
           successRate,
+          resealSuccessRate: 1 / variantsByTier.ayanad,
         });
       }
     }
@@ -1727,7 +1733,7 @@ function UpgradeCostBreakdown({
                       </div>
                     </div>
                   </div>
-                  <div className="text-muted-foreground mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                  <div className="text-muted-foreground mt-2 grid gap-1 text-xs sm:grid-cols-3">
                     <div>
                       Expected rerolls:{" "}
                       {reroll.expectedFailedRerolls.toLocaleString(undefined, {
@@ -1735,7 +1741,10 @@ function UpgradeCostBreakdown({
                       })}
                     </div>
                     <div>
-                      Success chance: {formatPercent(reroll.successRate)}
+                      Initial craft chance: {formatPercent(reroll.successRate)}
+                    </div>
+                    <div>
+                      Reseal chance: {formatPercent(reroll.resealSuccessRate)}
                     </div>
                   </div>
                 </div>
@@ -3146,7 +3155,10 @@ function resolveIntermediateRerollCost(input: {
     variantsByTier[input.tier],
     procRate,
   );
-  const expectedFailedRerolls = Math.max(0, 1 / successRate - 1);
+  const expectedFailedRerolls = getExpectedResealRetries(
+    variantsByTier[input.tier],
+    successRate,
+  );
 
   return {
     tier: input.tier,
@@ -3158,6 +3170,7 @@ function resolveIntermediateRerollCost(input: {
     labor: (sealSummary.labor + MANA_SEAL_USE_LABOR) * expectedFailedRerolls,
     expectedFailedRerolls,
     successRate,
+    resealSuccessRate: 1 / variantsByTier[input.tier],
   };
 }
 

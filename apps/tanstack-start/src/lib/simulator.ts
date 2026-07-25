@@ -229,6 +229,13 @@ export function getEffectiveCraftSuccessRate(
   return 1 - (1 - variantSuccessRate) * (1 - procRate);
 }
 
+export function getExpectedResealRetries(
+  variants: number,
+  initialCraftSuccessRate: number,
+): number {
+  return Math.max(0, (1 - initialCraftSuccessRate) * variants);
+}
+
 function getGlowingProcChance(enabled: boolean | undefined): number {
   return enabled ? GLOWING_PROC_RATE : 0;
 }
@@ -327,7 +334,7 @@ export function computeResealLoopSimulation(
   const variants = variantsByTier[input.rngTier];
   const glowingProcChance = getGlowingProcChance(input.glowingProcEnabled);
   const successRate = getEffectiveCraftSuccessRate(variants, glowingProcChance);
-  const failedRetries = (1 - successRate) * variants;
+  const failedRetries = getExpectedResealRetries(variants, successRate);
   const expectedAttempts = 1 + failedRetries;
   const initialSetupCost = input.initialSeedCost + input.initialSealedCraftCost;
   const totalManaSealRetryCost = input.manaSealCost * failedRetries;

@@ -18,3 +18,12 @@ void test("resplendent scroll recipe nests the same preferred normal scroll craf
     /\[recipe\.normalScroll\.id\]: normalScrollCraft \? \[normalScrollCraft\] : \[\]/,
   );
 });
+
+void test("regrade rerolls use the shared reseal expectation", () => {
+  const source = readFileSync(
+    new URL("../routes/regrade.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal(source.match(/getExpectedResealRetries\(/g)?.length, 2);
+});
