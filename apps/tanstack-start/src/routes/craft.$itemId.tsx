@@ -278,44 +278,42 @@ function CraftPlanPage({ listId }: { listId?: string }) {
         </label>
       </section>
 
-      <nav
-        aria-label="Craft path"
-        className="flex flex-wrap items-center gap-1 text-sm"
-      >
-        {plan.breadcrumb.map((level, index) => (
-          <span key={level.itemId} className="flex items-center gap-1">
-            {index > 0 ? (
-              <span className="text-muted-foreground">/</span>
-            ) : null}
-            <Button
-              type="button"
-              variant="link"
-              className="h-auto px-1 py-0"
-              onClick={() =>
-                setFocusPath(
-                  plan.breadcrumb
-                    .slice(0, index + 1)
-                    .map((part) => part.itemId),
-                )
-              }
-            >
-              {level.itemId === data.item.id
-                ? data.item.name
-                : level.entry.products.find(
-                      (product) => product.item.id === level.itemId,
-                    )?.item.id === level.itemId
-                  ? level.entry.craft.name
-                  : `Item ${level.itemId}`}
-            </Button>
-          </span>
-        ))}
+      <nav aria-label="Craft path" className="flex flex-col gap-1 text-sm">
+        <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+          Craft tree — currently inspecting
+        </span>
+        <div className="flex flex-wrap items-center gap-1">
+          {plan.breadcrumb.map((level, index) => (
+            <span key={level.itemId} className="flex items-center gap-1">
+              {index > 0 ? (
+                <span className="text-muted-foreground">/</span>
+              ) : null}
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto px-1 py-0"
+                onClick={() =>
+                  setFocusPath(
+                    plan.breadcrumb
+                      .slice(0, index + 1)
+                      .map((part) => part.itemId),
+                  )
+                }
+              >
+                {level.itemId === data.item.id
+                  ? data.item.name
+                  : level.entry.craft.name}
+              </Button>
+            </span>
+          ))}
+        </div>
       </nav>
 
       <section
         className="flex min-w-0 flex-col gap-4"
         aria-label="Focused Recipe"
       >
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
           <div>
             <h2 className="text-xl font-semibold">
               {plan.focused.entry.craft.name}
@@ -324,54 +322,45 @@ function CraftPlanPage({ listId }: { listId?: string }) {
               One focused Recipe level
             </p>
           </div>
-          <label className="text-sm">
-            Recipe Choice{" "}
-            <select
-              aria-label="Recipe Choice"
-              value={focusedSelectedId ?? ""}
-              onChange={(event) => setRecipe(Number(event.target.value))}
-              className="bg-background ml-2 rounded border px-2 py-1"
-            >
-              {focusedSelectedId == null ? (
-                <option value="">
-                  Recommendation: {plan.focused.entry.craft.name}
-                </option>
-              ) : null}
-              {focusedChoices.map((entry) => (
-                <option key={entry.craft.id} value={entry.craft.id}>
-                  {entry.craft.name} ·{" "}
-                  {getProducedAmount(entry, plan.focused.itemId)} output
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
-        <div className="grid gap-2">
-          {focusedChoices.map((entry) => {
-            const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
-            const output = getProducedAmount(entry, plan.focused.itemId);
-            return (
-              <div
-                key={entry.craft.id}
-                className="text-muted-foreground rounded border px-3 py-2 text-sm"
-              >
-                <span className="text-foreground font-medium">
-                  {entry.craft.name}
-                </span>{" "}
-                · {output} output / Craft · {entry.craft.labor} Labor ·{" "}
-                {cost == null
-                  ? "Missing Price"
-                  : `${formatCurrency(cost)} Craft Cost`}
-                {output > 1 && cost != null
-                  ? ` · ${formatCurrency(cost / output)} per Item`
-                  : ""}
-                <span className="block text-xs">
-                  {getRecipeSignature(entry)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        {focusedChoices.length > 1 ? (
+          <div className="grid gap-2" aria-label="Recipe choices">
+            <p className="text-sm font-medium">Choose a Recipe</p>
+            {focusedChoices.map((entry) => {
+              const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
+              const output = getProducedAmount(entry, plan.focused.itemId);
+              const selected = entry.craft.id === plan.focused.entry.craft.id;
+              return (
+                <button
+                  type="button"
+                  key={entry.craft.id}
+                  onClick={() => setRecipe(entry.craft.id)}
+                  aria-pressed={selected}
+                  className={`rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                    selected
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/50 hover:bg-muted"
+                  }`}
+                >
+                  <span className="font-medium">{entry.craft.name}</span> ·{" "}
+                  {output} output / Craft · {entry.craft.labor} Labor ·{" "}
+                  {cost == null
+                    ? "Missing Price"
+                    : `${formatCurrency(cost)} Craft Cost`}
+                  {output > 1 && cost != null
+                    ? ` · ${formatCurrency(cost / output)} per Item`
+                    : ""}
+                  <span className="block text-xs">
+                    {selected && focusedSelectedId == null
+                      ? "Recommendation · "
+                      : ""}
+                    {getRecipeSignature(entry)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <div className="grid gap-2" aria-label="Recipe materials">
           {plan.focused.entry.materials.map(({ item, amount }) => {
             const craftable = Boolean(data.subcraftsByItemId[item.id]?.length);
@@ -379,31 +368,27 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             return (
               <div
                 key={item.id}
-                className="grid gap-2 rounded border p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+                className="grid gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
               >
-                <div>
-                  <p className="font-medium">{item.name}</p>
-                  <p className="text-muted-foreground text-xs">
-                    {(
-                      plan.focusedMaterialQuantities.find(
-                        (material) => material.itemId === item.id,
-                      )?.amount ?? amount
-                    ).toLocaleString()}{" "}
-                    needed for {plan.focused.crafts} Craft
-                    {plan.focused.crafts === 1 ? "" : "s"} ·{" "}
-                    {amount.toLocaleString()} per Craft
-                  </p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <ItemIcon icon={item.icon} name={item.name} />
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{item.name}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {plan.focused.crafts > 1
+                        ? `${(plan.focusedMaterialQuantities.find((material) => material.itemId === item.id)?.amount ?? amount).toLocaleString()} needed for ${plan.focused.crafts} Crafts · `
+                        : ""}
+                      {amount.toLocaleString()} per Craft
+                    </p>
+                  </div>
                 </div>
                 <div>
                   {craftable ? (
-                    <span className="inline-flex rounded border">
-                      <button
+                    <span className="flex items-center gap-1">
+                      <Button
                         type="button"
-                        className={
-                          mode === "buy"
-                            ? "bg-primary text-primary-foreground px-2 py-1"
-                            : "px-2 py-1"
-                        }
+                        size="sm"
+                        variant={mode === "buy" ? "default" : "ghost"}
                         onClick={() => {
                           setModes((previous) => ({
                             ...previous,
@@ -417,14 +402,11 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                         }}
                       >
                         Buy
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className={
-                          mode === "craft"
-                            ? "bg-primary text-primary-foreground px-2 py-1"
-                            : "px-2 py-1"
-                        }
+                        size="sm"
+                        variant={mode === "craft" ? "default" : "ghost"}
                         onClick={() =>
                           setModes((previous) => ({
                             ...previous,
@@ -433,7 +415,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                         }
                       >
                         Craft
-                      </button>
+                      </Button>
                     </span>
                   ) : (
                     "Buy"
