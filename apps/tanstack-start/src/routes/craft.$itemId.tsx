@@ -2,7 +2,7 @@ import type { inferProcedureOutput } from "@trpc/server";
 import { Suspense, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { Info } from "lucide-react";
+import { Info, Pencil } from "lucide-react";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -532,7 +532,13 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                             type="button"
                             variant="link"
                             size="sm"
-                            className="h-auto px-0 py-0 text-xs"
+                            className="h-auto px-0 py-0"
+                            aria-label={`${overrideMap.has(item.id) ? "Edit" : "Set"} price override for ${item.name}`}
+                            title={
+                              overrideMap.has(item.id)
+                                ? "Edit price override"
+                                : "Set price override"
+                            }
                             onClick={() => {
                               setEditingOverrideItemId(item.id);
                               setOverrideDraft(
@@ -542,9 +548,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                               );
                             }}
                           >
-                            {overrideMap.has(item.id)
-                              ? "Edit override"
-                              : "Set override"}
+                            <Pencil className="size-3" aria-hidden="true" />
                           </Button>
                         </span>
                       ) : null}
