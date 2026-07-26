@@ -1,6 +1,7 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import { Suspense, useMemo, useState } from "react";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { Info } from "lucide-react";
 import { z } from "zod";
 
 import type { AppRouter } from "@acme/api";
@@ -370,11 +371,11 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             />
           ) : null}
         </div>
-        <label
-          title={salePriceSource}
-          className="text-muted-foreground flex max-w-sm items-center gap-2 text-sm"
-        >
+        <label className="text-muted-foreground flex items-center gap-2 text-sm whitespace-nowrap">
           Sale price
+          <span title={salePriceSource} aria-label={salePriceSource}>
+            <Info className="size-3.5" aria-hidden="true" />
+          </span>
           <Input
             aria-label="Sale price"
             title={salePriceSource}
@@ -388,6 +389,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                 ? "Missing Price"
                 : String(latestSalePrice)
             }
+            className="w-28 shrink-0"
           />
         </label>
       </section>
