@@ -69,11 +69,7 @@ type PageData = NonNullable<
 type CraftEntry = PageData["crafts"][number];
 
 function formatCurrency(gold: number): string {
-  const copper = Math.round(gold * 10_000);
-  const wholeGold = Math.floor(copper / 10_000);
-  const silver = Math.floor((copper % 10_000) / 100);
-  const remainder = copper % 100;
-  return `${wholeGold.toLocaleString()} Gold ${silver} Silver ${remainder} Copper`;
+  return `${gold.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
 }
 
 function serializeModes(modes: ModesMap) {
