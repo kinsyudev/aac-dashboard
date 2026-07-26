@@ -71,6 +71,19 @@ function formatCurrency(gold: number): string {
   return `${gold.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
 }
 
+function getPriceSource(
+  itemId: number,
+  priceMap: PriceMap,
+  overrideMap: Map<number, number>,
+): string {
+  if (overrideMap.has(itemId)) return "Price Override";
+  const price = priceMap.get(itemId);
+  if (parseFinitePrice(price?.avg24h) != null) return "Latest 24h Market Data";
+  if (parseFinitePrice(price?.avg7d) != null) return "Latest 7d Market Data";
+  if (parseFinitePrice(price?.avg30d) != null) return "Latest 30d Market Data";
+  return "Missing Price";
+}
+
 function serializeModes(modes: ModesMap) {
   const ids = Object.entries(modes)
     .filter(([, mode]) => mode === "craft")
@@ -220,6 +233,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
   const latestSalePrice = hasItemPrice(data.item.id, priceMap, overrideMap)
     ? getItemPrice(data.item.id, priceMap, overrideMap)
     : null;
+  const salePriceSource = getPriceSource(data.item.id, priceMap, overrideMap);
   const effectiveSalePrice =
     parsedSalePrice != null && parsedSalePrice >= 0
       ? parsedSalePrice
@@ -328,11 +342,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             value={plan.summary.totalLabor.toLocaleString()}
           />
           <StatCard
-            label={
-              overrideMap.has(data.item.id)
-                ? "Sale Price Override"
-                : "Latest Sale Price"
-            }
+            label="Sale Price"
             value={
               effectiveSalePrice == null
                 ? "Missing Price"
@@ -360,10 +370,14 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             />
           ) : null}
         </div>
-        <label className="text-muted-foreground flex max-w-sm items-center gap-2 text-sm">
-          Temporary sale-price adjustment
+        <label
+          title={salePriceSource}
+          className="text-muted-foreground flex max-w-sm items-center gap-2 text-sm"
+        >
+          Sale price
           <Input
-            aria-label="Temporary sale-price adjustment"
+            aria-label="Sale price"
+            title={salePriceSource}
             type="number"
             min="0"
             step="0.01"
