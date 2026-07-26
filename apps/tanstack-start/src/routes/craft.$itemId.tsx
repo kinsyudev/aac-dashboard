@@ -1,5 +1,6 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import { Suspense, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { Info } from "lucide-react";
 import { z } from "zod";
@@ -7,6 +8,7 @@ import { z } from "zod";
 import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
+import { toast } from "@acme/ui/toast";
 
 import type {
   ModesMap,
@@ -32,6 +34,7 @@ import {
   normalizeCraftCount,
 } from "~/lib/craft-page-plan";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
+import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
 
 export const Route = createFileRoute("/craft/$itemId")({
@@ -203,6 +206,8 @@ function RouteComponent() {
 
 function CraftPlanPage({ listId }: { listId?: string }) {
   const data = Route.useLoaderData();
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const { proficiencyMap, overrideMap } = useUserData();
   const [craftCountText, setCraftCountText] = useState("1");
   const [rootCraftId, setRootCraftId] = useState<number | null>(null);
@@ -210,9 +215,25 @@ function CraftPlanPage({ listId }: { listId?: string }) {
   const [selectedCrafts, setSelectedCrafts] = useState<SelectedCraftMap>({});
   const [salePriceText, setSalePriceText] = useState("");
   const [focusPath, setFocusPath] = useState<number[]>([data.item.id]);
+  const [editingOverrideItemId, setEditingOverrideItemId] = useState<
+    number | null
+  >(null);
+  const [overrideDraft, setOverrideDraft] = useState("");
   const priceMap: PriceMap = useMemo(
     () => new Map(data.prices.map((price) => [price.itemId, price])),
     [data.prices],
+  );
+  const setPriceOverride = useMutation(
+    trpc.profile.setPriceOverride.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.profile.getUserData.pathFilter(),
+        );
+        setEditingOverrideItemId(null);
+        toast.success("Price override saved.");
+      },
+      onError: () => toast.error("Failed to save price override."),
+    }),
   );
 
   const recommendedRoot = useMemo(
@@ -480,6 +501,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
               : getItemPrice(item.id, priceMap, overrideMap);
             const priced =
               !currency && hasItemPrice(item.id, priceMap, overrideMap);
+            const isEditingOverride = editingOverrideItemId === item.id;
             return (
               <div
                 key={item.id}
@@ -501,11 +523,72 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                           : ""}
                       {currency ? "" : `${amount.toLocaleString()} per Craft`}
                       {!currency ? (
-                        <span className="ml-1">
+                        <span className="ml-1 inline-flex items-center gap-1">
                           ·{" "}
                           {priced
                             ? `${formatCurrency(unitPrice ?? 0)} each`
                             : "Missing Price"}
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto px-0 py-0 text-xs"
+                            onClick={() => {
+                              setEditingOverrideItemId(item.id);
+                              setOverrideDraft(
+                                String(
+                                  overrideMap.get(item.id) ?? unitPrice ?? "",
+                                ),
+                              );
+                            }}
+                          >
+                            {overrideMap.has(item.id)
+                              ? "Edit override"
+                              : "Set override"}
+                          </Button>
+                        </span>
+                      ) : null}
+                      {isEditingOverride ? (
+                        <span className="mt-1 flex items-center gap-1">
+                          <Input
+                            aria-label={`${item.name} price override`}
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={overrideDraft}
+                            onChange={(event) =>
+                              setOverrideDraft(event.target.value)
+                            }
+                            className="h-7 w-24 text-xs"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-7"
+                            disabled={setPriceOverride.isPending}
+                            onClick={() => {
+                              const price = parseFinitePrice(overrideDraft);
+                              if (price == null || price <= 0) {
+                                toast.error("Enter a positive Gold price.");
+                                return;
+                              }
+                              setPriceOverride.mutate({
+                                itemId: item.id,
+                                price,
+                              });
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7"
+                            onClick={() => setEditingOverrideItemId(null)}
+                          >
+                            Cancel
+                          </Button>
                         </span>
                       ) : null}
                     </p>
