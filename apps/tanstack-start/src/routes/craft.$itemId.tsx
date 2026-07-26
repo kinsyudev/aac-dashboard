@@ -1,7 +1,12 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  notFound,
+  useNavigate,
+} from "@tanstack/react-router";
 import { Info, Pencil } from "lucide-react";
 import { z } from "zod";
 
@@ -42,7 +47,12 @@ export const Route = createFileRoute("/craft/$itemId")({
     parse: (p) => ({ itemId: z.coerce.number().int().parse(p.itemId) }),
     stringify: (p) => ({ itemId: String(p.itemId) }),
   },
-  validateSearch: z.object({ listId: z.string().uuid().optional() }),
+  validateSearch: z.object({
+    listId: z.string().uuid().optional(),
+    qty: z.coerce.number().int().min(1).optional(),
+    sub: z.string().optional(),
+    sel: z.string().optional(),
+  }),
   loader: async ({ context, params }) => {
     const data = await context.queryClient.fetchQuery(
       context.trpc.crafts.forItem.queryOptions(params.itemId),
@@ -107,6 +117,33 @@ function serializeRecipes(selected: SelectedCraftMap) {
     .sort(([left], [right]) => left - right)
     .map(([itemId, craftId]) => `${itemId}:${craftId}`);
   return choices.length ? choices.join(",") : undefined;
+}
+
+function parseCraftModes(value: string | undefined): ModesMap {
+  if (!value) return {};
+  return Object.fromEntries(
+    value
+      .split(",")
+      .map(Number)
+      .filter(Number.isInteger)
+      .map((itemId) => [itemId, "craft"] as const),
+  );
+}
+
+function parseRecipeChoices(value: string | undefined): SelectedCraftMap {
+  if (!value) return {};
+  return Object.fromEntries(
+    value
+      .split(",")
+      .map((part) => part.split(":").map(Number))
+      .filter(
+        (pair): pair is [number, number] =>
+          pair.length === 2 &&
+          Number.isInteger(pair[0]) &&
+          Number.isInteger(pair[1]),
+      )
+      .map(([itemId, craftId]) => [itemId, craftId]),
+  );
 }
 
 function SelectedCraftTree({
@@ -206,13 +243,19 @@ function RouteComponent() {
 
 function CraftPlanPage({ listId }: { listId?: string }) {
   const data = Route.useLoaderData();
+  const { qty, sub, sel } = Route.useSearch();
+  const navigate = useNavigate({ from: "/craft/$itemId" });
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const { proficiencyMap, overrideMap } = useUserData();
-  const [craftCountText, setCraftCountText] = useState("1");
-  const [rootCraftId, setRootCraftId] = useState<number | null>(null);
-  const [modes, setModes] = useState<ModesMap>({});
-  const [selectedCrafts, setSelectedCrafts] = useState<SelectedCraftMap>({});
+  const [craftCountText, setCraftCountText] = useState(() => String(qty ?? 1));
+  const [rootCraftId, setRootCraftId] = useState<number | null>(
+    () => parseRecipeChoices(sel)[data.item.id] ?? null,
+  );
+  const [modes, setModes] = useState<ModesMap>(() => parseCraftModes(sub));
+  const [selectedCrafts, setSelectedCrafts] = useState<SelectedCraftMap>(() =>
+    parseRecipeChoices(sel),
+  );
   const [salePriceText, setSalePriceText] = useState("");
   const [focusPath, setFocusPath] = useState<number[]>([data.item.id]);
   const [editingOverrideItemId, setEditingOverrideItemId] = useState<
@@ -235,6 +278,36 @@ function CraftPlanPage({ listId }: { listId?: string }) {
       onError: () => toast.error("Failed to save price override."),
     }),
   );
+
+  useEffect(() => {
+    const recipes = {
+      ...selectedCrafts,
+      ...(rootCraftId == null ? {} : { [data.item.id]: rootCraftId }),
+    };
+    const nextQty = normalizeCraftCount(Number(craftCountText));
+    const nextSub = serializeModes(modes);
+    const nextSel = serializeRecipes(recipes);
+    if (qty === nextQty && sub === nextSub && sel === nextSel) return;
+    void navigate({
+      search: (previous) => ({
+        ...previous,
+        qty: nextQty,
+        sub: nextSub,
+        sel: nextSel,
+      }),
+      replace: true,
+    });
+  }, [
+    craftCountText,
+    data.item.id,
+    modes,
+    navigate,
+    qty,
+    rootCraftId,
+    sel,
+    selectedCrafts,
+    sub,
+  ]);
 
   const recommendedRoot = useMemo(
     () =>
