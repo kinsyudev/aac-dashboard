@@ -1,6 +1,5 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import type { Dispatch, SetStateAction } from "react";
-import { Fragment, Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { z } from "zod";
 
@@ -9,35 +8,22 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 
 import type {
-  CraftMode,
   ModesMap,
-  OptimizationObjective,
-  OverrideMap,
   PriceMap,
-  ProficiencyMap,
   SelectedCraftMap,
   SubcraftMap,
 } from "~/lib/craft-optimizer";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
-import {
-  CraftModeToggle,
-  RecipeCardShell,
-  RecipeCollapseToggle,
-  RecipeHeader,
-  RecipeItemRow,
-  RecipeLegend,
-} from "~/component/recipe-breakdown";
 import { StatCard } from "~/component/stat-card";
+import { pickPreferredCraft } from "~/lib/craft-helpers";
+import { getProducedAmount, parseFinitePrice } from "~/lib/craft-optimizer";
 import {
-  buildAutoPlan,
-  computeManualCraftMetrics,
-  getItemPrice,
-  getSelectedEntry,
-  hasItemPrice,
-  MAX_CRAFT_DEPTH,
-  parseFinitePrice,
-} from "~/lib/craft-optimizer";
+  buildCraftPagePlan,
+  getRecipeChoiceCost,
+  getRecipeSignature,
+  normalizeCraftCount,
+} from "~/lib/craft-page-plan";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { useUserData } from "~/lib/useUserData";
 
@@ -46,13 +32,10 @@ export const Route = createFileRoute("/craft/$itemId")({
     parse: (p) => ({ itemId: z.coerce.number().int().parse(p.itemId) }),
     stringify: (p) => ({ itemId: String(p.itemId) }),
   },
-  validateSearch: z.object({
-    listId: z.string().uuid().optional(),
-  }),
+  validateSearch: z.object({ listId: z.string().uuid().optional() }),
   loader: async ({ context, params }) => {
-    const { trpc, queryClient } = context;
-    const data = await queryClient.fetchQuery(
-      trpc.crafts.forItem.queryOptions(params.itemId),
+    const data = await context.queryClient.fetchQuery(
+      context.trpc.crafts.forItem.queryOptions(params.itemId),
     );
     if (!data) {
       notFound({ throw: true });
@@ -60,60 +43,43 @@ export const Route = createFileRoute("/craft/$itemId")({
     }
     return data;
   },
-  head: ({ loaderData }) => {
-    if (!loaderData) return {};
-    const item = loaderData.item;
-    return {
-      meta: buildMetaTags({
-        title: buildPageTitle(item.name, "Craft"),
-        description: `Inspect recipe costs, materials, and craft-path choices for ${item.name}.`,
-        image: getItemIconUrl(item.icon),
-      }),
-    };
-  },
+  head: ({ loaderData }) =>
+    loaderData
+      ? {
+          meta: buildMetaTags({
+            title: buildPageTitle(loaderData.item.name, "Craft"),
+            description: `Plan Crafts for ${loaderData.item.name}.`,
+            image: getItemIconUrl(loaderData.item.icon),
+          }),
+        }
+      : {},
   component: RouteComponent,
 });
-
-function RouteComponent() {
-  const { listId } = Route.useSearch();
-  return (
-    <main className="container py-16">
-      <Link
-        to="/craft"
-        search={{ listId }}
-        className="text-muted-foreground mb-6 flex items-center gap-1 text-sm hover:underline"
-      >
-        ← Back to list
-      </Link>
-      <Suspense fallback={<p>Loading...</p>}>
-        <ItemDetail listId={listId} />
-      </Suspense>
-    </main>
-  );
-}
 
 type PageData = NonNullable<
   inferProcedureOutput<AppRouter["crafts"]["forItem"]>
 >;
 type CraftEntry = PageData["crafts"][number];
-type AnyCraftEntry = CraftEntry;
-type PageSubcraftMap = SubcraftMap<AnyCraftEntry>;
 
-function serializeCraftModeSearch(modes: ModesMap): string | undefined {
-  const craftedItemIds = Object.entries(modes)
-    .filter(([, mode]) => mode === "craft")
-    .map(([itemId]) => Number(itemId))
-    .filter(Number.isInteger)
-    .sort((a, b) => a - b);
-
-  if (!craftedItemIds.length) return undefined;
-  return craftedItemIds.join(",");
+function formatCurrency(gold: number): string {
+  const copper = Math.round(gold * 10_000);
+  const wholeGold = Math.floor(copper / 10_000);
+  const silver = Math.floor((copper % 10_000) / 100);
+  const remainder = copper % 100;
+  return `${wholeGold.toLocaleString()} Gold ${silver} Silver ${remainder} Copper`;
 }
 
-function serializeSelectedCraftsSearch(
-  selectedCrafts: SelectedCraftMap,
-): string | undefined {
-  const entries = Object.entries(selectedCrafts)
+function serializeModes(modes: ModesMap) {
+  const ids = Object.entries(modes)
+    .filter(([, mode]) => mode === "craft")
+    .map(([id]) => Number(id))
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
+  return ids.length ? ids.join(",") : undefined;
+}
+
+function serializeRecipes(selected: SelectedCraftMap) {
+  const choices = Object.entries(selected)
     .map(([itemId, craftId]) => [Number(itemId), craftId] as const)
     .filter(
       ([itemId, craftId]) =>
@@ -121,496 +87,399 @@ function serializeSelectedCraftsSearch(
     )
     .sort(([left], [right]) => left - right)
     .map(([itemId, craftId]) => `${itemId}:${craftId}`);
-
-  if (!entries.length) return undefined;
-  return entries.join(",");
+  return choices.length ? choices.join(",") : undefined;
 }
 
-function formatGold(value: number): string {
-  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}g`;
-}
-
-function formatSilverPerLabor(value: number): string {
-  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} s/L`;
-}
-
-function getVariant(value: number): "positive" | "negative" | "neutral" {
-  if (value > 0) return "positive";
-  if (value < 0) return "negative";
-  return "neutral";
-}
-
-function formatSilverPerLaborValue(
-  state: "finite" | "infinite" | "none",
-  value: number | null,
-): string {
-  if (state === "infinite") return "∞ s/L";
-  if (state === "finite" && value != null) return formatSilverPerLabor(value);
-  return "—";
-}
-
-function getSilverPerLaborVariant(
-  state: "finite" | "infinite" | "none",
-  value: number | null,
-): "positive" | "negative" | "neutral" {
-  if (state === "infinite") return "positive";
-  if (state === "finite" && value != null) return getVariant(value);
-  return "neutral";
-}
-
-function CraftRecipe({
-  entry,
-  producedItemId,
-  priceMap,
-  overrideMap,
-  proficiencyMap,
-  subcraftMap = {},
-  depth = 0,
-  modes,
-  setModes,
-  selectedCrafts,
-  setSelectedCrafts,
-  collapsedCraftIds,
-  toggleCollapsed,
-  listId,
-}: {
-  entry: AnyCraftEntry;
-  producedItemId: number;
-  priceMap: PriceMap;
-  overrideMap: OverrideMap;
-  proficiencyMap: ProficiencyMap;
-  subcraftMap?: PageSubcraftMap;
-  depth?: number;
-  modes?: ModesMap;
-  setModes?: Dispatch<SetStateAction<ModesMap>>;
-  selectedCrafts?: SelectedCraftMap;
-  setSelectedCrafts?: Dispatch<SetStateAction<SelectedCraftMap>>;
-  collapsedCraftIds?: Set<number>;
-  toggleCollapsed?: (craftId: number) => void;
-  listId?: string;
-}) {
-  const { craft, materials } = entry;
-  const [localModes, setLocalModes] = useState<ModesMap>({});
-  const resolvedModes = modes ?? localModes;
-  const updateModes = setModes ?? setLocalModes;
-  const [localSelectedCrafts, setLocalSelectedCrafts] =
-    useState<SelectedCraftMap>({});
-  const resolvedSelectedCrafts = selectedCrafts ?? localSelectedCrafts;
-  const updateSelectedCrafts = setSelectedCrafts ?? setLocalSelectedCrafts;
-  const [localSalePrice, setLocalSalePrice] = useState("");
-  const [localCollapsedCraftIds, setLocalCollapsedCraftIds] = useState<
-    Set<number>
-  >(() => new Set());
-  const resolvedCollapsedCraftIds = collapsedCraftIds ?? localCollapsedCraftIds;
-  const updateCollapsed =
-    toggleCollapsed ??
-    ((craftId: number) =>
-      setLocalCollapsedCraftIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(craftId)) next.delete(craftId);
-        else next.add(craftId);
-        return next;
-      }));
-  const isCollapsed = resolvedCollapsedCraftIds.has(craft.id);
-
-  const getMode = (materialItemId: number): CraftMode =>
-    resolvedModes[materialItemId] ?? "buy";
-
-  const defaultSalePrice = getItemPrice(producedItemId, priceMap, overrideMap);
-  const localSaleOverride = parseFinitePrice(localSalePrice);
-  const effectiveSalePrice =
-    localSalePrice.trim() !== "" &&
-    localSaleOverride != null &&
-    localSaleOverride >= 0
-      ? localSaleOverride
-      : defaultSalePrice;
-
-  const metrics = useMemo(
-    () =>
-      computeManualCraftMetrics(
-        entry,
-        producedItemId,
-        effectiveSalePrice,
-        {
-          subcraftMap,
-          priceMap,
-          overrideMap,
-          proficiencyMap,
-          maxDepth: MAX_CRAFT_DEPTH,
-        },
-        resolvedModes,
-        resolvedSelectedCrafts,
-        depth,
-      ),
-    [
-      depth,
-      effectiveSalePrice,
-      entry,
-      overrideMap,
-      priceMap,
-      producedItemId,
-      proficiencyMap,
-      resolvedModes,
-      resolvedSelectedCrafts,
-      subcraftMap,
-    ],
-  );
-
-  const applyAutoPlan = (objective: OptimizationObjective) => {
-    const candidateEntries: AnyCraftEntry[] =
-      depth === 0 ? [entry] : (subcraftMap[producedItemId] ?? [entry]);
-    const plan = buildAutoPlan(
-      candidateEntries,
-      producedItemId,
-      effectiveSalePrice,
-      {
-        subcraftMap,
-        priceMap,
-        overrideMap,
-        proficiencyMap,
-        maxDepth: MAX_CRAFT_DEPTH,
-      },
-      objective,
-    );
-    if (!plan) return;
-
-    updateModes((prev) => ({
-      ...prev,
-      ...plan.modes,
-    }));
-    updateSelectedCrafts((prev) => ({
-      ...prev,
-      ...(depth > 0 ? { [producedItemId]: plan.entry.craft.id } : {}),
-      ...plan.selectedCrafts,
-    }));
-  };
-
-  const hasPrices = priceMap.size > 0 || overrideMap.size > 0;
-  const hasCraftable = materials.some(
-    ({ item }) => depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id]?.length,
-  );
-
+function RouteComponent() {
+  const { listId } = Route.useSearch();
   return (
-    <RecipeCardShell depth={depth}>
-      <RecipeHeader
-        depth={depth}
-        title={craft.name}
-        laborLabel={craft.labor > 0 ? `${metrics.directLabor} labor` : null}
-        materialsLabel={hasPrices ? formatGold(metrics.materialsCost) : null}
-        collapseToggle={
-          <RecipeCollapseToggle
-            collapsed={isCollapsed}
-            onToggle={() => updateCollapsed(craft.id)}
-          />
-        }
-        action={
-          depth === 0 ? (
-            <Link
-              to="/shoplist"
-              search={{
-                craft: craft.id,
-                qty: 1,
-                sub: serializeCraftModeSearch(resolvedModes),
-                sel: serializeSelectedCraftsSearch(resolvedSelectedCrafts),
-                listId,
-              }}
-              className="text-muted-foreground text-xs hover:underline"
-            >
-              Shoplist →
-            </Link>
-          ) : null
-        }
-      />
-
-      {!isCollapsed && (
-        <>
-          {hasCraftable ? (
-            <div className="mb-3 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => applyAutoPlan("profit")}
-              >
-                Most profitable
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => applyAutoPlan("silverPerLabor")}
-              >
-                Best silver / labor
-              </Button>
-            </div>
-          ) : null}
-
-          {depth === 0 && (
-            <div className="mb-4 flex flex-col gap-3 rounded-md border p-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-sm font-medium">Sale price</p>
-                  <p className="text-muted-foreground text-xs">
-                    Uses profile override or market price by default. This input
-                    is temporary to this craft card.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={localSalePrice}
-                    onChange={(event) => setLocalSalePrice(event.target.value)}
-                    placeholder={
-                      defaultSalePrice > 0 ? String(defaultSalePrice) : "0"
-                    }
-                    className="w-32 tabular-nums"
-                    aria-label={`${craft.name} sale price`}
-                  />
-                  <span className="text-muted-foreground text-sm">g</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard
-                  label="Sale price"
-                  value={formatGold(effectiveSalePrice)}
-                />
-                <StatCard
-                  label="Cost / unit"
-                  value={formatGold(metrics.costPerUnit)}
-                />
-                <StatCard
-                  label="Profit / unit"
-                  value={formatGold(metrics.profitPerUnit)}
-                  variant={getVariant(metrics.profitPerUnit)}
-                />
-                <StatCard
-                  label="Silver / labor"
-                  value={formatSilverPerLaborValue(
-                    metrics.silverPerLaborState,
-                    metrics.silverPerLabor,
-                  )}
-                  variant={getSilverPerLaborVariant(
-                    metrics.silverPerLaborState,
-                    metrics.silverPerLabor,
-                  )}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard
-                  label="Batch cost"
-                  value={formatGold(metrics.materialsCost)}
-                />
-                <StatCard
-                  label="Items / batch"
-                  value={metrics.producedAmount.toLocaleString()}
-                />
-                <StatCard
-                  label="Labor / batch"
-                  value={metrics.totalLaborPerBatch.toLocaleString(undefined, {
-                    maximumFractionDigits: 2,
-                  })}
-                />
-                <StatCard
-                  label="Labor / unit"
-                  value={metrics.laborPerUnit.toLocaleString(undefined, {
-                    maximumFractionDigits: 2,
-                  })}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Materials */}
-          <ul className="flex flex-col gap-1">
-            {materials.map(({ item, amount }) => {
-              const isCraftable =
-                depth < MAX_CRAFT_DEPTH && !!subcraftMap[item.id]?.length;
-              const mode = getMode(item.id);
-              const customPrice = overrideMap.get(item.id);
-              const isCustom = customPrice != null;
-              const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-              const selectedSubEntry = isCraftable
-                ? getSelectedEntry(item.id, subcraftMap, resolvedSelectedCrafts)
-                : null;
-              const craftedMetrics = selectedSubEntry
-                ? computeManualCraftMetrics(
-                    selectedSubEntry,
-                    item.id,
-                    getItemPrice(item.id, priceMap, overrideMap),
-                    {
-                      subcraftMap,
-                      priceMap,
-                      overrideMap,
-                      proficiencyMap,
-                      maxDepth: MAX_CRAFT_DEPTH,
-                    },
-                    resolvedModes,
-                    resolvedSelectedCrafts,
-                    depth + 1,
-                  )
-                : null;
-              const craftUnit = craftedMetrics?.costPerUnit ?? 0;
-              const unit =
-                mode === "craft" && isCraftable ? craftUnit : buyUnit;
-              const lineTotal = unit * amount;
-              const hasPrice = hasItemPrice(item.id, priceMap, overrideMap);
-              const totalDiff =
-                isCraftable && hasPrice ? (buyUnit - craftUnit) * amount : null;
-              const subLabor = craftedMetrics?.laborPerUnit ?? 0;
-
-              return (
-                <Fragment key={item.id}>
-                  <RecipeItemRow
-                    icon={<ItemIcon icon={item.icon} name={item.name} />}
-                    name={item.name}
-                    amount={amount}
-                    controls={
-                      isCraftable ? (
-                        <CraftModeToggle
-                          mode={mode}
-                          onBuy={() =>
-                            updateModes((m) => ({ ...m, [item.id]: "buy" }))
-                          }
-                          onCraft={() =>
-                            updateModes((m) => ({ ...m, [item.id]: "craft" }))
-                          }
-                        />
-                      ) : null
-                    }
-                    value={
-                      hasPrice || mode === "craft" ? (
-                        <span className="text-muted-foreground shrink-0 tabular-nums">
-                          {isCustom && mode === "buy" ? (
-                            <span className="text-primary mr-1 text-xs">
-                              (custom)
-                            </span>
-                          ) : null}
-                          {mode === "craft" && isCraftable && subLabor > 0 ? (
-                            <span className="mr-1 text-xs text-amber-500">
-                              {subLabor.toLocaleString(undefined, {
-                                maximumFractionDigits: 2,
-                              })}
-                              L +
-                            </span>
-                          ) : null}
-                          <span className="text-foreground/70">
-                            {formatGold(unit)}
-                          </span>
-                          {amount > 1 ? (
-                            <span className="text-foreground ml-1.5 font-medium">
-                              = {formatGold(lineTotal)}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null
-                    }
-                    diff={
-                      totalDiff !== null ? (
-                        <span
-                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${
-                            totalDiff > 0
-                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                              : totalDiff < 0
-                                ? "bg-red-500/10 text-red-500"
-                                : "text-muted-foreground"
-                          }`}
-                        >
-                          {totalDiff > 0
-                            ? `↓ ${formatGold(totalDiff)}`
-                            : totalDiff < 0
-                              ? `↑ ${formatGold(Math.abs(totalDiff))}`
-                              : "="}
-                        </span>
-                      ) : null
-                    }
-                  />
-
-                  {mode === "craft" && isCraftable && selectedSubEntry && (
-                    <li className="border-muted-foreground/20 my-0.5 ml-3 border-l-2 pl-3">
-                      <CraftRecipe
-                        entry={selectedSubEntry}
-                        producedItemId={item.id}
-                        priceMap={priceMap}
-                        overrideMap={overrideMap}
-                        proficiencyMap={proficiencyMap}
-                        subcraftMap={subcraftMap}
-                        depth={depth + 1}
-                        modes={resolvedModes}
-                        setModes={updateModes}
-                        selectedCrafts={resolvedSelectedCrafts}
-                        setSelectedCrafts={updateSelectedCrafts}
-                        collapsedCraftIds={resolvedCollapsedCraftIds}
-                        toggleCollapsed={updateCollapsed}
-                        listId={listId}
-                      />
-                    </li>
-                  )}
-                </Fragment>
-              );
-            })}
-          </ul>
-
-          {/* Legend — only on top-level cards that have craftable ingredients */}
-          {depth === 0 && hasCraftable ? <RecipeLegend /> : null}
-        </>
-      )}
-    </RecipeCardShell>
+    <main className="container py-8 sm:py-16">
+      <Link
+        to="/craft"
+        search={{ listId }}
+        className="text-muted-foreground mb-6 flex text-sm hover:underline"
+      >
+        ← Back to Craft
+      </Link>
+      <Suspense fallback={<p>Loading...</p>}>
+        <CraftPlanPage listId={listId} />
+      </Suspense>
+    </main>
   );
 }
 
-function ItemDetail({ listId }: { listId?: string }) {
+function CraftPlanPage({ listId }: { listId?: string }) {
   const data = Route.useLoaderData();
   const { proficiencyMap, overrideMap } = useUserData();
-
+  const [craftCountText, setCraftCountText] = useState("1");
+  const [rootCraftId, setRootCraftId] = useState<number | null>(null);
+  const [modes, setModes] = useState<ModesMap>({});
+  const [selectedCrafts, setSelectedCrafts] = useState<SelectedCraftMap>({});
+  const [salePriceText, setSalePriceText] = useState("");
+  const [focusPath, setFocusPath] = useState<number[]>([data.item.id]);
   const priceMap: PriceMap = useMemo(
-    () => new Map(data.prices.map((p) => [p.itemId, p])),
-    [data],
+    () => new Map(data.prices.map((price) => [price.itemId, price])),
+    [data.prices],
   );
 
-  const { item, crafts } = data;
+  const recommendedRoot = useMemo(
+    () =>
+      data.crafts.length ? pickPreferredCraft(data.crafts, data.item.id) : null,
+    [data.crafts, data.item.id],
+  );
+  const rootEntry =
+    data.crafts.find((entry) => entry.craft.id === rootCraftId) ??
+    recommendedRoot;
+  if (!rootEntry) {
+    return (
+      <p className="text-muted-foreground">
+        No supported Recipes are available.
+      </p>
+    );
+  }
+  const parsedSalePrice = parseFinitePrice(salePriceText);
+  const plan = buildCraftPagePlan({
+    rootEntry,
+    rootItemId: data.item.id,
+    craftCount: normalizeCraftCount(Number(craftCountText)),
+    subcraftMap: data.subcraftsByItemId as SubcraftMap<CraftEntry>,
+    modes,
+    selectedCrafts,
+    priceMap,
+    overrideMap,
+    proficiencyMap,
+    salePrice:
+      parsedSalePrice != null && parsedSalePrice >= 0
+        ? parsedSalePrice
+        : undefined,
+    focusPath,
+  });
+  const focusedChoices =
+    plan.focused.itemId === data.item.id
+      ? data.crafts
+      : (data.subcraftsByItemId[plan.focused.itemId] ?? []);
+  const focusedSelectedId =
+    plan.focused.itemId === data.item.id
+      ? rootCraftId
+      : selectedCrafts[plan.focused.itemId];
+
+  const setRecipe = (craftId: number) => {
+    if (plan.focused.itemId === data.item.id) {
+      setRootCraftId(craftId);
+      setFocusPath([data.item.id]);
+      return;
+    }
+    setSelectedCrafts((previous) => ({
+      ...previous,
+      [plan.focused.itemId]: craftId,
+    }));
+    setFocusPath((previous) =>
+      previous.slice(0, previous.indexOf(plan.focused.itemId) + 1),
+    );
+  };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-4">
-        {item.icon && <ItemIcon icon={item.icon} name={item.name} size="lg" />}
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold">{item.name}</h1>
-            <Link
-              to="/item/$itemId"
-              params={{ itemId: item.id }}
-              className="text-muted-foreground text-sm hover:underline"
-            >
-              View item page
-            </Link>
+    <div className="flex min-w-0 flex-col gap-6">
+      <header className="flex min-w-0 flex-wrap items-center gap-4">
+        {data.item.icon ? (
+          <ItemIcon icon={data.item.icon} name={data.item.name} size="lg" />
+        ) : null}
+        <div className="min-w-0">
+          <h1 className="truncate text-3xl font-bold">{data.item.name}</h1>
+          <p className="text-muted-foreground text-sm">
+            Craft Plan · {data.item.category}
+          </p>
+        </div>
+      </header>
+      {data.item.description ? (
+        <ItemDescription text={data.item.description} />
+      ) : null}
+
+      <section
+        className="flex flex-col gap-4 rounded-lg border p-4"
+        aria-label="Plan summary"
+      >
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="font-semibold">Whole Plan</h2>
+            <p className="text-muted-foreground text-sm">
+              {plan.craftCount} Craft{plan.craftCount === 1 ? "" : "s"} produces{" "}
+              {plan.summary.totalOutput.toLocaleString()} {data.item.name}.
+            </p>
           </div>
-          <p className="text-muted-foreground text-sm">{item.category}</p>
-        </div>
-      </div>
-
-      {item.description && <ItemDescription text={item.description} />}
-
-      {crafts.length > 0 && (
-        <div className="flex flex-col gap-4">
-          <h2 className="text-xl font-semibold">Crafts</h2>
-          {crafts.map((entry) => (
-            <CraftRecipe
-              key={entry.craft.id}
-              entry={entry}
-              producedItemId={item.id}
-              priceMap={priceMap}
-              overrideMap={overrideMap}
-              proficiencyMap={proficiencyMap}
-              subcraftMap={data.subcraftsByItemId}
-              listId={listId}
+          <label className="flex items-center gap-2 text-sm">
+            Crafts
+            <Input
+              aria-label="Number of Crafts"
+              type="number"
+              min="1"
+              step="1"
+              value={craftCountText}
+              onChange={(event) => setCraftCountText(event.target.value)}
+              onBlur={() =>
+                setCraftCountText(
+                  String(normalizeCraftCount(Number(craftCountText))),
+                )
+              }
+              className="w-24 tabular-nums"
             />
-          ))}
+          </label>
         </div>
-      )}
+        {plan.summary.missingPriceItems.length ? (
+          <p className="rounded bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            Incomplete Plan — Missing Price:{" "}
+            {plan.summary.missingPriceItems.join(", ")}.
+          </p>
+        ) : null}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatCard
+            label="Craft Cost"
+            value={
+              plan.summary.craftCost == null
+                ? "—"
+                : formatCurrency(plan.summary.craftCost)
+            }
+          />
+          <StatCard
+            label="Total Labor"
+            value={plan.summary.totalLabor.toLocaleString()}
+          />
+          <StatCard
+            label="Profit Before Fees / Labor"
+            value={
+              plan.summary.profitPerLabor == null
+                ? "—"
+                : `${plan.summary.profitPerLabor.toLocaleString(undefined, { maximumFractionDigits: 2 })} Silver / Labor`
+            }
+          />
+          {plan.summary.costPerItem != null ? (
+            <StatCard
+              label="Cost per Item"
+              value={formatCurrency(plan.summary.costPerItem)}
+            />
+          ) : null}
+          {plan.summary.profitPerItem != null ? (
+            <StatCard
+              label="Profit Before Fees per Item"
+              value={formatCurrency(plan.summary.profitPerItem)}
+            />
+          ) : null}
+        </div>
+        <label className="text-muted-foreground flex max-w-sm items-center gap-2 text-sm">
+          Temporary Sale Price (Gold)
+          <Input
+            aria-label="Temporary Sale Price"
+            type="number"
+            min="0"
+            step="0.01"
+            value={salePriceText}
+            onChange={(event) => setSalePriceText(event.target.value)}
+          />
+        </label>
+      </section>
+
+      <nav
+        aria-label="Craft path"
+        className="flex flex-wrap items-center gap-1 text-sm"
+      >
+        {plan.breadcrumb.map((level, index) => (
+          <span key={level.itemId} className="flex items-center gap-1">
+            {index > 0 ? (
+              <span className="text-muted-foreground">/</span>
+            ) : null}
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto px-1 py-0"
+              onClick={() =>
+                setFocusPath(
+                  plan.breadcrumb
+                    .slice(0, index + 1)
+                    .map((part) => part.itemId),
+                )
+              }
+            >
+              {level.itemId === data.item.id
+                ? data.item.name
+                : level.entry.products.find(
+                      (product) => product.item.id === level.itemId,
+                    )?.item.id === level.itemId
+                  ? level.entry.craft.name
+                  : `Item ${level.itemId}`}
+            </Button>
+          </span>
+        ))}
+      </nav>
+
+      <section
+        className="flex min-w-0 flex-col gap-4"
+        aria-label="Focused Recipe"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">
+              {plan.focused.entry.craft.name}
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              One focused Recipe level
+            </p>
+          </div>
+          <label className="text-sm">
+            Recipe Choice{" "}
+            <select
+              aria-label="Recipe Choice"
+              value={focusedSelectedId ?? ""}
+              onChange={(event) => setRecipe(Number(event.target.value))}
+              className="bg-background ml-2 rounded border px-2 py-1"
+            >
+              {focusedSelectedId == null ? (
+                <option value="">
+                  Recommendation: {plan.focused.entry.craft.name}
+                </option>
+              ) : null}
+              {focusedChoices.map((entry) => (
+                <option key={entry.craft.id} value={entry.craft.id}>
+                  {entry.craft.name} ·{" "}
+                  {getProducedAmount(entry, plan.focused.itemId)} output
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="grid gap-2">
+          {focusedChoices.map((entry) => {
+            const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
+            const output = getProducedAmount(entry, plan.focused.itemId);
+            return (
+              <div
+                key={entry.craft.id}
+                className="text-muted-foreground rounded border px-3 py-2 text-sm"
+              >
+                <span className="text-foreground font-medium">
+                  {entry.craft.name}
+                </span>{" "}
+                · {output} output / Craft · {entry.craft.labor} Labor ·{" "}
+                {cost == null
+                  ? "Missing Price"
+                  : `${formatCurrency(cost)} Craft Cost`}
+                {output > 1 && cost != null
+                  ? ` · ${formatCurrency(cost / output)} per Item`
+                  : ""}
+                <span className="block text-xs">
+                  {getRecipeSignature(entry)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="grid gap-2" aria-label="Recipe materials">
+          {plan.focused.entry.materials.map(({ item, amount }) => {
+            const craftable = Boolean(data.subcraftsByItemId[item.id]?.length);
+            const mode = modes[item.id] ?? "buy";
+            return (
+              <div
+                key={item.id}
+                className="grid gap-2 rounded border p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+              >
+                <div>
+                  <p className="font-medium">{item.name}</p>
+                  <p className="text-muted-foreground text-xs">
+                    {(
+                      plan.focusedMaterialQuantities.find(
+                        (material) => material.itemId === item.id,
+                      )?.amount ?? amount
+                    ).toLocaleString()}{" "}
+                    needed for {plan.focused.crafts} Craft
+                    {plan.focused.crafts === 1 ? "" : "s"} ·{" "}
+                    {amount.toLocaleString()} per Craft
+                  </p>
+                </div>
+                <div>
+                  {craftable ? (
+                    <span className="inline-flex rounded border">
+                      <button
+                        type="button"
+                        className={
+                          mode === "buy"
+                            ? "bg-primary text-primary-foreground px-2 py-1"
+                            : "px-2 py-1"
+                        }
+                        onClick={() => {
+                          setModes((previous) => ({
+                            ...previous,
+                            [item.id]: "buy",
+                          }));
+                          setFocusPath((previous) =>
+                            previous.includes(item.id)
+                              ? previous.slice(0, previous.indexOf(item.id))
+                              : previous,
+                          );
+                        }}
+                      >
+                        Buy
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          mode === "craft"
+                            ? "bg-primary text-primary-foreground px-2 py-1"
+                            : "px-2 py-1"
+                        }
+                        onClick={() =>
+                          setModes((previous) => ({
+                            ...previous,
+                            [item.id]: "craft",
+                          }))
+                        }
+                      >
+                        Craft
+                      </button>
+                    </span>
+                  ) : (
+                    "Buy"
+                  )}
+                </div>
+                <div>
+                  {craftable && mode === "craft" ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setFocusPath((previous) => [
+                          ...previous.slice(
+                            0,
+                            previous.indexOf(plan.focused.itemId) + 1,
+                          ),
+                          item.id,
+                        ])
+                      }
+                    >
+                      Inspect
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      <Link
+        to="/shoplist"
+        search={{
+          craft: rootEntry.craft.id,
+          qty: plan.craftCount,
+          sub: serializeModes(modes),
+          sel: serializeRecipes({
+            ...selectedCrafts,
+            ...(rootCraftId != null ? { [data.item.id]: rootCraftId } : {}),
+          }),
+          listId,
+        }}
+        className="text-sm hover:underline"
+      >
+        Continue this Plan in Shopping List →
+      </Link>
     </div>
   );
 }
