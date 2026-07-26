@@ -8,15 +8,23 @@ import { ItemDescription } from "./item-description.ts";
 
 void test("parses indexed formatting inline and retains multiline lists", () => {
   const blocks = buildItemDescriptionBlocks(
-    "A |nc;7rank 7|r spell lasts |nc;721 seconds|r.\n- First benefit\n- Second benefit",
+    "This is a rank |nc;7|r |nd;healing|r potion.\nCooldown: |nc;90 seconds|r\n- First benefit\n- Second benefit",
   );
   const paragraph = blocks[0];
   assert.equal(paragraph?.type, "paragraph");
   assert.equal(
     paragraph.lines[0]?.map((segment) => segment.text).join(""),
-    "A rank 7 spell lasts 21 seconds.",
+    "This is a rank 7 healing potion.",
   );
-  const list = blocks[1];
+  const stats = blocks[1];
+  assert.equal(stats?.type, "stats");
+  assert.deepEqual(stats.rows, [
+    {
+      label: [{ color: undefined, text: "Cooldown" }],
+      value: [{ color: undefined, text: "90 seconds" }],
+    },
+  ]);
+  const list = blocks[2];
   assert.equal(list?.type, "list");
   assert.deepEqual(
     list.items.map((item) => item.map((segment) => segment.text).join("")),
@@ -27,9 +35,12 @@ void test("parses indexed formatting inline and retains multiline lists", () => 
 void test("renders the public description without Game Data tokens", () => {
   const html = renderToStaticMarkup(
     createElement(ItemDescription, {
-      text: "A |nc;7rank 7|r spell lasts |nc;721 seconds|r.",
+      text: "This is a rank |nc;7|r |nd;healing|r potion.\nCooldown: |nc;90 seconds|r",
     }),
   );
-  assert.match(html, /rank 7.*21 seconds/);
-  assert.doesNotMatch(html, /\|nc;7|\|r/);
+  assert.match(
+    html.replace(/<[^>]+>/g, ""),
+    /rank 7 healing potion\.Cooldown90 seconds/,
+  );
+  assert.doesNotMatch(html, /\|nc;|\|nd;|\|r/);
 });

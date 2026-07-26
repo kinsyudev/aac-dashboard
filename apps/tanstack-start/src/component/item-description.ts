@@ -47,23 +47,22 @@ export function ItemDescription({ text }: { text: string }) {
       }
       return createElement(
         "div",
-        {
-          key: index,
-          className:
-            "bg-muted/35 divide-border/60 grid gap-2 rounded-lg border px-4 py-3",
-        },
+        { key: index, className: "flex flex-col gap-1" },
         block.rows.map((row, rowIndex) =>
           createElement(
             "div",
             {
               key: rowIndex,
-              className:
-                "grid gap-1 border-b border-inherit pb-2 last:border-b-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline sm:gap-4",
+              className: "flex flex-wrap items-baseline gap-x-2",
             },
-            createElement("span", null, renderSegments(row.label)),
             createElement(
               "span",
-              { className: "text-foreground sm:text-right" },
+              { className: "font-medium" },
+              renderSegments(row.label),
+            ),
+            createElement(
+              "span",
+              { className: "text-foreground" },
               renderSegments(row.value),
             ),
           ),

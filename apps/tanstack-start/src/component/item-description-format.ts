@@ -15,7 +15,7 @@ const COLOR_TAG = /\|c([0-9A-Fa-f]{8})/g;
 const RESET_TOKEN = "|r";
 
 function parseSegments(line: string): DescriptionSegment[] {
-  const sanitized = line.replace(/\|ni;|\|nd;|\|n[ci];\d/g, "");
+  const sanitized = line.replace(/\|ni;|\|nd;|\|nc;/g, "");
   const segments: DescriptionSegment[] = [];
   let color: string | undefined;
   let buffer = "";
