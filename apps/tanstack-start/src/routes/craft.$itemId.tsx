@@ -217,6 +217,13 @@ function CraftPlanPage({ listId }: { listId?: string }) {
     );
   }
   const parsedSalePrice = parseFinitePrice(salePriceText);
+  const latestSalePrice = hasItemPrice(data.item.id, priceMap, overrideMap)
+    ? getItemPrice(data.item.id, priceMap, overrideMap)
+    : null;
+  const effectiveSalePrice =
+    parsedSalePrice != null && parsedSalePrice >= 0
+      ? parsedSalePrice
+      : latestSalePrice;
   const plan = buildCraftPagePlan({
     rootEntry,
     rootItemId: data.item.id,
@@ -227,10 +234,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
     priceMap,
     overrideMap,
     proficiencyMap,
-    salePrice:
-      parsedSalePrice != null && parsedSalePrice >= 0
-        ? parsedSalePrice
-        : undefined,
+    salePrice: effectiveSalePrice ?? undefined,
     focusPath,
   });
   const focusedChoices =
@@ -324,6 +328,18 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             value={plan.summary.totalLabor.toLocaleString()}
           />
           <StatCard
+            label={
+              overrideMap.has(data.item.id)
+                ? "Sale Price Override"
+                : "Latest Sale Price"
+            }
+            value={
+              effectiveSalePrice == null
+                ? "Missing Price"
+                : formatCurrency(effectiveSalePrice)
+            }
+          />
+          <StatCard
             label="Profit Before Fees / Labor"
             value={
               plan.summary.profitPerLabor == null
@@ -345,14 +361,19 @@ function CraftPlanPage({ listId }: { listId?: string }) {
           ) : null}
         </div>
         <label className="text-muted-foreground flex max-w-sm items-center gap-2 text-sm">
-          Temporary Sale Price (Gold)
+          Temporary sale-price adjustment
           <Input
-            aria-label="Temporary Sale Price"
+            aria-label="Temporary sale-price adjustment"
             type="number"
             min="0"
             step="0.01"
             value={salePriceText}
             onChange={(event) => setSalePriceText(event.target.value)}
+            placeholder={
+              latestSalePrice == null
+                ? "Missing Price"
+                : String(latestSalePrice)
+            }
           />
         </label>
       </section>
