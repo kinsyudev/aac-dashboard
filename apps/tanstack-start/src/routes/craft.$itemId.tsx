@@ -320,7 +320,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
       >
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h2 className="font-semibold">Whole Plan</h2>
+            <h2 className="font-semibold">Crafting Summary</h2>
             <p className="text-muted-foreground text-sm">
               {plan.craftCount} Craft{plan.craftCount === 1 ? "" : "s"} produces{" "}
               {plan.summary.totalOutput.toLocaleString()} {data.item.name}.
