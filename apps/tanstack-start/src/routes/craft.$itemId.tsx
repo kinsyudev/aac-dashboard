@@ -17,7 +17,11 @@ import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
 import { StatCard } from "~/component/stat-card";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
-import { getProducedAmount, parseFinitePrice } from "~/lib/craft-optimizer";
+import {
+  getProducedAmount,
+  getSelectedEntry,
+  parseFinitePrice,
+} from "~/lib/craft-optimizer";
 import {
   buildCraftPagePlan,
   getRecipeChoiceCost,
@@ -88,6 +92,83 @@ function serializeRecipes(selected: SelectedCraftMap) {
     .sort(([left], [right]) => left - right)
     .map(([itemId, craftId]) => `${itemId}:${craftId}`);
   return choices.length ? choices.join(",") : undefined;
+}
+
+function SelectedCraftTree({
+  rootEntry,
+  rootItemId,
+  rootName,
+  subcraftMap,
+  modes,
+  selectedCrafts,
+  focusPath,
+  onFocus,
+}: {
+  rootEntry: CraftEntry;
+  rootItemId: number;
+  rootName: string;
+  subcraftMap: SubcraftMap<CraftEntry>;
+  modes: ModesMap;
+  selectedCrafts: SelectedCraftMap;
+  focusPath: number[];
+  onFocus: (path: number[]) => void;
+}) {
+  const renderNode = (
+    entry: CraftEntry,
+    itemId: number,
+    itemName: string,
+    path: number[],
+    visited: Set<number>,
+  ) => {
+    const active = path.join(":") === focusPath.join(":");
+    const children = entry.materials.flatMap(({ item }) => {
+      if (modes[item.id] !== "craft" || visited.has(item.id)) return [];
+      const child = getSelectedEntry(item.id, subcraftMap, selectedCrafts);
+      return child
+        ? [{ entry: child, itemId: item.id, itemName: item.name }]
+        : [];
+    });
+
+    return (
+      <li key={path.join(":")} className="flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => onFocus(path)}
+          aria-current={active ? "page" : undefined}
+          className={`w-fit text-left text-sm hover:underline ${
+            active ? "text-foreground font-semibold" : "text-muted-foreground"
+          }`}
+        >
+          {itemName}
+        </button>
+        {children.length ? (
+          <ul className="border-muted ml-2 flex flex-col gap-1 border-l pl-3">
+            {children.map((child) =>
+              renderNode(
+                child.entry,
+                child.itemId,
+                child.itemName,
+                [...path, child.itemId],
+                new Set([...visited, child.itemId]),
+              ),
+            )}
+          </ul>
+        ) : null}
+      </li>
+    );
+  };
+
+  return (
+    <ul className="flex flex-col gap-1">
+      {renderNode(
+        rootEntry,
+        rootItemId,
+        rootName,
+        [rootItemId],
+        new Set([rootItemId]),
+      )}
+    </ul>
+  );
 }
 
 function RouteComponent() {
@@ -278,35 +359,20 @@ function CraftPlanPage({ listId }: { listId?: string }) {
         </label>
       </section>
 
-      <nav aria-label="Craft path" className="flex flex-col gap-1 text-sm">
+      <nav aria-label="Craft tree" className="flex flex-col gap-1 text-sm">
         <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          Craft tree — currently inspecting
+          Craft tree
         </span>
-        <div className="flex flex-wrap items-center gap-1">
-          {plan.breadcrumb.map((level, index) => (
-            <span key={level.itemId} className="flex items-center gap-1">
-              {index > 0 ? (
-                <span className="text-muted-foreground">/</span>
-              ) : null}
-              <Button
-                type="button"
-                variant="link"
-                className="h-auto px-1 py-0"
-                onClick={() =>
-                  setFocusPath(
-                    plan.breadcrumb
-                      .slice(0, index + 1)
-                      .map((part) => part.itemId),
-                  )
-                }
-              >
-                {level.itemId === data.item.id
-                  ? data.item.name
-                  : level.entry.craft.name}
-              </Button>
-            </span>
-          ))}
-        </div>
+        <SelectedCraftTree
+          rootEntry={rootEntry}
+          rootItemId={data.item.id}
+          rootName={data.item.name}
+          subcraftMap={data.subcraftsByItemId as SubcraftMap<CraftEntry>}
+          modes={modes}
+          selectedCrafts={selectedCrafts}
+          focusPath={plan.breadcrumb.map((level) => level.itemId)}
+          onFocus={setFocusPath}
+        />
       </nav>
 
       <section
@@ -371,7 +437,7 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                 className="grid gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <ItemIcon icon={item.icon} name={item.name} />
+                  <ItemIcon icon={item.icon} name={item.name} size="md" />
                   <div className="min-w-0">
                     <p className="truncate font-medium">{item.name}</p>
                     <p className="text-muted-foreground text-xs">
