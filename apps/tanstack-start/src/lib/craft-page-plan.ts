@@ -13,6 +13,7 @@ import {
   getProducedAmount,
   getSelectedEntry,
   hasItemPrice,
+  isCurrencyMaterial,
 } from "./craft-optimizer.ts";
 
 export interface CraftPagePlanInput<T extends CraftEntryLike> {
@@ -143,9 +144,10 @@ export function buildCraftPagePlan<T extends CraftEntryLike>(
 
 export function getRecipeSignature<T extends CraftEntryLike>(entry: T): string {
   return entry.materials
-    .map(
-      (material) =>
-        `${material.amount} ${material.item.name ?? `Item ${material.item.id}`}`,
+    .map((material) =>
+      isCurrencyMaterial(material.item)
+        ? "Currency"
+        : `${material.amount} ${material.item.name ?? `Item ${material.item.id}`}`,
     )
     .join(", ");
 }
@@ -157,7 +159,9 @@ export function getRecipeChoiceCost<T extends CraftEntryLike>(
 ): number | null {
   if (
     entry.materials.some(
-      (material) => !hasItemPrice(material.item.id, priceMap, overrideMap),
+      (material) =>
+        !isCurrencyMaterial(material.item) &&
+        !hasItemPrice(material.item.id, priceMap, overrideMap),
     )
   ) {
     return null;
@@ -165,7 +169,10 @@ export function getRecipeChoiceCost<T extends CraftEntryLike>(
   return entry.materials.reduce(
     (total, material) =>
       total +
-      getItemPrice(material.item.id, priceMap, overrideMap) * material.amount,
+      (isCurrencyMaterial(material.item)
+        ? material.amount / 10_000
+        : getItemPrice(material.item.id, priceMap, overrideMap) *
+          material.amount),
     0,
   );
 }

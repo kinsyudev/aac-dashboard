@@ -2,6 +2,8 @@ import { pickPreferredCraft } from "./craft-helpers.ts";
 import { getDiscountedLabor } from "./proficiency.ts";
 
 export const MAX_CRAFT_DEPTH = 8;
+export const COIN_ITEM_ID = 500;
+const GOLD_PER_COIN = 1 / 10_000;
 
 export type CraftMode = "buy" | "craft";
 export type ModesMap = Record<number, CraftMode>;
@@ -78,6 +80,12 @@ export interface CraftRequirementSummary<TItem = CraftMaterialLike["item"]> {
   laborByProficiency: LaborRequirement[];
   materialCost: number;
   totalLabor: number;
+}
+
+export function isCurrencyMaterial(
+  item: Pick<CraftMaterialLike["item"], "id" | "name">,
+): boolean {
+  return item.id === COIN_ITEM_ID && item.name === "Coin";
 }
 
 interface Context<T extends CraftEntryLike> {
@@ -217,6 +225,7 @@ export function buildCraftRequirementSummary<T extends CraftEntryLike>(input: {
     FlattenedMaterialRequirement<T["materials"][number]["item"]>
   >();
   const laborMap = new Map<string, number>();
+  let directCurrencyCost = 0;
 
   const addRawMaterial = (
     item: T["materials"][number]["item"],
@@ -260,6 +269,10 @@ export function buildCraftRequirementSummary<T extends CraftEntryLike>(input: {
 
     for (const { item, amount } of entry.materials) {
       const requiredMaterialAmount = amount * batches;
+      if (isCurrencyMaterial(item)) {
+        directCurrencyCost += requiredMaterialAmount * GOLD_PER_COIN;
+        continue;
+      }
       const isCraftable =
         depth < maxDepth && !!input.subcraftMap[item.id]?.length;
       const mode = input.modes[item.id] ?? "buy";
@@ -322,7 +335,7 @@ export function buildCraftRequirementSummary<T extends CraftEntryLike>(input: {
       sum +
       material.totalAmount *
         getItemPrice(material.item.id, input.priceMap, input.overrideMap),
-    0,
+    directCurrencyCost,
   );
   const totalLabor = laborByProficiency.reduce(
     (sum, entry) => sum + entry.labor,
@@ -365,6 +378,10 @@ export function computeManualCraftMetrics<T extends CraftEntryLike>(
   let subcraftLabor = 0;
 
   for (const { item, amount } of entry.materials) {
+    if (isCurrencyMaterial(item)) {
+      materialsCost += amount * GOLD_PER_COIN;
+      continue;
+    }
     const isCraftable =
       depth < context.maxDepth && !!context.subcraftMap[item.id]?.length;
     const mode = modes[item.id] ?? "buy";

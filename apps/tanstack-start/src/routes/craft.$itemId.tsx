@@ -18,8 +18,11 @@ import { ItemIcon } from "~/component/item-icon";
 import { StatCard } from "~/component/stat-card";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import {
+  getItemPrice,
   getProducedAmount,
   getSelectedEntry,
+  hasItemPrice,
+  isCurrencyMaterial,
   parseFinitePrice,
 } from "~/lib/craft-optimizer";
 import {
@@ -429,27 +432,47 @@ function CraftPlanPage({ listId }: { listId?: string }) {
         ) : null}
         <div className="grid gap-2" aria-label="Recipe materials">
           {plan.focused.entry.materials.map(({ item, amount }) => {
+            const currency = isCurrencyMaterial(item);
             const craftable = Boolean(data.subcraftsByItemId[item.id]?.length);
             const mode = modes[item.id] ?? "buy";
+            const unitPrice = currency
+              ? null
+              : getItemPrice(item.id, priceMap, overrideMap);
+            const priced =
+              !currency && hasItemPrice(item.id, priceMap, overrideMap);
             return (
               <div
                 key={item.id}
                 className="grid gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <ItemIcon icon={item.icon} name={item.name} size="md" />
+                  {currency ? null : (
+                    <ItemIcon icon={item.icon} name={item.name} size="md" />
+                  )}
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{item.name}</p>
+                    <p className="truncate font-medium">
+                      {currency ? "Currency" : item.name}
+                    </p>
                     <p className="text-muted-foreground text-xs">
-                      {plan.focused.crafts > 1
-                        ? `${(plan.focusedMaterialQuantities.find((material) => material.itemId === item.id)?.amount ?? amount).toLocaleString()} needed for ${plan.focused.crafts} Crafts · `
-                        : ""}
-                      {amount.toLocaleString()} per Craft
+                      {currency
+                        ? `${formatCurrency(amount / 10_000)} per Craft`
+                        : plan.focused.crafts > 1
+                          ? `${(plan.focusedMaterialQuantities.find((material) => material.itemId === item.id)?.amount ?? amount).toLocaleString()} needed for ${plan.focused.crafts} Crafts · `
+                          : ""}
+                      {currency ? "" : `${amount.toLocaleString()} per Craft`}
+                      {!currency ? (
+                        <span className="ml-1">
+                          ·{" "}
+                          {priced
+                            ? `${formatCurrency(unitPrice ?? 0)} each`
+                            : "Missing Price"}
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                 </div>
                 <div>
-                  {craftable ? (
+                  {!currency && craftable ? (
                     <span className="flex items-center gap-1">
                       <Button
                         type="button"
@@ -483,12 +506,10 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                         Craft
                       </Button>
                     </span>
-                  ) : (
-                    "Buy"
-                  )}
+                  ) : null}
                 </div>
                 <div>
-                  {craftable && mode === "craft" ? (
+                  {!currency && craftable && mode === "craft" ? (
                     <Button
                       type="button"
                       size="sm"

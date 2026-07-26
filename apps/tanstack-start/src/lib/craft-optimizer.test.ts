@@ -169,3 +169,29 @@ void test("uses price overrides and discounted labor in the summary", () => {
   assert.equal(summary.materialCost, 24);
   assert.equal(summary.totalLabor, 42);
 });
+
+void test("counts Coin as direct Currency instead of an unpriced Material", () => {
+  const summary = buildCraftRequirementSummary({
+    entry: {
+      craft: {
+        id: 4,
+        name: "Currency Recipe",
+        labor: 0,
+        proficiency: null,
+      },
+      materials: [{ item: { id: 500, name: "Coin" }, amount: 12_345 }],
+      products: [{ item: { id: 100 }, amount: 1 }],
+    },
+    producedItemId: 100,
+    requiredQuantity: 2,
+    subcraftMap: {},
+    modes: {},
+    selectedCrafts: {},
+    priceMap: new Map(),
+    overrideMap: new Map(),
+    proficiencyMap: new Map(),
+  });
+
+  assert.deepEqual(summary.materials, []);
+  assert.ok(Math.abs(summary.materialCost - 2.469) < 0.000_000_001);
+});
