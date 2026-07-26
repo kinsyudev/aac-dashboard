@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { authClient } from "~/auth/client";
+import { PageShell } from "~/component/page-composition";
 import { buildMetaTags, getAppName } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 
@@ -22,8 +23,8 @@ function HomePage() {
   const { data: viewer } = useQuery(trpc.auth.getViewer.queryOptions());
 
   return (
-    <main className="container py-16">
-      <div className="flex max-w-5xl flex-col gap-12">
+    <PageShell layout="landing">
+      <div className="flex flex-col gap-12">
         <section className="flex flex-col gap-4">
           <p className="text-primary text-sm font-semibold tracking-[0.2em] uppercase">
             ArcheAge Classic Tools
@@ -87,7 +88,7 @@ function HomePage() {
           />
         </section>
       </div>
-    </main>
+    </PageShell>
   );
 }
 

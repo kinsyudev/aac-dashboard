@@ -4,11 +4,18 @@ import type * as React from "react";
 
 import { cn } from "@acme/ui";
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+function Table({
+  className,
+  containerLabel,
+  ...props
+}: React.ComponentProps<"table"> & { containerLabel?: string }) {
   return (
     <div
       data-slot="table-container"
       className="relative w-full overflow-x-auto"
+      role={containerLabel ? "region" : undefined}
+      aria-label={containerLabel}
+      tabIndex={containerLabel ? 0 : undefined}
     >
       <table
         data-slot="table"
@@ -57,7 +64,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
+        "data-[interactive=true]:hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
         className,
       )}
       {...props}

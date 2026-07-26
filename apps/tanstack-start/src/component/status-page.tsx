@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@acme/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@acme/ui/card";
+
+import { InlineState } from "~/component/inline-state";
+import { PageHeading, PageShell } from "~/component/page-composition";
 
 type StatusPageVariant =
   | "not-found"
@@ -56,37 +58,26 @@ export function StatusPage({
   const content = STATUS_CONTENT[variant];
 
   return (
-    <main className="container py-16">
-      <div className="mx-auto flex max-w-2xl flex-col gap-6">
-        <Card className="overflow-hidden rounded-3xl border">
-          <CardHeader className="from-muted/50 via-background to-muted/20 gap-4 border-b bg-linear-to-br">
-            <p className="text-primary text-xs font-semibold tracking-[0.24em] uppercase">
-              {content.eyebrow}
-            </p>
-            <div className="space-y-2">
-              <CardTitle className="text-3xl">{content.title}</CardTitle>
-              <p className="text-muted-foreground text-sm leading-6">
-                {content.description}
-              </p>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-5 pt-6">
-            {children}
-            <div className="flex flex-wrap gap-3">
-              {actions ?? (
-                <>
-                  <Button asChild>
-                    <Link to="/">Back home</Link>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <Link to="/shoplists">Open shopping lists</Link>
-                  </Button>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+    <PageShell layout="narrow">
+      <p className="text-primary text-xs font-semibold tracking-[0.24em] uppercase">
+        {content.eyebrow}
+      </p>
+      <PageHeading title={content.title} subtitle={content.description} />
+      {children ? (
+        <InlineState kind="unavailable">{children}</InlineState>
+      ) : null}
+      <div className="flex flex-wrap gap-3">
+        {actions ?? (
+          <>
+            <Button asChild>
+              <Link to="/">Back home</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/shoplists">Open shopping lists</Link>
+            </Button>
+          </>
+        )}
       </div>
-    </main>
+    </PageShell>
   );
 }

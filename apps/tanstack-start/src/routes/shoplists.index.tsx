@@ -13,7 +13,13 @@ import { Button } from "@acme/ui/button";
 import { Checkbox } from "@acme/ui/checkbox";
 import { toast } from "@acme/ui/toast";
 
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import {
+  PageHeading,
+  PageSection,
+  PageShell,
+} from "~/component/page-composition";
 import { useTRPC } from "~/lib/trpc";
 
 type DuplicateResult = inferProcedureOutput<
@@ -41,11 +47,15 @@ export const Route = createFileRoute("/shoplists/")({
 
 function ShoplistsPage() {
   return (
-    <main className="container py-16">
-      <Suspense fallback={<p>Loading shopping lists...</p>}>
+    <PageShell>
+      <Suspense
+        fallback={
+          <InlineState kind="loading">Loading Shopping Lists...</InlineState>
+        }
+      >
         <ShoplistsContent />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -129,39 +139,34 @@ function ShoplistsContent() {
 
   return (
     <div className="flex flex-col gap-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Shopping Lists</h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            Browse lists you own and lists other players shared with you.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            disabled={selectedIds.length < 2}
-            onClick={openCombinedView}
-          >
-            Combine selected
-            {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
-          </Button>
-          <Button
-            onClick={() => createEmpty.mutate({})}
-            loading={createEmpty.isPending}
-            loadingText="Creating..."
-          >
-            New Multi List
-          </Button>
-        </div>
-      </div>
+      <PageHeading
+        title="Shopping Lists"
+        subtitle="Browse lists you own and lists other Players shared with you."
+        actions={
+          <>
+            <Button
+              variant="outline"
+              disabled={selectedIds.length < 2}
+              onClick={openCombinedView}
+            >
+              Combine selected
+              {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+            </Button>
+            <Button
+              onClick={() => createEmpty.mutate({})}
+              loading={createEmpty.isPending}
+              loadingText="Creating..."
+            >
+              New Multi List
+            </Button>
+          </>
+        }
+      />
 
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold">Owned</h2>
-          <p className="text-muted-foreground text-sm">
-            {data.owned.length} list{data.owned.length === 1 ? "" : "s"}
-          </p>
-        </div>
+      <PageSection
+        title="Owned"
+        actions={`${data.owned.length} list${data.owned.length === 1 ? "" : "s"}`}
+      >
         {data.owned.length === 0 ? (
           <EmptyState message="No owned shopping lists yet. Create one from a craft or simulator shoplist preview." />
         ) : (
@@ -199,15 +204,12 @@ function ShoplistsContent() {
             ))}
           </div>
         )}
-      </section>
+      </PageSection>
 
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold">Shared With Me</h2>
-          <p className="text-muted-foreground text-sm">
-            {data.shared.length} list{data.shared.length === 1 ? "" : "s"}
-          </p>
-        </div>
+      <PageSection
+        title="Shared With Me"
+        actions={`${data.shared.length} list${data.shared.length === 1 ? "" : "s"}`}
+      >
         {data.shared.length === 0 ? (
           <EmptyState message="Nothing shared with you yet." />
         ) : (
@@ -241,7 +243,7 @@ function ShoplistsContent() {
             ))}
           </div>
         )}
-      </section>
+      </PageSection>
     </div>
   );
 }

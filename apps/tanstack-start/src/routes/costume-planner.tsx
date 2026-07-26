@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -14,7 +13,9 @@ import {
   CardTitle,
 } from "@acme/ui/card";
 import { Checkbox } from "@acme/ui/checkbox";
+import { LabeledField as Field } from "@acme/ui/field";
 import { Input } from "@acme/ui/input";
+import { Select } from "@acme/ui/select";
 import { toast } from "@acme/ui/toast";
 
 import type {
@@ -35,7 +36,9 @@ import type {
   PriceMap,
   SelectedCraftMap,
 } from "~/lib/craft-optimizer";
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import {
   CraftModeToggle,
   RecipeCardShell,
@@ -380,20 +383,12 @@ function CostumePlannerPage() {
   }
 
   return (
-    <main className="container py-16">
-      <div className="mb-8 flex max-w-4xl flex-col gap-3">
-        <p className="text-primary text-sm font-semibold tracking-[0.2em] uppercase">
-          ArcheAge Classic
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight">
-          Costume and Undergarment Planner
-        </h1>
-        <p className="text-muted-foreground text-sm leading-6">
-          Pick target stats, compare a current item, and estimate whether
-          rerolling or salvaging into a restart is cheaper. Rerolls use a
-          uniform chance over currently unlocked stats.
-        </p>
-      </div>
+    <PageShell layout="wide">
+      <PageHeading
+        title="Costume and Undergarment Planner"
+        subtitle="Pick Target stats, compare a current Item, and estimate whether rerolling or salvaging into a restart is cheaper. Rerolls use a uniform chance over currently unlocked stats."
+        badges={<Badge variant="outline">ArcheAge Classic</Badge>}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px]">
         <div className="flex flex-col gap-6">
@@ -423,7 +418,7 @@ function CostumePlannerPage() {
 
               <div className="grid gap-4 md:grid-cols-4">
                 <Field label="Kind">
-                  <select
+                  <Select
                     value={kind}
                     onChange={(event) =>
                       resetForKind(event.target.value as GearKind)
@@ -432,10 +427,10 @@ function CostumePlannerPage() {
                   >
                     <option value="costume">Costume</option>
                     <option value="undergarment">Undergarments</option>
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="Target grade">
-                  <select
+                  <Select
                     value={targetGrade}
                     onChange={(event) =>
                       updatePlannerState({
@@ -449,7 +444,7 @@ function CostumePlannerPage() {
                         {formatGrade(grade)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="Target progress %">
                   <Input
@@ -481,7 +476,7 @@ function CostumePlannerPage() {
               {currentEnabled ? (
                 <div className="grid gap-4 md:grid-cols-4">
                   <Field label="Current grade">
-                    <select
+                    <Select
                       value={currentGrade}
                       onChange={(event) =>
                         updatePlannerState({
@@ -495,7 +490,7 @@ function CostumePlannerPage() {
                           {formatGrade(grade)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label="Current progress %">
                     <Input
@@ -682,7 +677,7 @@ function CostumePlannerPage() {
             </summary>
             <div className="flex flex-col gap-3 border-t p-4">
               <Field label="Loadout">
-                <select
+                <Select
                   value={selectedLoadoutId}
                   onChange={(event) => {
                     const nextId = event.target.value;
@@ -700,7 +695,7 @@ function CostumePlannerPage() {
                       {loadout.name} ({formatKind(loadout.kind)})
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field label="Name">
                 <Input
@@ -830,7 +825,7 @@ function CostumePlannerPage() {
           </Card>
         </section>
       ) : null}
-    </main>
+    </PageShell>
   );
 }
 
@@ -855,15 +850,6 @@ interface PlannerRecipeEntry {
 }
 
 type PlannerSubcraftMap = Record<number, PlannerRecipeEntry[]>;
-
-function Field({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <label className="flex flex-col gap-2 text-sm font-medium">
-      {label}
-      {children}
-    </label>
-  );
-}
 
 function StrategyModeButton({
   active,
@@ -1135,9 +1121,7 @@ function SerendipityRecipeSelector({
 
   if (loading) {
     return (
-      <div className="text-muted-foreground rounded-md border p-3 text-sm">
-        Loading Serendipity recipe...
-      </div>
+      <InlineState kind="loading">Loading Serendipity Recipe...</InlineState>
     );
   }
 
@@ -1283,7 +1267,7 @@ function SerendipityRecipeTree({
                     isCraftable ? (
                       <div className="flex items-center gap-2">
                         {subEntries.length > 1 ? (
-                          <select
+                          <Select
                             value={selectedSubEntry?.craft.id ?? ""}
                             onChange={(event) =>
                               setSelectedCrafts({
@@ -1304,7 +1288,7 @@ function SerendipityRecipeTree({
                                 {subEntry.craft.name}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         ) : null}
                         <CraftModeToggle
                           mode={mode}

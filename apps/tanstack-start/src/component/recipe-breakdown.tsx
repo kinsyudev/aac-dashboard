@@ -3,19 +3,13 @@ import type { ReactNode } from "react";
 import { ProficiencyBadge } from "~/component/proficiency";
 
 export function RecipeCardShell({
-  depth,
+  depth: _depth,
   children,
 }: {
   depth: number;
   children: ReactNode;
 }) {
-  return (
-    <div
-      className={`rounded-md border ${depth > 0 ? "bg-muted/20 border-dashed" : ""} p-3`}
-    >
-      {children}
-    </div>
-  );
+  return <div className="border-t py-3 first:border-t-0">{children}</div>;
 }
 
 export function RecipeHeader({
@@ -70,15 +64,23 @@ export function CraftModeToggle({
   mode,
   onBuy,
   onCraft,
+  itemName = "Item",
 }: {
   mode: "buy" | "craft";
   onBuy: () => void;
   onCraft: () => void;
+  itemName?: string;
 }) {
   return (
-    <span className="inline-flex overflow-hidden rounded-full border text-xs">
+    <span
+      role="group"
+      aria-label={`Acquisition Mode for ${itemName}`}
+      className="inline-flex overflow-hidden rounded-full border text-xs"
+    >
       <button
         type="button"
+        aria-pressed={mode === "buy"}
+        aria-label={`Buy ${itemName}`}
         onClick={(event) => {
           event.preventDefault();
           onBuy();
@@ -93,6 +95,8 @@ export function CraftModeToggle({
       </button>
       <button
         type="button"
+        aria-pressed={mode === "craft"}
+        aria-label={`Craft ${itemName}`}
         onClick={(event) => {
           event.preventDefault();
           onCraft();
@@ -125,7 +129,7 @@ export function RecipeItemRow({
   diff?: ReactNode;
 }) {
   return (
-    <li className="hover:bg-muted/40 flex min-w-0 flex-wrap items-center gap-2 rounded px-1 py-1 text-sm">
+    <li className="flex min-w-0 flex-wrap items-center gap-2 border-b px-1 py-2 text-sm last:border-b-0">
       {icon}
       <span className="min-w-0 flex-1 truncate">
         {name}

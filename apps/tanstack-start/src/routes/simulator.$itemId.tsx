@@ -20,7 +20,9 @@ import type {
 } from "~/lib/simulator";
 import type { SimulatorTarget } from "~/lib/simulator-catalog";
 import type { CraftModeMap, SimulationChain } from "~/lib/simulator-upgrade";
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import {
   CraftModeToggle,
   RecipeCardShell,
@@ -111,17 +113,21 @@ export const Route = createFileRoute("/simulator/$itemId")({
 
 function SimulatorItemPage() {
   return (
-    <main className="container py-16">
+    <PageShell>
       <Link
         to="/simulator"
         className="text-muted-foreground mb-6 flex items-center gap-1 text-sm hover:underline"
       >
         ← Back to simulator dashboard
       </Link>
-      <Suspense fallback={<p>Loading...</p>}>
+      <Suspense
+        fallback={
+          <InlineState kind="loading">Loading Simulation...</InlineState>
+        }
+      >
         <SimulatorDetail />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -929,12 +935,12 @@ function SimulatorDetail() {
 
   if (!simulatorTarget) {
     return (
-      <div className="rounded-md border border-dashed p-6">
-        <h1 className="text-2xl font-semibold">Unsupported simulator item</h1>
-        <p className="text-muted-foreground mt-2 text-sm">
+      <div className="flex flex-col gap-4">
+        <PageHeading title="Unsupported simulator Item" />
+        <InlineState kind="unavailable">
           The simulator dashboard currently supports the nine representative
           Sealed Delphinad wisp crafts only.
-        </p>
+        </InlineState>
         <Link
           to="/simulator"
           className="text-primary mt-4 inline-flex text-sm hover:underline"
@@ -1111,72 +1117,69 @@ function SimulatorDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          {item.icon && (
+      <PageHeading
+        title={item.name}
+        subtitle={`${equip.category} · ${equip.tier}${equip.piece ? ` · ${equip.piece}` : ""}`}
+        identity={
+          item.icon ? (
             <ItemIcon icon={item.icon} name={item.name} size="lg" />
-          )}
-          <div>
-            <h1 className="text-3xl font-bold">{item.name}</h1>
-            <p className="text-muted-foreground text-sm">
-              {equip.category} &middot; {equip.tier}
-              {equip.piece && ` · ${equip.piece}`}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {simulationData && mainCraft && (
-            <>
-              <Link
-                to="/shoplist"
-                search={{
-                  craft: mainCraft.craft.id,
-                  qty: 1,
-                  simItem: item.id,
-                  attempts: simulationData.salvage.variants,
-                  strategy: "salvage",
-                  sub: exportModes,
-                }}
-                className="text-muted-foreground text-xs hover:underline"
-              >
-                Export salvage shoplist →
-              </Link>
-              {simulationData.reseal.result ? (
+          ) : undefined
+        }
+        actions={
+          <>
+            {simulationData && mainCraft && (
+              <>
                 <Link
                   to="/shoplist"
                   search={{
                     craft: mainCraft.craft.id,
                     qty: 1,
                     simItem: item.id,
-                    attempts: simulationData.reseal.result.variants - 1,
-                    strategy: "reseal",
+                    attempts: simulationData.salvage.variants,
+                    strategy: "salvage",
                     sub: exportModes,
                   }}
                   className="text-muted-foreground text-xs hover:underline"
                 >
-                  Export reseal shoplist →
+                  Export salvage shoplist →
                 </Link>
-              ) : null}
-            </>
-          )}
-          <Link
-            to="/craft/$itemId"
-            params={{ itemId: item.id }}
-            className="text-muted-foreground text-xs hover:underline"
-          >
-            View craft →
-          </Link>
-          {isDevelopment ? (
-            <button
-              type="button"
-              onClick={copyDebugState}
+                {simulationData.reseal.result ? (
+                  <Link
+                    to="/shoplist"
+                    search={{
+                      craft: mainCraft.craft.id,
+                      qty: 1,
+                      simItem: item.id,
+                      attempts: simulationData.reseal.result.variants - 1,
+                      strategy: "reseal",
+                      sub: exportModes,
+                    }}
+                    className="text-muted-foreground text-xs hover:underline"
+                  >
+                    Export reseal shoplist →
+                  </Link>
+                ) : null}
+              </>
+            )}
+            <Link
+              to="/craft/$itemId"
+              params={{ itemId: item.id }}
               className="text-muted-foreground text-xs hover:underline"
             >
-              {debugCopyState ?? "Dump debug state"}
-            </button>
-          ) : null}
-        </div>
-      </div>
+              View craft →
+            </Link>
+            {isDevelopment ? (
+              <button
+                type="button"
+                onClick={copyDebugState}
+                className="text-muted-foreground text-xs hover:underline"
+              >
+                {debugCopyState ?? "Dump debug state"}
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {wisp && (
         <form

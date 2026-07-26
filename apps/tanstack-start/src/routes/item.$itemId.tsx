@@ -22,8 +22,16 @@ import {
 import { ChartContainer, ChartTooltip, Recharts } from "@acme/ui/chart";
 import { Input } from "@acme/ui/input";
 
+import { describePrice } from "~/component/economic-display";
+import { InlineState } from "~/component/inline-state";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
+import { Metric } from "~/component/metric";
+import {
+  PageHeading,
+  PageSection,
+  PageShell,
+} from "~/component/page-composition";
 import { ProficiencyBadge } from "~/component/proficiency";
 import {
   buildMetaTags,
@@ -103,6 +111,14 @@ function parseMetric(value: string | null | undefined) {
   if (normalized.length === 0) return null;
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function displayMarketPrice(value: number | null, itemName: string) {
+  return describePrice(
+    value == null
+      ? { status: "missing", itemName }
+      : { status: "resolved", value, source: "Market Data" },
+  );
 }
 
 function formatGold(value: number) {
@@ -248,17 +264,19 @@ function RouteComponent() {
   const { itemId } = Route.useParams();
 
   return (
-    <main className="container py-16">
+    <PageShell>
       <Link
         to="/item"
         className="text-muted-foreground mb-6 flex items-center gap-1 text-sm hover:underline"
       >
         ← Back to list
       </Link>
-      <Suspense fallback={<p>Loading...</p>}>
+      <Suspense
+        fallback={<InlineState kind="loading">Loading Item...</InlineState>}
+      >
         <ItemDetail itemId={itemId} />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -271,15 +289,7 @@ function ItemStat({
   value: string;
   description?: string;
 }) {
-  return (
-    <div className="rounded-lg border px-4 py-3">
-      <p className="text-muted-foreground text-xs uppercase">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
-      {description ? (
-        <p className="text-muted-foreground mt-1 text-xs">{description}</p>
-      ) : null}
-    </div>
-  );
+  return <Metric label={label} value={value} detail={description} />;
 }
 
 function MarketHistoryTooltip({
@@ -753,13 +763,11 @@ function RecipeSection({
     0,
   );
   return (
-    <section className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <p className="text-muted-foreground text-sm">{description}</p>
-        </div>
-        {entries.length > 0 && (
+    <PageSection
+      title={title}
+      description={description}
+      actions={
+        entries.length > 0 ? (
           <div className="w-full sm:max-w-sm">
             <Input
               value={search}
@@ -768,11 +776,11 @@ function RecipeSection({
               aria-label={`${title} search`}
             />
           </div>
-        )}
-      </div>
-
+        ) : undefined
+      }
+    >
       {entries.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{emptyMessage}</p>
+        <InlineState kind="empty">{emptyMessage}</InlineState>
       ) : totalMatches > 0 ? (
         <div className="space-y-3">
           <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
@@ -837,11 +845,11 @@ function RecipeSection({
           </Accordion>
         </div>
       ) : (
-        <p className="text-muted-foreground text-sm">
+        <InlineState kind="empty">
           No recipes match “{deferredSearch.trim()}”.
-        </p>
+        </InlineState>
       )}
-    </section>
+    </PageSection>
   );
 }
 
@@ -860,6 +868,18 @@ function ItemDetail({ itemId }: { itemId: number }) {
   const dailyHistory = collapseHistoryByDay(data.priceHistory);
   const latestSnapshot = getLatestSnapshot(data.priceHistory);
   const marketDepth = getMarketDepthSummary(latestSnapshot);
+  const price24h = displayMarketPrice(
+    parseMetric(latestSnapshot?.avg24h ?? null),
+    data.item.name,
+  );
+  const price7d = displayMarketPrice(
+    parseMetric(latestSnapshot?.avg7d ?? null),
+    data.item.name,
+  );
+  const price30d = displayMarketPrice(
+    parseMetric(latestSnapshot?.avg30d ?? null),
+    data.item.name,
+  );
   const historyPoints: HistoryChartPoint[] = dailyHistory
     .map((snapshot) => ({
       label: formatSnapshotLabel(snapshot.fetchedAt),
@@ -871,68 +891,62 @@ function ItemDetail({ itemId }: { itemId: number }) {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex items-center gap-4">
+      <PageHeading
+        title={data.item.name}
+        subtitle={data.item.category}
+        identity={
           <ItemIcon icon={data.item.icon} name={data.item.name} size="lg" />
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-3xl font-bold">{data.item.name}</h1>
-              {data.item.sellable && <Badge>Sellable</Badge>}
-            </div>
-            <p className="text-muted-foreground text-sm">
-              {data.item.category}
-            </p>
+        }
+        badges={data.item.sellable ? <Badge>Sellable</Badge> : undefined}
+        actions={
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <ItemStat
+              label="24h Price"
+              value={price24h.value}
+              description={
+                price24h.incomplete ? "No Market Data" : price24h.detail
+              }
+            />
+            <ItemStat
+              label="24h Volume"
+              value={
+                parseMetric(latestSnapshot?.vol24h ?? null) != null
+                  ? formatVolume(
+                      parseMetric(latestSnapshot?.vol24h ?? null) ?? 0,
+                    )
+                  : "Unavailable"
+              }
+            />
+            <ItemStat
+              label="7d Price"
+              value={price7d.value}
+              description={
+                price7d.incomplete ? "No Market Data" : price7d.detail
+              }
+            />
+            <ItemStat
+              label="30d Price"
+              value={price30d.value}
+              description={
+                price30d.incomplete ? "No Market Data" : price30d.detail
+              }
+            />
+            <ItemStat
+              label="Market Depth"
+              value={
+                marketDepth
+                  ? `${formatCompactGold(marketDepth.goldTurnover)} / ${marketDepth.window}`
+                  : "Unavailable"
+              }
+              description={
+                marketDepth
+                  ? `${formatGold(marketDepth.avgPrice)} avg × ${formatCompact(marketDepth.volume)} volume`
+                  : "No price/volume pair available"
+              }
+            />
           </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <ItemStat
-            label="24h Price"
-            value={
-              parseMetric(latestSnapshot?.avg24h ?? null) != null
-                ? formatGold(parseMetric(latestSnapshot?.avg24h ?? null) ?? 0)
-                : "N/A"
-            }
-          />
-          <ItemStat
-            label="24h Volume"
-            value={
-              parseMetric(latestSnapshot?.vol24h ?? null) != null
-                ? formatVolume(parseMetric(latestSnapshot?.vol24h ?? null) ?? 0)
-                : "N/A"
-            }
-          />
-          <ItemStat
-            label="7d Price"
-            value={
-              parseMetric(latestSnapshot?.avg7d ?? null) != null
-                ? formatGold(parseMetric(latestSnapshot?.avg7d ?? null) ?? 0)
-                : "N/A"
-            }
-          />
-          <ItemStat
-            label="30d Price"
-            value={
-              parseMetric(latestSnapshot?.avg30d ?? null) != null
-                ? formatGold(parseMetric(latestSnapshot?.avg30d ?? null) ?? 0)
-                : "N/A"
-            }
-          />
-          <ItemStat
-            label="Market Depth"
-            value={
-              marketDepth
-                ? `${formatCompactGold(marketDepth.goldTurnover)} / ${marketDepth.window}`
-                : "N/A"
-            }
-            description={
-              marketDepth
-                ? `${formatGold(marketDepth.avgPrice)} avg × ${formatCompact(marketDepth.volume)} volume`
-                : "No price/volume pair available"
-            }
-          />
-        </div>
-      </div>
+        }
+      />
 
       {data.item.description && (
         <ItemDescription text={data.item.description} />

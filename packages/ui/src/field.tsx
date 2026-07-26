@@ -101,6 +101,24 @@ export function Field({
   );
 }
 
+export function LabeledField({
+  label,
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"label"> & { label: React.ReactNode }) {
+  return (
+    <label
+      data-slot="labeled-field"
+      className={cn("flex flex-col gap-2 text-sm font-medium", className)}
+      {...props}
+    >
+      {label}
+      {children}
+    </label>
+  );
+}
+
 export function FieldContent({
   className,
   ...props

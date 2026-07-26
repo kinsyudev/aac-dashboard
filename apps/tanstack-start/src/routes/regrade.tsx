@@ -2,14 +2,15 @@ import type { inferProcedureOutput } from "@trpc/server";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Info } from "lucide-react";
 
 import type { AppRouter } from "@acme/api";
 import { Badge } from "@acme/ui/badge";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { Label } from "@acme/ui/label";
+import { Select } from "@acme/ui/select";
 import { toast } from "@acme/ui/toast";
+import { InfoTooltip } from "@acme/ui/tooltip";
 
 import type { ProficiencyMap } from "~/lib/proficiency";
 import type {
@@ -21,6 +22,7 @@ import type {
   SupportedRegradeItem,
 } from "~/lib/regrade";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import {
   CraftModeToggle,
   RecipeCardShell,
@@ -923,22 +925,21 @@ function RegradePage() {
       : null;
 
   return (
-    <main className="container py-10">
-      <div className="mb-6 flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Regrade</h1>
-          <Badge variant="secondary">
-            {supportedItems.length.toLocaleString()} bases
-          </Badge>
-          <Badge variant="outline">
-            {consumablePriceMap.size.toLocaleString()} priced consumables
-          </Badge>
-        </div>
-        <p className="text-muted-foreground max-w-3xl text-sm">
-          Compare expected regrade cost, upgrade cost, EV, and silver per labor
-          for Obsidian T1 and Magnificent gear.
-        </p>
-      </div>
+    <PageShell layout="wide">
+      <PageHeading
+        title="Regrade"
+        subtitle="Compare expected Regrading cost, upgrade cost, Expected Value, and Silver / Labor for Obsidian T1 and Magnificent gear."
+        badges={
+          <>
+            <Badge variant="secondary">
+              {supportedItems.length.toLocaleString()} bases
+            </Badge>
+            <Badge variant="outline">
+              {consumablePriceMap.size.toLocaleString()} priced consumables
+            </Badge>
+          </>
+        }
+      />
 
       <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="space-y-3">
@@ -964,7 +965,7 @@ function RegradePage() {
           {selectedFamily === "magnificent" ? (
             <div className="space-y-2">
               <Label htmlFor="regrade-magnificent-piece">Gear type</Label>
-              <select
+              <Select
                 id="regrade-magnificent-piece"
                 className="bg-background w-full rounded-md border px-3 py-2 text-sm"
                 value={selectedMagnificentType?.piece ?? ""}
@@ -977,7 +978,7 @@ function RegradePage() {
                     {type.piece}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           ) : (
             <div className="max-h-[560px] overflow-auto rounded-md border">
@@ -1072,7 +1073,7 @@ function RegradePage() {
                   </Button>
                   <InfoTooltip text="Specific Ayanad values a named Ayanad variant and adds expected Ayanad mana-seal failures. Any Ayanad stops at Sealed Ayanad, but the chain still includes expected Delphinad rerolls needed to craft Sealed Ayanad." />
                   {ayanadTargetMode === "specific" ? (
-                    <select
+                    <Select
                       className="bg-background rounded-md border px-3 py-2 text-sm"
                       value={effectiveAyanadTargetItemId ?? ""}
                       onChange={(event) =>
@@ -1088,7 +1089,7 @@ function RegradePage() {
                           {item.name}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   ) : null}
                   <label className="flex items-center gap-2 text-sm">
                     <input
@@ -1162,7 +1163,12 @@ function RegradePage() {
 
                   <UpgradeCostBreakdown upgradeCost={upgradeCost} />
 
-                  <div className="mt-6 overflow-x-auto rounded-md border">
+                  <div
+                    className="mt-6 overflow-x-auto rounded-md border"
+                    role="region"
+                    aria-label="Regrade Expected Value comparison"
+                    tabIndex={0}
+                  >
                     <table className="w-full text-sm">
                       <thead className="bg-muted/50">
                         <tr className="text-left">
@@ -1266,7 +1272,12 @@ function RegradePage() {
                         </h3>
                         <InfoTooltip text="Each row shows both what happens when that outcome occurs and how much it contributes to the strategy's overall Expected Value." />
                       </div>
-                      <div className="mt-3 overflow-x-auto">
+                      <div
+                        className="mt-3 overflow-x-auto"
+                        role="region"
+                        aria-label="Regrade action path"
+                        tabIndex={0}
+                      >
                         <table className="w-full text-sm">
                           <thead className="text-muted-foreground text-left">
                             <tr>
@@ -1424,7 +1435,7 @@ function RegradePage() {
                                 <span className="text-muted-foreground">
                                   Step
                                 </span>
-                                <select
+                                <Select
                                   className="bg-background h-8 rounded-md border px-2 text-sm"
                                   value={effectiveProjectionStepKey ?? ""}
                                   onChange={(event) =>
@@ -1439,13 +1450,13 @@ function RegradePage() {
                                       {formatProjectionStepLabel(step)}
                                     </option>
                                   ))}
-                                </select>
+                                </Select>
                               </label>
                               <label className="flex items-center gap-2 text-sm">
                                 <span className="text-muted-foreground">
                                   Target
                                 </span>
-                                <select
+                                <Select
                                   className="bg-background h-8 rounded-md border px-2 text-sm"
                                   value={effectiveProjectionTargetGrade ?? ""}
                                   onChange={(event) =>
@@ -1460,7 +1471,7 @@ function RegradePage() {
                                         `Grade ${grade}`}
                                     </option>
                                   ))}
-                                </select>
+                                </Select>
                               </label>
                               <label className="flex items-center gap-2 text-sm">
                                 <span className="text-muted-foreground">
@@ -1571,7 +1582,7 @@ function RegradePage() {
           )}
         </section>
       </div>
-    </main>
+    </PageShell>
   );
 }
 
@@ -1798,7 +1809,7 @@ function TableHeader({ label, helpText }: { label: string; helpText: string }) {
     <th className="px-3 py-2">
       <span className="flex items-center gap-1.5">
         {label}
-        <InfoTooltip text={helpText} placement="bottom" />
+        <InfoTooltip text={helpText} side="bottom" />
       </span>
     </th>
   );
@@ -1824,40 +1835,11 @@ function OutcomeTableHeader({
         className={`flex items-center gap-1.5 ${align === "right" ? "justify-end" : ""}`}
       >
         {label}
-        <InfoTooltip text={helpText} placement="bottom" />
+        <InfoTooltip text={helpText} side="bottom" />
       </span>
     </th>
   );
 }
-
-function InfoTooltip({
-  text,
-  placement = "top",
-}: {
-  text: string;
-  placement?: "top" | "bottom";
-}) {
-  const placementClass =
-    placement === "bottom" ? "top-full mt-2" : "bottom-full mb-2";
-
-  return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        aria-label={text}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 rounded-full outline-none focus-visible:ring-[3px]"
-      >
-        <Info className="size-3.5" aria-hidden="true" />
-      </button>
-      <span
-        className={`bg-popover text-popover-foreground pointer-events-none absolute left-1/2 z-20 hidden w-72 -translate-x-1/2 rounded-md border px-3 py-2 text-xs leading-relaxed normal-case shadow-md group-focus-within:block group-hover:block ${placementClass}`}
-      >
-        {text}
-      </span>
-    </span>
-  );
-}
-
 function SaleValueInputs({
   values,
   selectedGrades,

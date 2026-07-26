@@ -155,14 +155,14 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           <NavigationProgress />
           <div className="flex min-h-screen flex-col">
             <SiteHeader />
-            <div className="flex-1 pt-20 pb-14">{children}</div>
-            <footer className="bg-background/90 fixed right-0 bottom-0 left-0 z-40 border-t backdrop-blur">
+            <div className="flex-1">{children}</div>
+            <footer className="bg-background/90 border-t backdrop-blur">
               <div className="container flex justify-end py-4">
                 <p className="text-muted-foreground text-sm">Made by kinsyu</p>
               </div>
             </footer>
           </div>
-          <div className="absolute right-4 bottom-12">
+          <div className="fixed right-4 bottom-4 z-30">
             <ThemeToggle />
           </div>
           <Toaster />
@@ -205,7 +205,7 @@ function SiteHeader() {
   const displaySession = effectiveSession ?? realSession;
 
   return (
-    <header className="bg-background/90 fixed top-0 right-0 left-0 z-40 border-b backdrop-blur">
+    <header className="bg-background/90 sticky top-0 z-40 border-b backdrop-blur">
       <nav className="container flex flex-col gap-4 py-4 lg:flex-row lg:items-center">
         <div className="flex items-center gap-6">
           <Link to="/" className="flex flex-col leading-none">

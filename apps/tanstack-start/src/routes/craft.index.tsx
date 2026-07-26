@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Badge } from "@acme/ui/badge";
 
 import type { RecentItem } from "~/lib/recent-searches";
+import { InlineState } from "~/component/inline-state";
 import {
   ItemSearchResultList,
   RecentItemList,
@@ -50,7 +51,9 @@ function RouteComponent() {
     >
       {deferredQuery.trim() ? (
         <Suspense
-          fallback={<p className="text-muted-foreground text-sm">Loading...</p>}
+          fallback={
+            <InlineState kind="loading">Loading Craftable Items...</InlineState>
+          }
         >
           <SearchResults query={deferredQuery} onSelect={add} listId={listId} />
         </Suspense>

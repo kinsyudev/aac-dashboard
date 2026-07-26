@@ -13,12 +13,15 @@ import { z } from "zod";
 import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
+import { Select } from "@acme/ui/select";
 import { toast } from "@acme/ui/toast";
 
 import type { ModesMap, OptimizationObjective } from "~/lib/craft-optimizer";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import type { ShoplistDestination } from "~/lib/shoplist-destinations";
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import { ProficiencyBadge } from "~/component/proficiency";
 import {
   CraftModeToggle,
@@ -131,11 +134,17 @@ function ShoplistPage() {
     return <StatusPage variant="not-found" />;
   }
   return (
-    <main className="container py-16">
-      <Suspense fallback={<p>Loading...</p>}>
+    <PageShell layout="wide">
+      <Suspense
+        fallback={
+          <InlineState kind="loading">
+            Loading Shopping List preview...
+          </InlineState>
+        }
+      >
         <ShoplistDetail craftId={craftId} simItemId={simItemId} />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -1226,7 +1235,11 @@ function ShoplistDetail({
       );
     }
     if (manaSealItemQuery.isLoading || manaSealCraftQuery.isLoading) {
-      return <p>Loading reseal shoplist...</p>;
+      return (
+        <InlineState kind="loading">
+          Loading reseal Shopping List...
+        </InlineState>
+      );
     }
     if (!manaSealItem || !manaSealCraft) {
       return (
@@ -1564,16 +1577,14 @@ function ShoplistLayout({
     <div className="flex flex-col gap-6">
       {backLink}
 
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          {icon ? <ItemIcon icon={icon} name={title} size="lg" /> : null}
-          <div>
-            <h1 className="text-3xl font-bold">{title}</h1>
-            <p className="text-muted-foreground text-sm">{subtitle}</p>
-          </div>
-        </div>
-        <ShareButton />
-      </div>
+      <PageHeading
+        title={title}
+        subtitle={subtitle}
+        identity={
+          icon ? <ItemIcon icon={icon} name={title} size="lg" /> : undefined
+        }
+        actions={<ShareButton />}
+      />
 
       <section className="rounded-lg border p-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -1610,7 +1621,7 @@ function ShoplistLayout({
                     <span className="text-muted-foreground text-sm">
                       Existing list
                     </span>
-                    <select
+                    <Select
                       value={selectedAppendDestination ? listId : ""}
                       onChange={(event) =>
                         setAppendDestination(event.target.value || null)
@@ -1626,13 +1637,13 @@ function ShoplistLayout({
                           {destination.access === "shared" ? " (shared)" : ""}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 ) : null}
                 {destinationListsLoading ? (
-                  <p className="text-muted-foreground text-sm">
+                  <InlineState kind="loading">
                     Loading existing lists...
-                  </p>
+                  </InlineState>
                 ) : listId && !selectedAppendDestination ? (
                   <p className="text-muted-foreground text-sm">
                     This list cannot accept craft sources. Choose another

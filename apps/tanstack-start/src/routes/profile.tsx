@@ -12,7 +12,13 @@ import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
 
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import {
+  PageHeading,
+  PageSection,
+  PageShell,
+} from "~/component/page-composition";
 import { ProficiencyBadge } from "~/component/proficiency";
 import { serializeCostumePlannerSearch } from "~/lib/costume-planner-state";
 import { getRank, PROFICIENCY_CATEGORIES } from "~/lib/proficiency";
@@ -47,38 +53,48 @@ export const Route = createFileRoute("/profile")({
 
 function RouteComponent() {
   return (
-    <main className="container py-16">
-      <h1 className="mb-8 text-3xl font-bold">Profile</h1>
-      <section className="mb-12">
-        <h2 className="mb-4 text-xl font-semibold">Proficiencies</h2>
-        <p className="text-muted-foreground mb-6 text-sm">
-          Set your proficiency levels to calculate accurate labor costs for
-          crafting.
-        </p>
-        <Suspense fallback={<p>Loading...</p>}>
+    <PageShell layout="wide">
+      <PageHeading
+        title="Profile"
+        subtitle="Manage the Player settings and saved data used across Tools."
+      />
+      <PageSection
+        title="Proficiencies"
+        description="Set your Proficiency levels to calculate accurate Labor costs for Crafting."
+      >
+        <Suspense
+          fallback={
+            <InlineState kind="loading">Loading Proficiencies...</InlineState>
+          }
+        >
           <ProficiencyEditor />
         </Suspense>
-      </section>
-      <section className="mb-12">
-        <h2 className="mb-4 text-xl font-semibold">Costume Planner Loadouts</h2>
-        <p className="text-muted-foreground mb-6 text-sm">
-          Open or remove saved costume and undergarment planner snapshots.
-        </p>
-        <Suspense fallback={<p>Loading...</p>}>
+      </PageSection>
+      <PageSection
+        title="Costume Planner Loadouts"
+        description="Open or remove saved costume and undergarment Planner snapshots."
+      >
+        <Suspense
+          fallback={
+            <InlineState kind="loading">Loading loadouts...</InlineState>
+          }
+        >
           <CostumePlannerLoadouts />
         </Suspense>
-      </section>
-      <section>
-        <h2 className="mb-4 text-xl font-semibold">Price Overrides</h2>
-        <p className="text-muted-foreground mb-6 text-sm">
-          Set custom prices for crafting materials. These will be used instead
-          of market prices when calculating craft costs.
-        </p>
-        <Suspense fallback={<p>Loading...</p>}>
+      </PageSection>
+      <PageSection
+        title="Price Overrides"
+        description="Set custom prices for Crafting Materials. Price Overrides take precedence over Market Data when calculating Craft Costs."
+      >
+        <Suspense
+          fallback={
+            <InlineState kind="loading">Loading Price Overrides...</InlineState>
+          }
+        >
           <PriceOverrides />
         </Suspense>
-      </section>
-    </main>
+      </PageSection>
+    </PageShell>
   );
 }
 

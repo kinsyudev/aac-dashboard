@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Info, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 
 import { Badge } from "@acme/ui/badge";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { Label } from "@acme/ui/label";
+import { Select } from "@acme/ui/select";
+import { InfoTooltip } from "@acme/ui/tooltip";
 
 import type {
   CuratedTradePackData,
@@ -21,6 +23,9 @@ import type {
   TradePackResult,
   TradePackRunSummary,
 } from "~/lib/trade-packs";
+import { InlineState } from "~/component/inline-state";
+import { Metric } from "~/component/metric";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import tradePackData from "~/data/trade-packs.generated.json";
 import {
   calculatePackMetrics,
@@ -77,30 +82,25 @@ export const Route = createFileRoute("/trade-packs")({
 
 function TradePacksPage() {
   return (
-    <main className="mx-auto w-full max-w-[1600px] px-4 py-10 sm:px-6 lg:px-8 2xl:px-10">
-      <div className="mb-6 flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Trade Packs</h1>
+    <PageShell layout="wide">
+      <PageHeading
+        title="Trade Packs"
+        subtitle="Compare pack Revenue, Material cost, Profit, and Silver / Labor from current Market Data and your saved Price Overrides."
+        badges={
           <Badge variant="secondary">
             {allPacks.length.toLocaleString()} packs
           </Badge>
-        </div>
-        <p className="text-muted-foreground max-w-3xl text-sm">
-          Compare pack revenue, material cost, profit, and silver per labor from
-          current market prices and your saved overrides.
-        </p>
-      </div>
+        }
+      />
 
       <Suspense
         fallback={
-          <p className="text-muted-foreground text-sm">
-            Loading trade packs...
-          </p>
+          <InlineState kind="loading">Loading trade packs...</InlineState>
         }
       >
         <TradePacksContent />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -595,23 +595,6 @@ function NumberField({
   );
 }
 
-function InfoTooltip({ text }: { text: string }) {
-  return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        aria-label={text}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 rounded-full outline-none focus-visible:ring-[3px]"
-      >
-        <Info className="size-3.5" aria-hidden="true" />
-      </button>
-      <span className="bg-popover text-popover-foreground pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-64 -translate-x-1/2 rounded-md border px-3 py-2 text-xs leading-relaxed shadow-md group-focus-within:block group-hover:block">
-        {text}
-      </span>
-    </span>
-  );
-}
-
 function SelectField<TValue extends string>({
   id,
   label,
@@ -628,7 +611,7 @@ function SelectField<TValue extends string>({
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
-      <select
+      <Select
         id={id}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value as TValue)}
@@ -639,7 +622,7 @@ function SelectField<TValue extends string>({
             {option.label}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -659,7 +642,12 @@ function RankingTable({
         <h2 className="text-base font-semibold">{title}</h2>
         <p className="text-muted-foreground mt-1 text-sm">{description}</p>
       </div>
-      <div className="overflow-x-auto">
+      <div
+        className="overflow-x-auto"
+        role="region"
+        aria-label="Trade Pack comparison"
+        tabIndex={0}
+      >
         <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-muted/50 text-muted-foreground">
             <tr className="text-left">
@@ -732,15 +720,6 @@ function MetricsSummary({ summary }: { summary: TradePackRunSummary }) {
         label="Silver/Labor"
         value={formatSilverPerLabor(summary.silverPerLabor)}
       />
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border p-3">
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
   );
 }

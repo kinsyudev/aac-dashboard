@@ -8,6 +8,8 @@ import { Button } from "@acme/ui/button";
 import { toast } from "@acme/ui/toast";
 
 import { authClient } from "~/auth/client";
+import { InlineState } from "~/component/inline-state";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import { StatusPage } from "~/component/status-page";
 import { useTRPC } from "~/lib/trpc";
 
@@ -56,62 +58,60 @@ function InviteAcceptancePage() {
   }
 
   return (
-    <main className="container py-16">
-      <div className="mx-auto flex max-w-xl flex-col gap-6 rounded-xl border p-8">
-        <div>
-          <h1 className="text-3xl font-bold">Shopping List Invite</h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            Accept a one-time invite to join a collaborative shopping list.
-          </p>
-        </div>
+    <PageShell layout="narrow">
+      <PageHeading
+        title="Shopping List Invite"
+        subtitle="Accept a one-time invite to join a collaborative Shopping List."
+      />
 
-        {isLoading ? <p>Loading invite...</p> : null}
-        {data ? (
-          <>
-            <div className="rounded-lg border p-4">
-              <p className="font-medium">{data.list.name}</p>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Shared by {data.owner.name} with {data.role} access
-              </p>
-              <p className="text-muted-foreground mt-3 text-sm">
-                Status: {data.isAvailable ? "available" : "unavailable"}
-              </p>
-            </div>
+      {isLoading ? (
+        <InlineState kind="loading">Loading invite...</InlineState>
+      ) : null}
+      {data ? (
+        <>
+          <div className="rounded-lg border p-4">
+            <p className="font-medium">{data.list.name}</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Shared by {data.owner.name} with {data.role} access
+            </p>
+            <p className="text-muted-foreground mt-3 text-sm">
+              Status: {data.isAvailable ? "available" : "unavailable"}
+            </p>
+          </div>
 
-            {!session ? (
-              <Button
-                loading={isSigningIn}
-                loadingText="Signing in..."
-                onClick={async () => {
-                  setIsSigningIn(true);
-                  try {
-                    const result = await authClient.signIn.social({
-                      provider: "discord",
-                      callbackURL: `/shoplists/invite/${token}`,
-                    });
-                    if (result.data?.url) {
-                      await navigate({ href: result.data.url, replace: true });
-                    }
-                  } finally {
-                    setIsSigningIn(false);
+          {!session ? (
+            <Button
+              loading={isSigningIn}
+              loadingText="Signing in..."
+              onClick={async () => {
+                setIsSigningIn(true);
+                try {
+                  const result = await authClient.signIn.social({
+                    provider: "discord",
+                    callbackURL: `/shoplists/invite/${token}`,
+                  });
+                  if (result.data?.url) {
+                    await navigate({ href: result.data.url, replace: true });
                   }
-                }}
-              >
-                Sign in with Discord
-              </Button>
-            ) : (
-              <Button
-                disabled={!data.isAvailable}
-                loading={acceptInvite.isPending}
-                loadingText="Accepting..."
-                onClick={() => acceptInvite.mutate(token)}
-              >
-                Accept invite
-              </Button>
-            )}
-          </>
-        ) : null}
-      </div>
-    </main>
+                } finally {
+                  setIsSigningIn(false);
+                }
+              }}
+            >
+              Sign in with Discord
+            </Button>
+          ) : (
+            <Button
+              disabled={!data.isAvailable}
+              loading={acceptInvite.isPending}
+              loadingText="Accepting..."
+              onClick={() => acceptInvite.mutate(token)}
+            >
+              Accept invite
+            </Button>
+          )}
+        </>
+      ) : null}
+    </PageShell>
   );
 }

@@ -14,6 +14,7 @@ import type { AppRouter } from "@acme/api";
 import { Button } from "@acme/ui/button";
 import { Input } from "@acme/ui/input";
 import { toast } from "@acme/ui/toast";
+import { Tooltip } from "@acme/ui/tooltip";
 
 import type {
   ModesMap,
@@ -21,8 +22,16 @@ import type {
   SelectedCraftMap,
   SubcraftMap,
 } from "~/lib/craft-optimizer";
+import { InlineState } from "~/component/inline-state";
 import { ItemDescription } from "~/component/item-description";
 import { ItemIcon } from "~/component/item-icon";
+import { MetricGrid } from "~/component/metric";
+import {
+  PageHeading,
+  PageSection,
+  PageShell,
+} from "~/component/page-composition";
+import { RecipeNavigator } from "~/component/recipe-navigator";
 import { StatCard } from "~/component/stat-card";
 import { pickPreferredCraft } from "~/lib/craft-helpers";
 import {
@@ -226,7 +235,7 @@ function SelectedCraftTree({
 function RouteComponent() {
   const { listId } = Route.useSearch();
   return (
-    <main className="container py-8 sm:py-16">
+    <PageShell>
       <Link
         to="/craft"
         search={{ listId }}
@@ -234,10 +243,14 @@ function RouteComponent() {
       >
         ← Back to Craft
       </Link>
-      <Suspense fallback={<p>Loading...</p>}>
+      <Suspense
+        fallback={
+          <InlineState kind="loading">Loading Craft Plan...</InlineState>
+        }
+      >
         <CraftPlanPage listId={listId} />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 
@@ -354,6 +367,16 @@ function CraftPlanPage({ listId }: { listId?: string }) {
     plan.focused.itemId === data.item.id
       ? rootCraftId
       : selectedCrafts[plan.focused.itemId];
+  const productionPath = plan.breadcrumb.map((level, index, levels) => ({
+    id: level.itemId,
+    name:
+      index === 0
+        ? data.item.name
+        : (levels[index - 1]?.entry.materials.find(
+            (material) => material.item.id === level.itemId,
+          )?.item.name ?? level.entry.craft.name),
+  }));
+  const focusedItemName = productionPath.at(-1)?.name ?? data.item.name;
 
   const setRecipe = (craftId: number) => {
     if (plan.focused.itemId === data.item.id) {
@@ -372,35 +395,23 @@ function CraftPlanPage({ listId }: { listId?: string }) {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <header className="flex min-w-0 flex-wrap items-center gap-4">
-        {data.item.icon ? (
-          <ItemIcon icon={data.item.icon} name={data.item.name} size="lg" />
-        ) : null}
-        <div className="min-w-0">
-          <h1 className="truncate text-3xl font-bold">{data.item.name}</h1>
-          <p className="text-muted-foreground text-sm">
-            Craft Plan · {data.item.category}
-          </p>
-        </div>
-      </header>
+      <PageHeading
+        title={data.item.name}
+        subtitle={`Craft Plan · ${data.item.category}`}
+        identity={
+          data.item.icon ? (
+            <ItemIcon icon={data.item.icon} name={data.item.name} size="lg" />
+          ) : undefined
+        }
+      />
       {data.item.description ? (
         <ItemDescription text={data.item.description} />
       ) : null}
 
-      <section
-        className="flex flex-col gap-4 border-t pt-6"
-        aria-labelledby="crafting-summary-title"
-      >
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-          <div>
-            <h2 id="crafting-summary-title" className="text-xl font-semibold">
-              Crafting Summary
-            </h2>
-            <p className="text-muted-foreground text-sm">
-              {plan.craftCount} Craft{plan.craftCount === 1 ? "" : "s"} produces{" "}
-              {plan.summary.totalOutput.toLocaleString()} {data.item.name}.
-            </p>
-          </div>
+      <PageSection
+        title="Crafting Summary"
+        description={`${plan.craftCount} Craft${plan.craftCount === 1 ? "" : "s"} produces ${plan.summary.totalOutput.toLocaleString()} ${data.item.name}.`}
+        actions={
           <label className="flex items-center gap-2 text-sm">
             Crafts
             <Input
@@ -418,14 +429,14 @@ function CraftPlanPage({ listId }: { listId?: string }) {
               className="w-24 tabular-nums"
             />
           </label>
-        </div>
+        }
+      >
         {plan.summary.missingPriceItems.length ? (
-          <p className="rounded bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-            Incomplete Plan — Missing Price:{" "}
-            {plan.summary.missingPriceItems.join(", ")}.
-          </p>
+          <InlineState kind="incomplete" title="Incomplete Plan">
+            Missing Price: {plan.summary.missingPriceItems.join(", ")}.
+          </InlineState>
         ) : null}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <MetricGrid>
           <StatCard
             label="Craft Cost"
             value={
@@ -466,12 +477,14 @@ function CraftPlanPage({ listId }: { listId?: string }) {
               value={formatCurrency(plan.summary.profitPerItem)}
             />
           ) : null}
-        </div>
+        </MetricGrid>
         <label className="text-muted-foreground flex items-center gap-2 text-sm whitespace-nowrap">
           Sale price
-          <span title={salePriceSource} aria-label={salePriceSource}>
-            <Info className="size-3.5" aria-hidden="true" />
-          </span>
+          <Tooltip content={salePriceSource}>
+            <button type="button" aria-label={salePriceSource}>
+              <Info className="size-3.5" aria-hidden="true" />
+            </button>
+          </Tooltip>
           <Input
             aria-label="Sale price"
             title={salePriceSource}
@@ -488,20 +501,12 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             className="w-28 shrink-0"
           />
         </label>
-      </section>
+      </PageSection>
 
-      <section
-        className="flex flex-col gap-3 border-t pt-6"
-        aria-labelledby="craft-tree-title"
+      <PageSection
+        title="Craft Tree"
+        description="Navigate the Materials selected for crafting."
       >
-        <div>
-          <h2 id="craft-tree-title" className="text-xl font-semibold">
-            Craft Tree
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            Navigate the Materials selected for crafting.
-          </p>
-        </div>
         <nav aria-label="Craft tree">
           <SelectedCraftTree
             rootEntry={rootEntry}
@@ -514,247 +519,156 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             onFocus={setFocusPath}
           />
         </nav>
-      </section>
+      </PageSection>
 
-      <section
-        className="flex min-w-0 flex-col gap-4 border-t pt-6"
-        aria-labelledby="crafting-title"
+      <PageSection
+        title="Crafting"
+        description={`Currently inspecting ${plan.focused.entry.craft.name}.`}
       >
-        <div>
-          <h2 id="crafting-title" className="text-xl font-semibold">
-            Crafting
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            Currently inspecting{" "}
-            <span className="text-foreground font-medium">
-              {plan.focused.entry.craft.name}
-            </span>
-            .
-          </p>
-        </div>
-        {focusedChoices.length > 1 ? (
-          <div className="grid gap-2" aria-label="Recipe choices">
-            <h3 className="font-semibold">Choose a Recipe</h3>
-            {focusedChoices.map((entry) => {
-              const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
-              const output = getProducedAmount(entry, plan.focused.itemId);
-              const selected = entry.craft.id === plan.focused.entry.craft.id;
-              const product = entry.products.find(
-                (candidate) => candidate.item.id === plan.focused.itemId,
-              );
-              return (
-                <button
-                  type="button"
-                  key={entry.craft.id}
-                  onClick={() => setRecipe(entry.craft.id)}
-                  aria-pressed={selected}
-                  className={`rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                    selected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted/50 hover:bg-muted"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <ItemIcon
-                      icon={product?.item.icon ?? null}
-                      name={product?.item.name ?? entry.craft.name}
-                      size="md"
-                    />
-                    <span>
-                      <span className="font-medium">{entry.craft.name}</span>
-                      <span className="block text-xs">
-                        {selected && focusedSelectedId == null
-                          ? "Recommendation · "
-                          : ""}
-                        {output} output / Craft · {entry.craft.labor} Labor ·{" "}
-                        {cost == null
-                          ? "Missing Price"
-                          : `${formatCurrency(cost)} Craft Cost`}
-                        {output > 1 && cost != null
-                          ? ` · ${formatCurrency(cost / output)} per Item`
-                          : ""}
-                      </span>
-                    </span>
+        <RecipeNavigator
+          path={productionPath}
+          focusedItemName={focusedItemName}
+          choices={focusedChoices.map((entry) => {
+            const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
+            const output = getProducedAmount(entry, plan.focused.itemId);
+            const selected = entry.craft.id === plan.focused.entry.craft.id;
+            return {
+              id: entry.craft.id,
+              name: entry.craft.name,
+              output,
+              labor: entry.craft.labor,
+              cost:
+                cost == null
+                  ? "Missing Price"
+                  : `${formatCurrency(cost)} Craft Cost`,
+              costPerItem:
+                output > 1 && cost != null
+                  ? `${formatCurrency(cost / output)} / Item`
+                  : undefined,
+              selected,
+              recommended: selected && focusedSelectedId == null,
+            };
+          })}
+          materials={plan.focused.entry.materials.map(({ item, amount }) => {
+            const currency = isCurrencyMaterial(item);
+            const unitPrice = currency
+              ? null
+              : getItemPrice(item.id, priceMap, overrideMap);
+            const priced =
+              !currency && hasItemPrice(item.id, priceMap, overrideMap);
+            const isEditingOverride = editingOverrideItemId === item.id;
+            return {
+              id: item.id,
+              name: currency ? "Currency" : item.name,
+              amount:
+                plan.focusedMaterialQuantities.find(
+                  (material) => material.itemId === item.id,
+                )?.amount ?? amount,
+              mode: modes[item.id] ?? "buy",
+              craftable:
+                !currency && Boolean(data.subcraftsByItemId[item.id]?.length),
+              identity: currency ? undefined : (
+                <ItemIcon icon={item.icon} name={item.name} size="md" />
+              ),
+              price: currency ? (
+                `${formatCurrency(amount / 10_000)} / Craft`
+              ) : (
+                <div className="flex flex-col items-end gap-1 text-sm">
+                  <span className="inline-flex items-center gap-1">
+                    {priced
+                      ? `${formatCurrency(unitPrice ?? 0)} each`
+                      : "Missing Price"}
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0 py-0"
+                      aria-label={`${overrideMap.has(item.id) ? "Edit" : "Set"} price override for ${item.name}`}
+                      onClick={() => {
+                        setEditingOverrideItemId(item.id);
+                        setOverrideDraft(
+                          String(overrideMap.get(item.id) ?? unitPrice ?? ""),
+                        );
+                      }}
+                    >
+                      <Pencil className="size-3" aria-hidden="true" />
+                    </Button>
                   </span>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        <div className="flex flex-col gap-2" aria-label="Recipe materials">
-          <h3 className="font-semibold">Materials</h3>
-          <div className="grid gap-2">
-            {plan.focused.entry.materials.map(({ item, amount }) => {
-              const currency = isCurrencyMaterial(item);
-              const craftable = Boolean(
-                data.subcraftsByItemId[item.id]?.length,
-              );
-              const mode = modes[item.id] ?? "buy";
-              const unitPrice = currency
-                ? null
-                : getItemPrice(item.id, priceMap, overrideMap);
-              const priced =
-                !currency && hasItemPrice(item.id, priceMap, overrideMap);
-              const isEditingOverride = editingOverrideItemId === item.id;
-              return (
-                <div
-                  key={item.id}
-                  className="grid gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    {currency ? null : (
-                      <ItemIcon icon={item.icon} name={item.name} size="md" />
-                    )}
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">
-                        {currency ? "Currency" : item.name}
-                      </p>
-                      <p className="text-muted-foreground text-xs">
-                        {currency
-                          ? `${formatCurrency(amount / 10_000)} per Craft`
-                          : plan.focused.crafts > 1
-                            ? `${(plan.focusedMaterialQuantities.find((material) => material.itemId === item.id)?.amount ?? amount).toLocaleString()} needed for ${plan.focused.crafts} Crafts · `
-                            : ""}
-                        {currency ? "" : `${amount.toLocaleString()} per Craft`}
-                        {!currency ? (
-                          <span className="ml-1 inline-flex items-center gap-1">
-                            ·{" "}
-                            {priced
-                              ? `${formatCurrency(unitPrice ?? 0)} each`
-                              : "Missing Price"}
-                            <Button
-                              type="button"
-                              variant="link"
-                              size="sm"
-                              className="h-auto px-0 py-0"
-                              aria-label={`${overrideMap.has(item.id) ? "Edit" : "Set"} price override for ${item.name}`}
-                              title={
-                                overrideMap.has(item.id)
-                                  ? "Edit price override"
-                                  : "Set price override"
-                              }
-                              onClick={() => {
-                                setEditingOverrideItemId(item.id);
-                                setOverrideDraft(
-                                  String(
-                                    overrideMap.get(item.id) ?? unitPrice ?? "",
-                                  ),
-                                );
-                              }}
-                            >
-                              <Pencil className="size-3" aria-hidden="true" />
-                            </Button>
-                          </span>
-                        ) : null}
-                        {isEditingOverride ? (
-                          <span className="mt-1 flex items-center gap-1">
-                            <Input
-                              aria-label={`${item.name} price override`}
-                              type="number"
-                              min="0.01"
-                              step="0.01"
-                              value={overrideDraft}
-                              onChange={(event) =>
-                                setOverrideDraft(event.target.value)
-                              }
-                              className="h-7 w-24 text-xs"
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-7"
-                              disabled={setPriceOverride.isPending}
-                              onClick={() => {
-                                const price = parseFinitePrice(overrideDraft);
-                                if (price == null || price <= 0) {
-                                  toast.error("Enter a positive Gold price.");
-                                  return;
-                                }
-                                setPriceOverride.mutate({
-                                  itemId: item.id,
-                                  price,
-                                });
-                              }}
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className="h-7"
-                              onClick={() => setEditingOverrideItemId(null)}
-                            >
-                              Cancel
-                            </Button>
-                          </span>
-                        ) : null}
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    {!currency && craftable ? (
-                      <span className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={mode === "buy" ? "default" : "ghost"}
-                          onClick={() => {
-                            setModes((previous) => ({
-                              ...previous,
-                              [item.id]: "buy",
-                            }));
-                            setFocusPath((previous) =>
-                              previous.includes(item.id)
-                                ? previous.slice(0, previous.indexOf(item.id))
-                                : previous,
-                            );
-                          }}
-                        >
-                          Buy
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={mode === "craft" ? "default" : "ghost"}
-                          onClick={() =>
-                            setModes((previous) => ({
-                              ...previous,
-                              [item.id]: "craft",
-                            }))
-                          }
-                        >
-                          Craft
-                        </Button>
-                      </span>
-                    ) : null}
-                  </div>
-                  <div>
-                    {!currency && craftable && mode === "craft" ? (
+                  <span className="text-muted-foreground text-xs">
+                    {overrideMap.has(item.id)
+                      ? "Price Override"
+                      : priced
+                        ? "Market Data"
+                        : "No Price Override or Market Data"}
+                  </span>
+                  {isEditingOverride ? (
+                    <span className="flex flex-wrap justify-end gap-1">
+                      <Input
+                        aria-label={`${item.name} price override`}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={overrideDraft}
+                        onChange={(event) =>
+                          setOverrideDraft(event.target.value)
+                        }
+                        className="h-7 w-24 text-xs"
+                      />
                       <Button
                         type="button"
                         size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          setFocusPath((previous) => [
-                            ...previous.slice(
-                              0,
-                              previous.indexOf(plan.focused.itemId) + 1,
-                            ),
-                            item.id,
-                          ])
-                        }
+                        className="h-7"
+                        disabled={setPriceOverride.isPending}
+                        onClick={() => {
+                          const price = parseFinitePrice(overrideDraft);
+                          if (price == null || price <= 0) {
+                            toast.error("Enter a positive Gold price.");
+                            return;
+                          }
+                          setPriceOverride.mutate({ itemId: item.id, price });
+                        }}
                       >
-                        Inspect
+                        Save
                       </Button>
-                    ) : null}
-                  </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7"
+                        onClick={() => setEditingOverrideItemId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </span>
+                  ) : null}
                 </div>
+              ),
+            };
+          })}
+          onFocus={(itemId) =>
+            setFocusPath((previous) =>
+              previous.slice(0, previous.indexOf(itemId) + 1),
+            )
+          }
+          onRecipeChoice={setRecipe}
+          onAcquisitionMode={(itemId, mode) => {
+            setModes((previous) => ({ ...previous, [itemId]: mode }));
+            if (mode === "buy") {
+              setFocusPath((previous) =>
+                previous.includes(itemId)
+                  ? previous.slice(0, previous.indexOf(itemId))
+                  : previous,
               );
-            })}
-          </div>
-        </div>
-      </section>
+            }
+          }}
+          onInspect={(itemId) =>
+            setFocusPath((previous) => [
+              ...previous.slice(0, previous.indexOf(plan.focused.itemId) + 1),
+              itemId,
+            ])
+          }
+        />
+      </PageSection>
       <Link
         to="/shoplist"
         search={{

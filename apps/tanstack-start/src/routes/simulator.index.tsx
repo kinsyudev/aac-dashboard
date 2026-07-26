@@ -8,7 +8,9 @@ import type { AppRouter } from "@acme/api";
 import type { ProficiencyMap } from "~/lib/proficiency";
 import type { SimulatorTarget } from "~/lib/simulator-catalog";
 import type { CraftModeMap } from "~/lib/simulator-upgrade";
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import { StatCard } from "~/component/stat-card";
 import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { getDiscountedLabor } from "~/lib/proficiency";
@@ -69,24 +71,21 @@ export const Route = createFileRoute("/simulator/")({
 
 function SimulatorIndex() {
   return (
-    <main className="container py-16">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Craft Simulator</h1>
-        <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
-          Compare the representative Sealed Delphinad craft for each mana wisp
-          type using salvage-focused expected value.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeading
+        title="Craft Simulator"
+        subtitle="Compare the representative Sealed Delphinad Recipe for each mana wisp type using salvage-focused Expected Value."
+      />
       <Suspense
         fallback={
-          <p className="text-muted-foreground text-sm">
+          <InlineState kind="loading">
             Loading simulator dashboard...
-          </p>
+          </InlineState>
         }
       >
         <SimulatorDashboard />
       </Suspense>
-    </main>
+    </PageShell>
   );
 }
 

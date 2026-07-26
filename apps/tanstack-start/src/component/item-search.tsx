@@ -4,6 +4,7 @@ import { Input } from "@acme/ui/input";
 
 import type { RecentItem } from "~/lib/recent-searches";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 
 interface BaseListItem {
   id: number;
@@ -29,17 +30,8 @@ export function SearchPageShell({
   children: ReactNode;
 }) {
   return (
-    <main className="container py-16">
-      <h1
-        className={
-          description ? "mb-2 text-3xl font-bold" : "mb-6 text-3xl font-bold"
-        }
-      >
-        {title}
-      </h1>
-      {description ? (
-        <p className="text-muted-foreground mb-6 text-sm">{description}</p>
-      ) : null}
+    <PageShell>
+      <PageHeading title={title} subtitle={description} />
       <div className="flex flex-col gap-4">
         <Input
           placeholder={placeholder}
@@ -49,7 +41,7 @@ export function SearchPageShell({
         />
         {children}
       </div>
-    </main>
+    </PageShell>
   );
 }
 

@@ -31,7 +31,10 @@ import {
   TableRow,
 } from "@acme/ui/table";
 
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { Metric } from "~/component/metric";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
 import { useTRPC } from "~/lib/trpc";
 import { useUserData } from "~/lib/useUserData";
@@ -84,10 +87,10 @@ function parseListIds(ids: string | undefined) {
 
 function coerceFiniteNumber(value: number | string | null | undefined) {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
+    return Number.isFinite(value) ? value : null;
   }
-  const parsed = Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? parsed : 0;
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function parseFinitePrice(value: string | null | undefined): number | null {
@@ -109,8 +112,7 @@ function getMarketPrice(
   return (
     parseFinitePrice(price?.avg24h) ??
     parseFinitePrice(price?.avg7d) ??
-    parseFinitePrice(price?.avg30d) ??
-    0
+    parseFinitePrice(price?.avg30d)
   );
 }
 
@@ -142,24 +144,20 @@ function CombinedShoppingListsPage() {
 
   if (listIds.length < 2) {
     return (
-      <main className="container py-16">
-        <Card className="mx-auto max-w-2xl">
-          <CardHeader>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <CardTitle>Combined Shopping List</CardTitle>
-                <CardDescription className="mt-2">
-                  Select at least two shopping lists to build a read-only
-                  combined view.
-                </CardDescription>
-              </div>
-              <Button asChild variant="outline">
-                <Link to="/shoplists">Choose lists</Link>
-              </Button>
-            </div>
-          </CardHeader>
-        </Card>
-      </main>
+      <PageShell>
+        <PageHeading
+          title="Combined Shopping List"
+          subtitle="Select at least two Shopping Lists to build a read-only combined view."
+          actions={
+            <Button asChild variant="outline">
+              <Link to="/shoplists">Choose lists</Link>
+            </Button>
+          }
+        />
+        <InlineState kind="incomplete" title="Selection required">
+          Select at least two Shopping Lists to build a read-only combined view.
+        </InlineState>
+      </PageShell>
     );
   }
 
@@ -198,7 +196,7 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
         const leftCost = getLineCost(left, priceMap, overrideMap);
         const rightCost = getLineCost(right, priceMap, overrideMap);
         return rightCost !== leftCost
-          ? rightCost - leftCost
+          ? (rightCost ?? -1) - (leftCost ?? -1)
           : left.item.name.localeCompare(right.item.name);
       }),
     [materialItems, overrideMap, priceMap],
@@ -211,15 +209,27 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
     (sum, item) => sum + item.remainingQuantity,
     0,
   );
-  const outstandingBuyCost = materialItems.reduce(
-    (sum, item) => sum + getLineCost(item, priceMap, overrideMap),
-    0,
+  const lineCosts = materialItems.map((item) =>
+    getLineCost(item, priceMap, overrideMap),
   );
+  const outstandingBuyCost = lineCosts.includes(null)
+    ? null
+    : lineCosts.reduce<number>((sum, cost) => sum + (cost ?? 0), 0);
   const overallProgress = getCompletionPercent(totalRequired, totalRemaining);
 
   return (
-    <main className="container py-8 md:py-12">
+    <PageShell layout="wide">
       <div className="flex flex-col gap-6">
+        <PageHeading
+          title="Combined Shopping List"
+          subtitle={`A read-only rollup of Materials still needed across ${data.lists.length.toLocaleString()} selected lists.`}
+          back={<Link to="/shoplists">Back to lists</Link>}
+          actions={
+            <Button asChild variant="outline">
+              <Link to="/shoplists">Change selection</Link>
+            </Button>
+          }
+        />
         <Card className="overflow-hidden">
           <CardHeader className="border-b">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -230,9 +240,7 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
                 >
                   Back to lists
                 </Link>
-                <CardTitle className="mt-2 text-2xl sm:text-3xl">
-                  Combined Shopping List
-                </CardTitle>
+                <CardTitle className="mt-2">Combined progress</CardTitle>
                 <CardDescription className="mt-2 max-w-2xl">
                   A read-only rollup of materials still needed across{" "}
                   {data.lists.length.toLocaleString()} selected lists.
@@ -260,17 +268,22 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <MetricPanel
+              <Metric
                 label="Material types"
                 value={materialItems.length.toLocaleString()}
                 detail="Unique non-currency items"
               />
-              <MetricPanel
+              <Metric
                 label="Buy remaining"
-                value={`${outstandingBuyCost.toLocaleString(undefined, {
-                  maximumFractionDigits: 0,
-                })}g`}
-                detail="Overrides, then market price"
+                value={
+                  outstandingBuyCost == null
+                    ? "Missing Price"
+                    : `${outstandingBuyCost.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}g`
+                }
+                detail="Price Overrides, then Market Data"
+                tone={outstandingBuyCost == null ? "incomplete" : undefined}
               />
             </div>
           </CardContent>
@@ -287,17 +300,17 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
           </div>
 
           <aside className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:flex xl:flex-col">
-            <MetricCard
+            <Metric
               label="Selected lists"
               value={data.lists.length.toLocaleString()}
               detail="Owned and shared lists"
             />
-            <MetricCard
+            <Metric
               label="Materials required"
               value={totalRequired.toLocaleString()}
               detail="Coin excluded"
             />
-            <MetricCard
+            <Metric
               label="Materials remaining"
               value={totalRemaining.toLocaleString()}
               detail={`${overallProgress}% accounted for`}
@@ -306,7 +319,7 @@ function CombinedShoppingListsContent({ listIds }: { listIds: string[] }) {
           </aside>
         </section>
       </div>
-    </main>
+    </PageShell>
   );
 }
 
@@ -320,7 +333,7 @@ function getLineCost(
   const unitPrice =
     override != null ? coerceFiniteNumber(override) : getMarketPrice(market);
 
-  return item.remainingQuantity * unitPrice;
+  return unitPrice == null ? null : item.remainingQuantity * unitPrice;
 }
 
 function getUnitPrice(
@@ -333,46 +346,6 @@ function getUnitPrice(
   return override != null
     ? coerceFiniteNumber(override)
     : getMarketPrice(market);
-}
-
-function MetricCard({
-  detail,
-  label,
-  value,
-}: {
-  detail: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <Card className="gap-3 py-4">
-      <CardHeader className="gap-1 px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
-      </CardHeader>
-      <CardContent className="px-4">
-        <p className="text-muted-foreground text-xs">{detail}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MetricPanel({
-  detail,
-  label,
-  value,
-}: {
-  detail: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="bg-muted/35 rounded-lg border px-4 py-3">
-      <p className="text-muted-foreground text-sm">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
-      <p className="text-muted-foreground mt-1 text-xs">{detail}</p>
-    </div>
-  );
 }
 
 function SelectedListsCard({ lists }: { lists: CombinedData["lists"] }) {
@@ -477,7 +450,7 @@ function CombinedItemsTable({
   priceMap: PriceMap;
 }) {
   return (
-    <Table>
+    <Table containerLabel="Combined Shopping List Materials">
       <TableHeader>
         <TableRow>
           <TableHead className="min-w-48">Item</TableHead>
@@ -512,7 +485,8 @@ function CombinedItemTableRow({
   priceMap: PriceMap;
 }) {
   const unitPrice = getUnitPrice(item, priceMap, overrideMap);
-  const lineCost = item.remainingQuantity * unitPrice;
+  const lineCost =
+    unitPrice == null ? null : item.remainingQuantity * unitPrice;
   const progress = getCompletionPercent(
     item.totalQuantity,
     item.remainingQuantity,
@@ -543,7 +517,7 @@ function CombinedItemTableRow({
         </p>
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        {unitPrice > 0 ? (
+        {lineCost != null ? (
           <>
             {lineCost.toLocaleString(undefined, {
               maximumFractionDigits: 0,
@@ -551,7 +525,9 @@ function CombinedItemTableRow({
             g
           </>
         ) : (
-          <span className="text-muted-foreground">No price</span>
+          <span className="text-amber-700 dark:text-amber-300">
+            Missing Price
+          </span>
         )}
       </TableCell>
       <TableCell>
@@ -571,7 +547,8 @@ function CombinedItemMobileCard({
   priceMap: PriceMap;
 }) {
   const unitPrice = getUnitPrice(item, priceMap, overrideMap);
-  const lineCost = item.remainingQuantity * unitPrice;
+  const lineCost =
+    unitPrice == null ? null : item.remainingQuantity * unitPrice;
   const progress = getCompletionPercent(
     item.totalQuantity,
     item.remainingQuantity,
@@ -605,11 +582,11 @@ function CombinedItemMobileCard({
         <div className="text-muted-foreground flex items-center justify-between gap-3 text-xs tabular-nums">
           <span>{item.totalQuantity.toLocaleString()} required</span>
           <span>
-            {unitPrice > 0
+            {lineCost != null
               ? `${lineCost.toLocaleString(undefined, {
                   maximumFractionDigits: 0,
                 })}g`
-              : "No price"}
+              : "Missing Price"}
           </span>
         </div>
       </div>

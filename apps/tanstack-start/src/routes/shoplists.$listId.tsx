@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@acme/ui/dropdown-menu";
 import { Input } from "@acme/ui/input";
+import { Progress } from "@acme/ui/progress";
+import { Select } from "@acme/ui/select";
 import { toast } from "@acme/ui/toast";
 
 import type {
@@ -26,7 +28,9 @@ import type {
   PriceMap,
   SelectedCraftMap,
 } from "~/lib/craft-optimizer";
+import { InlineState } from "~/component/inline-state";
 import { ItemIcon } from "~/component/item-icon";
+import { PageHeading, PageShell } from "~/component/page-composition";
 import { ProficiencyBadge } from "~/component/proficiency";
 import {
   CraftModeToggle,
@@ -689,72 +693,67 @@ function ShoppingListDetailPage() {
   };
 
   return (
-    <main className="container py-16">
+    <PageShell layout="wide">
       <div className="flex flex-col gap-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <Link
-              to="/shoplists"
-              className="text-muted-foreground text-sm hover:underline"
-            >
-              ← Back to lists
-            </Link>
-            <h1 className="mt-3 text-3xl font-bold">{data.list.name}</h1>
-            <p className="text-muted-foreground mt-2 text-sm">
-              Owned by {data.owner.name} •{" "}
-              {data.role === "owner" ? "owner" : data.role}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+        <PageHeading
+          title={data.list.name}
+          subtitle={`Owned by ${data.owner.name} · ${data.role === "owner" ? "owner" : data.role}`}
+          back={<Link to="/shoplists">← Back to lists</Link>}
+          badges={
+            <>
               <StatPill label={setupSummary.sourceLabel} />
               <StatPill label={setupSummary.quantityLabel} />
               {setupSummary.detailLabel ? (
                 <StatPill label={setupSummary.detailLabel} />
               ) : null}
               <StatPill label={setupSummary.modeLabel} />
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {data.list.sourceKind === "simulator" && data.sources[0] ? (
-              <Button asChild size="sm">
-                <Link
-                  to="/shoplist"
-                  search={{
-                    craft: data.sources[0].craftId,
-                    simItem: data.sources[0].itemId ?? undefined,
-                    qty: 1,
-                    attempts: data.sources[0].quantity,
-                    strategy:
-                      data.sources[0].sourceType === "resealSimulator"
-                        ? "reseal"
-                        : "salvage",
-                    sub: data.list.craftModeItemIds.join(",") || undefined,
-                    listId,
-                  }}
-                >
-                  <EditIcon />
-                  Edit Simulator Setup
-                </Link>
-              </Button>
-            ) : null}
-            <HeaderActionMenu
-              canDelete={data.isOwner}
-              duplicateFreshPending={
-                duplicate.isPending && duplicate.variables.mode === "fresh"
-              }
-              duplicateWithProgressPending={
-                duplicate.isPending && duplicate.variables.mode === "copyState"
-              }
-              deletePending={deleteList.isPending}
-              onDelete={handleDelete}
-              onDuplicateFresh={() =>
-                duplicate.mutate({ listId, mode: "fresh" })
-              }
-              onDuplicateWithProgress={() =>
-                duplicate.mutate({ listId, mode: "copyState" })
-              }
-            />
-          </div>
-        </div>
+            </>
+          }
+          actions={
+            <>
+              {data.list.sourceKind === "simulator" && data.sources[0] ? (
+                <Button asChild size="sm">
+                  <Link
+                    to="/shoplist"
+                    search={{
+                      craft: data.sources[0].craftId,
+                      simItem: data.sources[0].itemId ?? undefined,
+                      qty: 1,
+                      attempts: data.sources[0].quantity,
+                      strategy:
+                        data.sources[0].sourceType === "resealSimulator"
+                          ? "reseal"
+                          : "salvage",
+                      sub: data.list.craftModeItemIds.join(",") || undefined,
+                      listId,
+                    }}
+                  >
+                    <EditIcon />
+                    Edit Simulator Setup
+                  </Link>
+                </Button>
+              ) : null}
+              <HeaderActionMenu
+                canDelete={data.isOwner}
+                duplicateFreshPending={
+                  duplicate.isPending && duplicate.variables.mode === "fresh"
+                }
+                duplicateWithProgressPending={
+                  duplicate.isPending &&
+                  duplicate.variables.mode === "copyState"
+                }
+                deletePending={deleteList.isPending}
+                onDelete={handleDelete}
+                onDuplicateFresh={() =>
+                  duplicate.mutate({ listId, mode: "fresh" })
+                }
+                onDuplicateWithProgress={() =>
+                  duplicate.mutate({ listId, mode: "copyState" })
+                }
+              />
+            </>
+          }
+        />
 
         <section className="rounded-xl border p-5">
           <div className="flex flex-col gap-4">
@@ -1410,7 +1409,7 @@ function ShoppingListDetailPage() {
           </div>
         </section>
       </div>
-    </main>
+    </PageShell>
   );
 }
 
@@ -1451,9 +1450,9 @@ function InlineRecipePreview({
 
   if (craftQuery.isLoading) {
     return (
-      <div className="bg-muted/20 rounded-lg border px-3 py-3 text-sm">
-        Loading recipes for {itemName}...
-      </div>
+      <InlineState kind="loading">
+        Loading Recipes for {itemName}...
+      </InlineState>
     );
   }
 
@@ -1537,7 +1536,7 @@ function InlineRecipePreview({
         {craftData.crafts.length > 1 ? (
           <label className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">Recipe</span>
-            <select
+            <Select
               className="bg-background rounded-md border px-2 py-1 text-sm"
               value={selectedEntry.craft.id}
               onChange={(event) => selectTopRecipe(Number(event.target.value))}
@@ -1547,7 +1546,7 @@ function InlineRecipePreview({
                   {entry.craft.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : null}
       </div>
@@ -1801,7 +1800,7 @@ function InlineRecipeTree({
                         />
                         {mode === "craft" &&
                         (subcraftMap[item.id]?.length ?? 0) > 1 ? (
-                          <select
+                          <Select
                             className="bg-background rounded-md border px-2 py-0.5 text-xs"
                             value={subEntry?.craft.id ?? ""}
                             onChange={(event) =>
@@ -1819,7 +1818,7 @@ function InlineRecipeTree({
                                 {candidate.craft.name}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         ) : null}
                       </span>
                     ) : null
@@ -2006,8 +2005,8 @@ function ItemCost({
 
   if (unitPrice <= 0) {
     return (
-      <p className="text-muted-foreground text-xs">
-        No market price data available.
+      <p className="text-xs text-amber-700 dark:text-amber-300">
+        Missing Price — no Price Override or Market Data available.
       </p>
     );
   }
@@ -2050,12 +2049,7 @@ function ProgressMeter({
         </div>
         <span className="font-medium">{percent}%</span>
       </div>
-      <div className="bg-muted h-2 rounded-full">
-        <div
-          className="bg-primary h-2 rounded-full transition-all"
-          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-        />
-      </div>
+      <Progress value={Math.max(0, Math.min(100, percent))} />
     </div>
   );
 }
