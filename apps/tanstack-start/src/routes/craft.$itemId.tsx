@@ -28,7 +28,6 @@ import {
 import {
   buildCraftPagePlan,
   getRecipeChoiceCost,
-  getRecipeSignature,
   normalizeCraftCount,
 } from "~/lib/craft-page-plan";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
@@ -383,9 +382,6 @@ function CraftPlanPage({ listId }: { listId?: string }) {
             <h2 className="text-xl font-semibold">
               {plan.focused.entry.craft.name}
             </h2>
-            <p className="text-muted-foreground text-sm">
-              One focused Recipe level
-            </p>
           </div>
         </div>
         {focusedChoices.length > 1 ? (
@@ -395,6 +391,9 @@ function CraftPlanPage({ listId }: { listId?: string }) {
               const cost = getRecipeChoiceCost(entry, priceMap, overrideMap);
               const output = getProducedAmount(entry, plan.focused.itemId);
               const selected = entry.craft.id === plan.focused.entry.craft.id;
+              const product = entry.products.find(
+                (candidate) => candidate.item.id === plan.focused.itemId,
+              );
               return (
                 <button
                   type="button"
@@ -407,19 +406,27 @@ function CraftPlanPage({ listId }: { listId?: string }) {
                       : "bg-muted/50 hover:bg-muted"
                   }`}
                 >
-                  <span className="font-medium">{entry.craft.name}</span> ·{" "}
-                  {output} output / Craft · {entry.craft.labor} Labor ·{" "}
-                  {cost == null
-                    ? "Missing Price"
-                    : `${formatCurrency(cost)} Craft Cost`}
-                  {output > 1 && cost != null
-                    ? ` · ${formatCurrency(cost / output)} per Item`
-                    : ""}
-                  <span className="block text-xs">
-                    {selected && focusedSelectedId == null
-                      ? "Recommendation · "
-                      : ""}
-                    {getRecipeSignature(entry)}
+                  <span className="flex items-center gap-2">
+                    <ItemIcon
+                      icon={product?.item.icon ?? null}
+                      name={product?.item.name ?? entry.craft.name}
+                      size="md"
+                    />
+                    <span>
+                      <span className="font-medium">{entry.craft.name}</span>
+                      <span className="block text-xs">
+                        {selected && focusedSelectedId == null
+                          ? "Recommendation · "
+                          : ""}
+                        {output} output / Craft · {entry.craft.labor} Labor ·{" "}
+                        {cost == null
+                          ? "Missing Price"
+                          : `${formatCurrency(cost)} Craft Cost`}
+                        {output > 1 && cost != null
+                          ? ` · ${formatCurrency(cost / output)} per Item`
+                          : ""}
+                      </span>
+                    </span>
                   </span>
                 </button>
               );
