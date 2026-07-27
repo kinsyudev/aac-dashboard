@@ -1262,9 +1262,9 @@ function RegradePage() {
                     <div className="mt-4 rounded-md border p-4">
                       <div className="flex items-center gap-1.5">
                         <h3 className="text-sm font-medium">
-                          Revenue breakdown
+                          Outcome breakdown
                         </h3>
-                        <InfoTooltip text="Expected revenue, cost, and EV split by final sale grade. Probability is the chance this strategy exits at that grade; revenue is probability times the sale value entered for that grade." />
+                        <InfoTooltip text="Expected revenue, cost, and EV split by final outcome grade. Probability is the chance this strategy stops at that grade; revenue is probability times the selected sale value, or zero when that outcome has no sale value." />
                       </div>
                       <div className="mt-3 overflow-x-auto">
                         <table className="w-full text-sm">

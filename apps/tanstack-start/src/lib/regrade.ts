@@ -83,7 +83,10 @@ export const MANA_SEAL_USE_LABOR = 10;
 const REGRADE_FEE_K = 0.0041636529;
 const REGRADE_FEE_BASE_COPPER = 160000;
 const COPPER_PER_GOLD = 10000;
-const MAX_SOLVER_ITERATIONS = 500;
+const MAX_POLICY_ITERATIONS = 100;
+const LINEAR_SOLVER_EPSILON = 1e-12;
+const SOLVER_VALIDATION_TOLERANCE = 1e-7;
+const POLICY_TIE_TOLERANCE = 1e-10;
 
 export interface RegradeFeeInput {
   ratioCost: number;
@@ -701,82 +704,154 @@ function mergeScaledTapProjectionValue(
   }
 }
 
-interface SolverValue {
-  value: number;
-  cost: number;
-  revenue: number;
-  labor: number;
-  attempts: number;
-  landingProbabilities: Map<number, number>;
-  costContributions: Map<number, number>;
-  steps: RegradeActionChoice[];
-}
-
 interface SolverAction {
   step: RegradeStep;
   attemptCostGold: number;
   attemptLabor: number;
 }
 
-const ZERO_SOLVER_VALUE: SolverValue = {
-  value: 0,
-  cost: 0,
-  revenue: 0,
-  labor: 0,
-  attempts: 0,
-  landingProbabilities: new Map(),
-  costContributions: new Map(),
-  steps: [],
-};
-
-function combineLandingProbabilities(
-  entries: { value: SolverValue; weight: number }[],
-  denominator: number,
-): Map<number, number> {
-  const combined = new Map<number, number>();
-  for (const { value, weight } of entries) {
-    if (weight <= 0) continue;
-    for (const [grade, probability] of value.landingProbabilities) {
-      combined.set(
-        grade,
-        (combined.get(grade) ?? 0) + (weight * probability) / denominator,
-      );
-    }
-  }
-  return combined;
+interface SolverPolicyEvaluation {
+  values: number[];
+  costs: number[];
+  revenues: number[];
+  labor: number[];
+  attempts: number[];
+  landingProbabilities: number[][];
+  costContributions: number[][];
 }
 
-function combineCostContributions(
-  entries: { value: SolverValue; weight: number; extraCost?: number }[],
-  landingProbabilities: ReadonlyMap<number, number>,
-  attemptCostGold: number,
-  denominator: number,
-): Map<number, number> {
-  const combined = new Map<number, number>();
-  for (const [grade, probability] of landingProbabilities) {
-    combined.set(grade, (attemptCostGold * probability) / denominator);
-  }
+interface LinearFactorization {
+  lu: number[][];
+  pivotRows: number[];
+}
 
-  for (const { value, weight, extraCost = 0 } of entries) {
-    if (weight <= 0) continue;
-    for (const [grade, cost] of value.costContributions) {
-      combined.set(
-        grade,
-        (combined.get(grade) ?? 0) + (weight * cost) / denominator,
-      );
+function factorLinearSystem(matrix: number[][]): LinearFactorization | null {
+  const size = matrix.length;
+  const lu = matrix.map((row) => [...row]);
+  if (lu.some((row) => row.length !== size)) return null;
+  const pivotRows: number[] = [];
+
+  for (let column = 0; column < size; column += 1) {
+    let pivotRow = column;
+    let pivotMagnitude = Math.abs(lu[column]?.[column] ?? 0);
+    for (let row = column + 1; row < size; row += 1) {
+      const magnitude = Math.abs(lu[row]?.[column] ?? 0);
+      if (magnitude > pivotMagnitude) {
+        pivotMagnitude = magnitude;
+        pivotRow = row;
+      }
     }
-    if (extraCost > 0) {
-      for (const [grade, probability] of value.landingProbabilities) {
-        combined.set(
-          grade,
-          (combined.get(grade) ?? 0) +
-            (weight * extraCost * probability) / denominator,
-        );
+    if (
+      !Number.isFinite(pivotMagnitude) ||
+      pivotMagnitude < LINEAR_SOLVER_EPSILON
+    ) {
+      return null;
+    }
+
+    pivotRows.push(pivotRow);
+    if (pivotRow !== column) {
+      const columnRow = lu[column];
+      const selectedPivotRow = lu[pivotRow];
+      if (!columnRow || !selectedPivotRow) return null;
+      lu[column] = selectedPivotRow;
+      lu[pivotRow] = columnRow;
+    }
+
+    const pivotData = lu[column];
+    if (!pivotData) return null;
+    const pivot = pivotData[column] ?? 0;
+    for (let row = column + 1; row < size; row += 1) {
+      const rowData = lu[row];
+      if (!rowData) return null;
+      const multiplier = (rowData[column] ?? 0) / pivot;
+      rowData[column] = multiplier;
+      for (let nextColumn = column + 1; nextColumn < size; nextColumn += 1) {
+        rowData[nextColumn] =
+          (rowData[nextColumn] ?? 0) -
+          multiplier * (pivotData[nextColumn] ?? 0);
       }
     }
   }
 
-  return combined;
+  return { lu, pivotRows };
+}
+
+function solveFactoredLinearSystem(
+  factorization: LinearFactorization,
+  rightHandSides: number[][],
+): number[][] | null {
+  const { lu, pivotRows } = factorization;
+  const size = lu.length;
+  if (rightHandSides.length !== size) return null;
+  const width = rightHandSides[0]?.length ?? 0;
+  const solution = rightHandSides.map((row) => [...row]);
+  if (solution.some((row) => row.length !== width)) return null;
+
+  for (let column = 0; column < size; column += 1) {
+    const pivotRow = pivotRows[column] ?? column;
+    if (pivotRow !== column) {
+      const columnValues = solution[column];
+      const pivotValues = solution[pivotRow];
+      if (!columnValues || !pivotValues) return null;
+      solution[column] = pivotValues;
+      solution[pivotRow] = columnValues;
+    }
+  }
+  for (let column = 0; column < size; column += 1) {
+    const pivotValues = solution[column];
+    if (!pivotValues) return null;
+    for (let row = column + 1; row < size; row += 1) {
+      const rowValues = solution[row];
+      if (!rowValues) return null;
+      const multiplier = lu[row]?.[column] ?? 0;
+      for (let rhs = 0; rhs < width; rhs += 1) {
+        rowValues[rhs] =
+          (rowValues[rhs] ?? 0) - multiplier * (pivotValues[rhs] ?? 0);
+      }
+    }
+  }
+
+  for (let row = size - 1; row >= 0; row -= 1) {
+    const rowValues = solution[row];
+    if (!rowValues) return null;
+    const pivot = lu[row]?.[row] ?? 0;
+    if (!Number.isFinite(pivot) || Math.abs(pivot) < LINEAR_SOLVER_EPSILON) {
+      return null;
+    }
+    for (let rhs = 0; rhs < width; rhs += 1) {
+      let value = solution[row]?.[rhs] ?? 0;
+      for (let column = row + 1; column < size; column += 1) {
+        value -= (lu[row]?.[column] ?? 0) * (solution[column]?.[rhs] ?? 0);
+      }
+      rowValues[rhs] = value / pivot;
+    }
+  }
+
+  return solution.every((row) => row.every(Number.isFinite)) ? solution : null;
+}
+
+function nearlyEqual(left: number, right: number, tolerance: number): boolean {
+  return (
+    Math.abs(left - right) <=
+    tolerance * Math.max(1, Math.abs(left), Math.abs(right))
+  );
+}
+
+function hasAcceptableLinearResidual(
+  matrix: number[][],
+  solution: number[][],
+  rightHandSides: number[][],
+): boolean {
+  return matrix.every((row, rowIndex) =>
+    (rightHandSides[rowIndex] ?? []).every((expected, rhsIndex) => {
+      const actual = row.reduce(
+        (sum, coefficient, columnIndex) =>
+          sum + coefficient * (solution[columnIndex]?.[rhsIndex] ?? 0),
+        0,
+      );
+      return nearlyEqual(actual, expected, SOLVER_VALIDATION_TOLERANCE);
+    }),
+  );
 }
 
 function getPricedConsumable(
@@ -1045,69 +1120,73 @@ export function solveExpectedRegradeToTarget(
   const data = input.data ?? regradeData;
   const startGrade = input.startGrade ?? RECRAFT_START_GRADE;
   const skippedReasons: string[] = [];
+  const isTerminalGrade = (grade: number): boolean =>
+    grade >= input.targetGrade || input.saleValuesByGrade.has(grade);
+  const unavailableResult = (reason: string): ExpectedRegradeResult => ({
+    item: input.item,
+    targetGrade: input.targetGrade,
+    expectedProfitGold: Number.NEGATIVE_INFINITY,
+    expectedCostGold: Number.POSITIVE_INFINITY,
+    expectedRevenueGold: 0,
+    expectedLabor: 0,
+    expectedAttempts: 0,
+    revenueBreakdown: [],
+    silverPerLabor: 0,
+    selectedSteps: [],
+    skippedReasons: [...new Set([...skippedReasons, reason])],
+  });
+
+  if (isTerminalGrade(startGrade)) {
+    const saleValueGold = getSaleValueForLandingGrade(
+      input.saleValuesByGrade,
+      startGrade,
+    );
+    return {
+      item: input.item,
+      targetGrade: input.targetGrade,
+      expectedProfitGold: saleValueGold - input.upgradeCostGold,
+      expectedCostGold: input.upgradeCostGold,
+      expectedRevenueGold: saleValueGold,
+      expectedLabor: input.upgradeLabor,
+      expectedAttempts: 0,
+      revenueBreakdown: [
+        {
+          grade: startGrade,
+          probability: 1,
+          saleValueGold,
+          expectedRevenueGold: saleValueGold,
+          expectedCostGold: input.upgradeCostGold,
+          expectedProfitGold: saleValueGold - input.upgradeCostGold,
+        },
+      ],
+      silverPerLabor:
+        input.upgradeLabor > 0
+          ? ((saleValueGold - input.upgradeCostGold) * 100) / input.upgradeLabor
+          : 0,
+      selectedSteps: [],
+      skippedReasons: [],
+    };
+  }
+
   const stateGrades = Array.from(
     { length: Math.max(0, input.targetGrade - startGrade) },
     (_, index) => startGrade + index,
+  ).filter((grade) => !isTerminalGrade(grade));
+  const terminalGrades = Array.from(
+    { length: input.item.maxGrade + 1 },
+    (_, grade) => grade,
+  ).filter(isTerminalGrade);
+  const stateIndexByGrade = new Map(
+    stateGrades.map((grade, index) => [grade, index] as const),
   );
-  const impossibleValue: SolverValue = {
-    value: Number.NEGATIVE_INFINITY,
-    cost: Number.POSITIVE_INFINITY,
-    revenue: 0,
-    labor: 0,
-    attempts: 0,
-    landingProbabilities: new Map(),
-    costContributions: new Map(),
-    steps: [],
-  };
-  const isTerminalGrade = (grade: number): boolean =>
-    grade >= input.targetGrade || input.saleValuesByGrade.has(grade);
+  const terminalIndexByGrade = new Map(
+    terminalGrades.map((grade, index) => [grade, index] as const),
+  );
+  const startIndex = stateIndexByGrade.get(startGrade);
+  if (startIndex == null || terminalGrades.length === 0) {
+    return unavailableResult("Unable to build a terminating regrade strategy.");
+  }
 
-  const terminalValue = (grade: number): SolverValue => {
-    const saleValue = getSaleValueForLandingGrade(
-      input.saleValuesByGrade,
-      grade,
-    );
-    return {
-      value: saleValue - input.upgradeCostGold,
-      cost: input.upgradeCostGold,
-      revenue: saleValue,
-      labor: input.upgradeLabor,
-      attempts: 0,
-      landingProbabilities: new Map([[grade, 1]]),
-      costContributions: new Map([[grade, input.upgradeCostGold]]),
-      steps: [],
-    };
-  };
-  const valueForGrade = (
-    grade: number,
-    values: Map<number, SolverValue>,
-  ): SolverValue => {
-    if (isTerminalGrade(grade)) {
-      return terminalValue(grade);
-    }
-    return values.get(grade) ?? ZERO_SOLVER_VALUE;
-  };
-  const metricDelta = (next: number, previous: number): number => {
-    if (next === previous) return 0;
-    if (!Number.isFinite(next) || !Number.isFinite(previous)) {
-      return Number.POSITIVE_INFINITY;
-    }
-    return Math.abs(next - previous);
-  };
-  const probabilityMapDelta = (
-    next: ReadonlyMap<number, number>,
-    previous: ReadonlyMap<number, number>,
-  ): number => {
-    const grades = new Set([...next.keys(), ...previous.keys()]);
-    return [...grades].reduce(
-      (delta, grade) =>
-        Math.max(
-          delta,
-          Math.abs((next.get(grade) ?? 0) - (previous.get(grade) ?? 0)),
-        ),
-      0,
-    );
-  };
   const obtainableCharmIds = new Set(
     getObtainableRegradeCharms(data).map((charm) => charm.id),
   );
@@ -1162,171 +1241,340 @@ export function solveExpectedRegradeToTarget(
     }
     actionsByGrade.set(grade, actions);
   }
-
-  const evaluateAction = (
-    action: SolverAction,
-    values: Map<number, SolverValue>,
-  ): SolverValue => {
-    const { attemptCostGold, attemptLabor, step } = action;
-    const normal = valueForGrade(step.normalToGrade, values);
-    const great =
-      step.greatProbability > 0
-        ? valueForGrade(step.greatToGrade, values)
-        : ZERO_SOLVER_VALUE;
-    const downgraded =
-      step.downgradeProbability > 0 && step.downgradeGrade != null
-        ? valueForGrade(step.downgradeGrade, values)
-        : ZERO_SOLVER_VALUE;
-    const restarted =
-      step.destroyProbability > 0
-        ? valueForGrade(startGrade, values)
-        : ZERO_SOLVER_VALUE;
-
-    const denominator = Math.max(0.000001, 1 - step.stayProbability);
-    const expectedValue =
-      (step.normalSuccessProbability * normal.value +
-        step.greatProbability * great.value +
-        step.destroyProbability *
-          (restarted.value - input.baseRecraftCostGold) +
-        step.downgradeProbability * downgraded.value -
-        attemptCostGold) /
-      denominator;
-    const expectedCost =
-      (attemptCostGold +
-        step.normalSuccessProbability * normal.cost +
-        step.greatProbability * great.cost +
-        step.destroyProbability * (input.baseRecraftCostGold + restarted.cost) +
-        step.downgradeProbability * downgraded.cost) /
-      denominator;
-    const expectedRevenue =
-      (step.normalSuccessProbability * normal.revenue +
-        step.greatProbability * great.revenue +
-        step.destroyProbability * restarted.revenue +
-        step.downgradeProbability * downgraded.revenue) /
-      denominator;
-    const expectedLabor =
-      (attemptLabor +
-        step.normalSuccessProbability * normal.labor +
-        step.greatProbability * great.labor +
-        step.destroyProbability * (input.baseRecraftLabor + restarted.labor) +
-        step.downgradeProbability * downgraded.labor) /
-      denominator;
-    const expectedAttempts =
-      (1 +
-        step.normalSuccessProbability * normal.attempts +
-        step.greatProbability * great.attempts +
-        step.destroyProbability * restarted.attempts +
-        step.downgradeProbability * downgraded.attempts) /
-      denominator;
-    const landingProbabilities = combineLandingProbabilities(
-      [
-        { value: normal, weight: step.normalSuccessProbability },
-        { value: great, weight: step.greatProbability },
-        { value: restarted, weight: step.destroyProbability },
-        { value: downgraded, weight: step.downgradeProbability },
-      ],
-      denominator,
+  if (stateGrades.some((grade) => !(actionsByGrade.get(grade)?.length ?? 0))) {
+    return unavailableResult(
+      "No priced regrade action is available at every required grade.",
     );
-    const costContributions = combineCostContributions(
-      [
-        { value: normal, weight: step.normalSuccessProbability },
-        { value: great, weight: step.greatProbability },
-        {
-          value: restarted,
-          weight: step.destroyProbability,
-          extraCost: input.baseRecraftCostGold,
+  }
+
+  interface SolverTransition {
+    grade: number;
+    probability: number;
+    extraCostGold: number;
+    extraLabor: number;
+  }
+
+  const getTransitions = (action: SolverAction): SolverTransition[] => {
+    const { step } = action;
+    return [
+      {
+        grade: step.fromGrade,
+        probability: step.stayProbability,
+        extraCostGold: 0,
+        extraLabor: 0,
+      },
+      {
+        grade: step.normalToGrade,
+        probability: step.normalSuccessProbability,
+        extraCostGold: 0,
+        extraLabor: 0,
+      },
+      {
+        grade: step.greatToGrade,
+        probability: step.greatProbability,
+        extraCostGold: 0,
+        extraLabor: 0,
+      },
+      {
+        grade: startGrade,
+        probability: step.destroyProbability,
+        extraCostGold: input.baseRecraftCostGold,
+        extraLabor: input.baseRecraftLabor,
+      },
+      {
+        grade: step.downgradeGrade ?? step.fromGrade,
+        probability: step.downgradeProbability,
+        extraCostGold: 0,
+        extraLabor: 0,
+      },
+    ].filter((transition) => transition.probability > 0);
+  };
+
+  const evaluatePolicy = (
+    policy: ReadonlyMap<number, SolverAction>,
+  ): SolverPolicyEvaluation | null => {
+    const stateCount = stateGrades.length;
+    const terminalCount = terminalGrades.length;
+    const continuation = Array.from({ length: stateCount }, () =>
+      Array<number>(stateCount).fill(0),
+    );
+    const terminalTransitions = Array.from({ length: stateCount }, () =>
+      Array<number>(terminalCount).fill(0),
+    );
+    const immediateCosts = Array<number>(stateCount).fill(0);
+    const immediateRevenue = Array<number>(stateCount).fill(0);
+    const immediateLabor = Array<number>(stateCount).fill(0);
+
+    for (const [stateIndex, grade] of stateGrades.entries()) {
+      const action = policy.get(grade);
+      if (!action) return null;
+      immediateCosts[stateIndex] = action.attemptCostGold;
+      immediateLabor[stateIndex] = action.attemptLabor;
+
+      for (const transition of getTransitions(action)) {
+        immediateCosts[stateIndex] +=
+          transition.probability * transition.extraCostGold;
+        immediateLabor[stateIndex] +=
+          transition.probability * transition.extraLabor;
+        if (isTerminalGrade(transition.grade)) {
+          const terminalIndex = terminalIndexByGrade.get(transition.grade);
+          const terminalRow = terminalTransitions[stateIndex];
+          if (terminalIndex == null || !terminalRow) return null;
+          terminalRow[terminalIndex] =
+            (terminalRow[terminalIndex] ?? 0) + transition.probability;
+          immediateCosts[stateIndex] +=
+            transition.probability * input.upgradeCostGold;
+          immediateLabor[stateIndex] +=
+            transition.probability * input.upgradeLabor;
+          immediateRevenue[stateIndex] =
+            (immediateRevenue[stateIndex] ?? 0) +
+            transition.probability *
+              getSaleValueForLandingGrade(
+                input.saleValuesByGrade,
+                transition.grade,
+              );
+        } else {
+          const nextStateIndex = stateIndexByGrade.get(transition.grade);
+          const continuationRow = continuation[stateIndex];
+          if (nextStateIndex == null || !continuationRow) return null;
+          continuationRow[nextStateIndex] =
+            (continuationRow[nextStateIndex] ?? 0) + transition.probability;
+        }
+      }
+    }
+
+    const matrix = continuation.map((row, rowIndex) =>
+      row.map((probability, columnIndex) =>
+        rowIndex === columnIndex ? 1 - probability : -probability,
+      ),
+    );
+    const factorization = factorLinearSystem(matrix);
+    if (!factorization) return null;
+    const rightHandSides = stateGrades.map((_, stateIndex) => [
+      immediateCosts[stateIndex] ?? 0,
+      immediateRevenue[stateIndex] ?? 0,
+      immediateLabor[stateIndex] ?? 0,
+      1,
+      ...(terminalTransitions[stateIndex] ?? []),
+    ]);
+    const solved = solveFactoredLinearSystem(factorization, rightHandSides);
+    if (
+      !solved ||
+      !hasAcceptableLinearResidual(matrix, solved, rightHandSides)
+    ) {
+      return null;
+    }
+
+    const costs = solved.map((row) => row[0] ?? 0);
+    const revenues = solved.map((row) => row[1] ?? 0);
+    const labor = solved.map((row) => row[2] ?? 0);
+    const attempts = solved.map((row) => row[3] ?? 0);
+    const landingProbabilities = solved.map((row) =>
+      row.slice(4, 4 + terminalCount),
+    );
+    const values = revenues.map(
+      (revenue, stateIndex) => revenue - (costs[stateIndex] ?? 0),
+    );
+
+    if (
+      landingProbabilities.some(
+        (probabilities) =>
+          probabilities.some(
+            (probability) =>
+              probability < -SOLVER_VALIDATION_TOLERANCE ||
+              probability > 1 + SOLVER_VALIDATION_TOLERANCE,
+          ) ||
+          !nearlyEqual(
+            probabilities.reduce((sum, probability) => sum + probability, 0),
+            1,
+            SOLVER_VALIDATION_TOLERANCE,
+          ),
+      )
+    ) {
+      return null;
+    }
+
+    const contributionRightHandSides = stateGrades.map((grade, stateIndex) => {
+      const action = policy.get(grade);
+      if (!action) return terminalGrades.map(() => Number.NaN);
+      return terminalGrades.map((terminalGrade, terminalIndex) => {
+        let contribution =
+          action.attemptCostGold *
+          (landingProbabilities[stateIndex]?.[terminalIndex] ?? 0);
+        for (const transition of getTransitions(action)) {
+          if (isTerminalGrade(transition.grade)) {
+            if (transition.grade === terminalGrade) {
+              contribution +=
+                transition.probability *
+                (transition.extraCostGold + input.upgradeCostGold);
+            }
+          } else {
+            const nextStateIndex = stateIndexByGrade.get(transition.grade);
+            if (nextStateIndex == null) return Number.NaN;
+            contribution +=
+              transition.probability *
+              transition.extraCostGold *
+              (landingProbabilities[nextStateIndex]?.[terminalIndex] ?? 0);
+          }
+        }
+        return contribution;
+      });
+    });
+    const costContributions = solveFactoredLinearSystem(
+      factorization,
+      contributionRightHandSides,
+    );
+    if (
+      !costContributions ||
+      !hasAcceptableLinearResidual(
+        matrix,
+        costContributions,
+        contributionRightHandSides,
+      )
+    ) {
+      return null;
+    }
+
+    for (const [stateIndex, probabilities] of landingProbabilities.entries()) {
+      const expectedRevenue = probabilities.reduce(
+        (sum, probability, terminalIndex) => {
+          const terminalGrade = terminalGrades[terminalIndex];
+          if (terminalGrade == null) return Number.NaN;
+          return (
+            sum +
+            probability *
+              getSaleValueForLandingGrade(
+                input.saleValuesByGrade,
+                terminalGrade,
+              )
+          );
         },
-        { value: downgraded, weight: step.downgradeProbability },
-      ],
-      landingProbabilities,
-      attemptCostGold,
-      denominator,
-    );
+        0,
+      );
+      const attributedCost =
+        costContributions[stateIndex]?.reduce(
+          (sum, contribution) => sum + contribution,
+          0,
+        ) ?? 0;
+      if (
+        !nearlyEqual(
+          expectedRevenue,
+          revenues[stateIndex] ?? 0,
+          SOLVER_VALIDATION_TOLERANCE,
+        ) ||
+        !nearlyEqual(
+          attributedCost,
+          costs[stateIndex] ?? 0,
+          SOLVER_VALIDATION_TOLERANCE,
+        )
+      ) {
+        return null;
+      }
+    }
 
     return {
-      value: expectedValue,
-      cost: expectedCost,
-      revenue: expectedRevenue,
-      labor: expectedLabor,
-      attempts: expectedAttempts,
+      values,
+      costs,
+      revenues,
+      labor,
+      attempts,
       landingProbabilities,
       costContributions,
-      steps: [],
     };
   };
 
-  let values = new Map<number, SolverValue>(
-    stateGrades.map((grade) => [grade, ZERO_SOLVER_VALUE] as const),
-  );
+  const scoreAction = (
+    action: SolverAction,
+    values: readonly number[],
+  ): number => {
+    let score = -action.attemptCostGold;
+    for (const transition of getTransitions(action)) {
+      score -= transition.probability * transition.extraCostGold;
+      if (isTerminalGrade(transition.grade)) {
+        score +=
+          transition.probability *
+          (getSaleValueForLandingGrade(
+            input.saleValuesByGrade,
+            transition.grade,
+          ) -
+            input.upgradeCostGold);
+      } else {
+        const nextStateIndex = stateIndexByGrade.get(transition.grade);
+        if (nextStateIndex == null) return Number.NEGATIVE_INFINITY;
+        score += transition.probability * (values[nextStateIndex] ?? 0);
+      }
+    }
+    return score;
+  };
+
   let selectedActions = new Map<number, SolverAction>();
-
-  for (let iteration = 0; iteration < MAX_SOLVER_ITERATIONS; iteration += 1) {
-    const nextValues = new Map<number, SolverValue>();
-    const nextActions = new Map<number, SolverAction>();
-    let maxDelta = 0;
-
-    for (const grade of stateGrades) {
-      if (isTerminalGrade(grade)) {
-        const resolved = terminalValue(grade);
-        nextValues.set(grade, resolved);
-
-        const previous = values.get(grade) ?? ZERO_SOLVER_VALUE;
-        maxDelta = Math.max(
-          maxDelta,
-          metricDelta(resolved.value, previous.value),
-          metricDelta(resolved.cost, previous.cost),
-          metricDelta(resolved.revenue, previous.revenue),
-          metricDelta(resolved.labor, previous.labor),
-          metricDelta(resolved.attempts, previous.attempts),
-          probabilityMapDelta(
-            resolved.landingProbabilities,
-            previous.landingProbabilities,
-          ),
-          probabilityMapDelta(
-            resolved.costContributions,
-            previous.costContributions,
-          ),
-        );
-        continue;
-      }
-
-      let best: SolverValue | null = null;
-      let bestAction: SolverAction | null = null;
-
-      for (const action of actionsByGrade.get(grade) ?? []) {
-        const candidate = evaluateAction(action, values);
-        if (!best || candidate.value > best.value) {
-          best = candidate;
-          bestAction = action;
-        }
-      }
-
-      const resolved = best ?? impossibleValue;
-      nextValues.set(grade, resolved);
-      if (bestAction) nextActions.set(grade, bestAction);
-
-      const previous = values.get(grade) ?? ZERO_SOLVER_VALUE;
-      maxDelta = Math.max(
-        maxDelta,
-        metricDelta(resolved.value, previous.value),
-        metricDelta(resolved.cost, previous.cost),
-        metricDelta(resolved.revenue, previous.revenue),
-        metricDelta(resolved.labor, previous.labor),
-        metricDelta(resolved.attempts, previous.attempts),
-        probabilityMapDelta(
-          resolved.landingProbabilities,
-          previous.landingProbabilities,
-        ),
-        probabilityMapDelta(
-          resolved.costContributions,
-          previous.costContributions,
-        ),
+  for (const grade of stateGrades) {
+    const initialAction = actionsByGrade.get(grade)?.[0];
+    if (!initialAction) {
+      return unavailableResult(
+        "No priced regrade action is available at every required grade.",
       );
     }
+    selectedActions.set(grade, initialAction);
+  }
+  let evaluation: SolverPolicyEvaluation | null = null;
+  let converged = false;
+  const seenPolicies = new Set<string>();
 
-    values = nextValues;
+  for (let iteration = 0; iteration < MAX_POLICY_ITERATIONS; iteration += 1) {
+    const fingerprint = stateGrades
+      .map((grade) => {
+        const selectedAction = selectedActions.get(grade);
+        return selectedAction
+          ? (actionsByGrade.get(grade) ?? []).indexOf(selectedAction)
+          : -1;
+      })
+      .join(",");
+    if (seenPolicies.has(fingerprint)) break;
+    seenPolicies.add(fingerprint);
+
+    evaluation = evaluatePolicy(selectedActions);
+    if (!evaluation) break;
+    const nextActions = new Map(selectedActions);
+    let changed = false;
+
+    for (const [stateIndex, grade] of stateGrades.entries()) {
+      const currentAction = selectedActions.get(grade);
+      if (!currentAction) {
+        return unavailableResult(
+          "The regrade strategy solver produced an incomplete strategy.",
+        );
+      }
+      let bestAction = currentAction;
+      let bestScore = scoreAction(currentAction, evaluation.values);
+      for (const action of actionsByGrade.get(grade) ?? []) {
+        const score = scoreAction(action, evaluation.values);
+        const tolerance =
+          POLICY_TIE_TOLERANCE *
+          Math.max(1, Math.abs(score), Math.abs(bestScore));
+        if (score > bestScore + tolerance) {
+          bestAction = action;
+          bestScore = score;
+        }
+      }
+      if (bestAction !== currentAction) {
+        nextActions.set(grade, bestAction);
+        changed = true;
+      }
+      if (!Number.isFinite(evaluation.values[stateIndex])) break;
+    }
+
+    if (!changed) {
+      converged = true;
+      break;
+    }
     selectedActions = nextActions;
-    if (maxDelta < 0.000001) break;
+  }
+
+  if (!converged || !evaluation) {
+    return unavailableResult(
+      "The regrade strategy solver could not find a stable terminating strategy.",
+    );
   }
 
   const steps: RegradeActionChoice[] = [];
@@ -1337,12 +1585,13 @@ export function solveExpectedRegradeToTarget(
     seenStepGrades.add(stepGrade);
     const action = selectedActions.get(stepGrade);
     if (!action?.step.scroll) break;
-    const solvedAtGrade = values.get(stepGrade) ?? impossibleValue;
+    const solvedAtGradeIndex = stateIndexByGrade.get(stepGrade);
+    if (solvedAtGradeIndex == null) break;
     steps.push({
       fromGrade: stepGrade,
       scroll: action.step.scroll,
       charm: action.step.charm,
-      expectedValueGold: solvedAtGrade.value,
+      expectedValueGold: evaluation.values[solvedAtGradeIndex] ?? 0,
       attemptCostGold: action.attemptCostGold,
       attemptLabor: action.attemptLabor,
       successProbability: action.step.successProbability,
@@ -1354,47 +1603,47 @@ export function solveExpectedRegradeToTarget(
     stepGrade = action.step.normalToGrade;
   }
 
-  const solved = isTerminalGrade(startGrade)
-    ? terminalValue(startGrade)
-    : (values.get(startGrade) ?? impossibleValue);
-  const expectedLabor = solved.labor;
-  const expectedAttempts = solved.attempts;
-  const revenueBreakdown = [...solved.landingProbabilities.entries()]
-    .map(([grade, probability]) => {
+  const expectedCostGold = evaluation.costs[startIndex] ?? 0;
+  const expectedRevenueGold = evaluation.revenues[startIndex] ?? 0;
+  const expectedProfitGold = expectedRevenueGold - expectedCostGold;
+  const expectedLabor = evaluation.labor[startIndex] ?? 0;
+  const expectedAttempts = evaluation.attempts[startIndex] ?? 0;
+  const revenueBreakdown = terminalGrades
+    .map((grade, terminalIndex) => {
+      const probability =
+        evaluation.landingProbabilities[startIndex]?.[terminalIndex] ?? 0;
       const saleValueGold = getSaleValueForLandingGrade(
         input.saleValuesByGrade,
         grade,
       );
+      const expectedCostGold =
+        evaluation.costContributions[startIndex]?.[terminalIndex] ?? 0;
       return {
         grade,
         probability,
         saleValueGold,
         expectedRevenueGold: probability * saleValueGold,
-        expectedCostGold: solved.costContributions.get(grade) ?? 0,
-        expectedProfitGold:
-          probability * saleValueGold -
-          (solved.costContributions.get(grade) ?? 0),
+        expectedCostGold,
+        expectedProfitGold: probability * saleValueGold - expectedCostGold,
       };
     })
     .filter(
-      (entry) =>
-        entry.saleValueGold > 0 &&
-        (entry.probability > 0.000001 || entry.expectedRevenueGold > 0),
+      (entry) => entry.probability > 0.000001 || entry.expectedRevenueGold > 0,
     )
     .sort((left, right) => left.grade - right.grade);
 
   return {
     item: input.item,
     targetGrade: input.targetGrade,
-    expectedProfitGold: solved.value,
-    expectedCostGold: solved.cost,
-    expectedRevenueGold: solved.revenue,
+    expectedProfitGold,
+    expectedCostGold,
+    expectedRevenueGold,
     expectedLabor,
     expectedAttempts,
     revenueBreakdown,
     silverPerLabor:
-      expectedLabor > 0 && Number.isFinite(solved.value)
-        ? (solved.value * 100) / expectedLabor
+      expectedLabor > 0 && Number.isFinite(expectedProfitGold)
+        ? (expectedProfitGold * 100) / expectedLabor
         : 0,
     selectedSteps: steps,
     skippedReasons: [...new Set(skippedReasons)],

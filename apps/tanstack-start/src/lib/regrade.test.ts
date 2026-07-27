@@ -303,6 +303,79 @@ void test("solver uses manual sale value for over-target great success", () => {
   );
 });
 
+void test("solver fully resolves slow destructive retry chains", () => {
+  const result = solveExpectedRegradeToTarget({
+    item: {
+      id: 34615,
+      name: "Obsidian Bow",
+      type: "weapon",
+      icon: "icon.png",
+      group: 4,
+      maxGrade: 11,
+      level: 46,
+      slot: 13,
+    },
+    targetGrade: 10,
+    baseRecraftCostGold: 0,
+    baseRecraftLabor: 0,
+    upgradeCostGold: 0,
+    upgradeLabor: 0,
+    saleValuesByGrade: new Map([[10, 500000]]),
+    consumablePrices: new Map([[28298, 10]]),
+    candidateCharmIds: [],
+  });
+
+  const totalProbability = result.revenueBreakdown.reduce(
+    (sum, entry) => sum + entry.probability,
+    0,
+  );
+  const attributedCost = result.revenueBreakdown.reduce(
+    (sum, entry) => sum + entry.expectedCostGold,
+    0,
+  );
+
+  assert.ok(Math.abs(totalProbability - 1) < 0.000001);
+  assert.ok(Math.abs(attributedCost - result.expectedCostGold) < 0.01);
+  const revenueEntry = result.revenueBreakdown[0];
+  assert.ok(revenueEntry);
+  assert.ok(
+    Math.abs(result.expectedRevenueGold - revenueEntry.expectedRevenueGold) <
+      0.000001,
+  );
+});
+
+void test("solver includes zero-value terminal outcomes in the breakdown", () => {
+  const result = solveExpectedRegradeToTarget({
+    item: {
+      id: 34615,
+      name: "Obsidian Bow",
+      type: "weapon",
+      icon: "icon.png",
+      group: 4,
+      maxGrade: 11,
+      level: 46,
+      slot: 13,
+    },
+    targetGrade: 3,
+    baseRecraftCostGold: 0,
+    baseRecraftLabor: 0,
+    upgradeCostGold: 0,
+    upgradeLabor: 0,
+    saleValuesByGrade: new Map(),
+    consumablePrices: new Map([[28298, 10]]),
+    candidateCharmIds: [],
+  });
+
+  assert.equal(result.revenueBreakdown.length, 1);
+  const outcome = result.revenueBreakdown[0];
+  assert.ok(outcome);
+  assert.equal(outcome.grade, 3);
+  assert.equal(outcome.saleValueGold, 0);
+  assert.ok(
+    Math.abs(outcome.expectedCostGold - result.expectedCostGold) < 0.000001,
+  );
+});
+
 void test("solver reports skipped consumables with missing prices", () => {
   const item = {
     id: 34615,
