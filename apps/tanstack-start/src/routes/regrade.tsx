@@ -1264,66 +1264,92 @@ function RegradePage() {
                         <h3 className="text-sm font-medium">
                           Outcome breakdown
                         </h3>
-                        <InfoTooltip text="Expected revenue, cost, and EV split by final outcome grade. Probability is the chance this strategy stops at that grade; revenue is probability times the selected sale value, or zero when that outcome has no sale value." />
+                        <InfoTooltip text="Each row shows both what happens when that outcome occurs and how much it contributes to the strategy's overall Expected Value." />
                       </div>
                       <div className="mt-3 overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="text-muted-foreground text-left">
                             <tr>
-                              <th className="py-1 pr-3 font-medium">Grade</th>
-                              <th className="py-1 pr-3 font-medium">
-                                Probability
-                              </th>
-                              <th className="py-1 pr-3 font-medium">
-                                Sale value
-                              </th>
-                              <th className="py-1 pr-3 text-right font-medium">
-                                Revenue
-                              </th>
-                              <th className="py-1 pr-3 text-right font-medium">
-                                Cost
-                              </th>
-                              <th className="py-1 text-right font-medium">
-                                EV
-                              </th>
+                              <OutcomeTableHeader
+                                label="Grade"
+                                helpText="Final Grade at which the strategy stops. This can be the target Grade or a higher Grade reached through great success."
+                              />
+                              <OutcomeTableHeader
+                                label="Probability"
+                                helpText="Chance that the complete repeated strategy ends at this Grade. All outcome probabilities add up to 100%."
+                              />
+                              <OutcomeTableHeader
+                                label="Sale value"
+                                helpText="Gross Currency received if this outcome occurs. This is the value entered for the Grade, or zero when the Grade is not selected for sale."
+                              />
+                              <OutcomeTableHeader
+                                label="Cost if outcome"
+                                helpText="Average Currency spent when the strategy ends at this Grade. Calculated as this outcome's probability-weighted cost contribution divided by its probability."
+                                align="right"
+                              />
+                              <OutcomeTableHeader
+                                label="Profit if outcome"
+                                helpText="Result when this outcome occurs: Sale value minus Cost if outcome. This is not probability-weighted."
+                                align="right"
+                              />
+                              <OutcomeTableHeader
+                                label="EV contribution"
+                                helpText="How much this outcome contributes to overall Expected Value: Probability multiplied by Profit if outcome. All contributions add up to total EV."
+                                align="right"
+                                last
+                              />
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedResult.revenueBreakdown.map((entry) => (
-                              <tr key={entry.grade} className="border-t">
-                                <td className="py-1.5 pr-3">
-                                  {regradeData.grades[entry.grade]?.name ??
-                                    `Grade ${entry.grade}`}
-                                </td>
-                                <td className="py-1.5 pr-3">
-                                  {formatPercent(entry.probability)}
-                                </td>
-                                <td className="py-1.5 pr-3">
-                                  {formatGold(entry.saleValueGold)}
-                                </td>
-                                <td className="py-1.5 pr-3 text-right">
-                                  {formatGold(entry.expectedRevenueGold)}
-                                </td>
-                                <td className="py-1.5 pr-3 text-right">
-                                  {formatGold(entry.expectedCostGold)}
-                                </td>
-                                <td className="py-1.5 text-right">
-                                  {formatGold(entry.expectedProfitGold)}
-                                </td>
-                              </tr>
-                            ))}
+                            {selectedResult.revenueBreakdown.map((entry) => {
+                              const costIfOutcome =
+                                entry.probability > 0
+                                  ? entry.expectedCostGold / entry.probability
+                                  : 0;
+                              const profitIfOutcome =
+                                entry.saleValueGold - costIfOutcome;
+
+                              return (
+                                <tr key={entry.grade} className="border-t">
+                                  <td className="py-1.5 pr-3">
+                                    {regradeData.grades[entry.grade]?.name ??
+                                      `Grade ${entry.grade}`}
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    {formatPercent(entry.probability)}
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    {formatGold(entry.saleValueGold)}
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-right">
+                                    {formatGold(costIfOutcome)}
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-right">
+                                    {formatGold(profitIfOutcome)}
+                                  </td>
+                                  <td className="py-1.5 text-right">
+                                    {formatGold(entry.expectedProfitGold)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                           <tfoot>
                             <tr className="border-t font-medium">
-                              <td className="py-1.5 pr-3" colSpan={3}>
-                                Total
+                              <td className="py-1.5 pr-3">Total</td>
+                              <td className="py-1.5 pr-3">
+                                {formatPercent(
+                                  selectedResult.revenueBreakdown.reduce(
+                                    (sum, entry) => sum + entry.probability,
+                                    0,
+                                  ),
+                                )}
                               </td>
-                              <td className="py-1.5 pr-3 text-right">
-                                {formatGold(selectedResult.expectedRevenueGold)}
-                              </td>
+                              <td className="py-1.5 pr-3 text-center">—</td>
                               <td className="py-1.5 pr-3 text-right">
                                 {formatGold(selectedResult.expectedCostGold)}
                               </td>
+                              <td className="py-1.5 pr-3 text-center">—</td>
                               <td className="py-1.5 text-right">
                                 {formatGold(selectedResult.expectedProfitGold)}
                               </td>
@@ -1771,6 +1797,32 @@ function TableHeader({ label, helpText }: { label: string; helpText: string }) {
   return (
     <th className="px-3 py-2">
       <span className="flex items-center gap-1.5">
+        {label}
+        <InfoTooltip text={helpText} placement="bottom" />
+      </span>
+    </th>
+  );
+}
+
+function OutcomeTableHeader({
+  label,
+  helpText,
+  align = "left",
+  last = false,
+}: {
+  label: string;
+  helpText: string;
+  align?: "left" | "right";
+  last?: boolean;
+}) {
+  return (
+    <th
+      scope="col"
+      className={`py-1 font-medium ${last ? "" : "pr-3"} ${align === "right" ? "text-right" : "text-left"}`}
+    >
+      <span
+        className={`flex items-center gap-1.5 ${align === "right" ? "justify-end" : ""}`}
+      >
         {label}
         <InfoTooltip text={helpText} placement="bottom" />
       </span>

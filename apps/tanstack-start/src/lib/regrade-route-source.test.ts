@@ -27,3 +27,20 @@ void test("regrade rerolls use the shared reseal expectation", () => {
 
   assert.equal(source.match(/getExpectedResealRetries\(/g)?.length, 2);
 });
+
+void test("outcome breakdown separates conditional results from EV contribution", () => {
+  const source = readFileSync(
+    new URL("../routes/regrade.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /label="Cost if outcome"/);
+  assert.match(source, /label="Profit if outcome"/);
+  assert.match(source, /label="EV contribution"/);
+  assert.match(source, /entry\.expectedCostGold \/ entry\.probability/);
+  assert.match(source, /entry\.saleValueGold - costIfOutcome/);
+  assert.match(
+    source,
+    /Probability multiplied by Profit if outcome\. All contributions add up to total EV\./,
+  );
+});
