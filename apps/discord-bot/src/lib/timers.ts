@@ -1,13 +1,13 @@
-import { and, asc, eq, ilike, or, sql } from "@acme/db";
 import type { db as appDb } from "@acme/db/client";
+import type { farmTimerDurationSourceEnum } from "@acme/db/schema";
+import { and, asc, eq, ilike, or, sql } from "@acme/db";
 import {
   discordFarmCropOverrides,
   discordFarmNotifications,
-  discordFarmTimers,
   discordFarms,
+  discordFarmTimers,
   items,
 } from "@acme/db/schema";
-import type { farmTimerDurationSourceEnum } from "@acme/db/schema";
 
 export type DurationSource =
   (typeof farmTimerDurationSourceEnum.enumValues)[number];
@@ -88,9 +88,13 @@ export function isLikelyPlantableTimerItem(input: {
 }) {
   if (input.description == null) return false;
   if (/\bLarder$/i.test(input.name)) {
-    return /\b(?:Aging (?:Time|Period)\b|Used for aging\b|designed to properly age\b|installed\b)/i.test(input.description);
+    return /\b(?:Aging (?:Time|Period)\b|Used for aging\b|designed to properly age\b|installed\b)/i.test(
+      input.description,
+    );
   }
-  if (!/Seed(?: Bundle)?$|Greenhouse$|Sapling$|Brazier(?:s)?$/i.test(input.name)) {
+  if (
+    !/Seed(?: Bundle)?$|Greenhouse$|Sapling$|Brazier(?:s)?$/i.test(input.name)
+  ) {
     return false;
   }
 
@@ -116,7 +120,7 @@ export async function findFarmCropOverride(input: {
 }
 
 export async function createFarmTimer(input: {
-  database: typeof appDb;
+  database: Pick<typeof appDb, "insert">;
   guildId: string;
   ownerDiscordUserId: string;
   userId: string | null;

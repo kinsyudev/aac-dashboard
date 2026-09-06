@@ -1,9 +1,10 @@
+import type { ChatInputCommandInteraction } from "discord.js";
+import { Command } from "@sapphire/framework";
+import { ChannelType, MessageFlags } from "discord.js";
+
 import { eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import { discordFarms } from "@acme/db/schema";
-import { Command } from "@sapphire/framework";
-import { ChannelType, MessageFlags } from "discord.js";
-import type { ChatInputCommandInteraction } from "discord.js";
 
 import {
   findCropSuggestions,
@@ -23,6 +24,7 @@ import {
   logInteractionFinish,
   logInteractionStart,
 } from "../lib/logging";
+import { managementList } from "../lib/management";
 
 export class FarmCommand extends Command {
   public override registerApplicationCommands(registry: Command.Registry) {
@@ -44,10 +46,14 @@ export class FarmCommand extends Command {
               option.setName("name").setDescription("Display name."),
             )
             .addStringOption((option) =>
-              option.setName("description").setDescription("Farm notes or location."),
+              option
+                .setName("description")
+                .setDescription("Farm notes or location."),
             )
             .addRoleOption((option) =>
-              option.setName("default-role").setDescription("Default ready ping role."),
+              option
+                .setName("default-role")
+                .setDescription("Default ready ping role."),
             )
             .addChannelOption((option) =>
               option
@@ -64,7 +70,10 @@ export class FarmCommand extends Command {
             .setName("set-defaults")
             .setDescription("Set farm default role or channel.")
             .addStringOption((option) =>
-              option.setName("farm").setDescription("Farm slug.").setRequired(true),
+              option
+                .setName("farm")
+                .setDescription("Farm slug.")
+                .setRequired(true),
             )
             .addRoleOption((option) =>
               option.setName("role").setDescription("Default ready ping role."),
@@ -81,7 +90,10 @@ export class FarmCommand extends Command {
             .setName("crop-override")
             .setDescription("Set a duration override for a crop on a farm.")
             .addStringOption((option) =>
-              option.setName("farm").setDescription("Farm slug.").setRequired(true),
+              option
+                .setName("farm")
+                .setDescription("Farm slug.")
+                .setRequired(true),
             )
             .addStringOption((option) =>
               option
@@ -105,7 +117,10 @@ export class FarmCommand extends Command {
             .setName("show")
             .setDescription("Show one of your farms.")
             .addStringOption((option) =>
-              option.setName("farm").setDescription("Farm slug.").setRequired(true),
+              option
+                .setName("farm")
+                .setDescription("Farm slug.")
+                .setRequired(true),
             ),
         ),
     );
@@ -250,10 +265,15 @@ export class FarmCommand extends Command {
         return response;
       }
       const { guildId } = interaction;
-      const userId = await findDashboardUserIdForDiscordUser(db, interaction.user.id);
+      const userId = await findDashboardUserIdForDiscordUser(
+        db,
+        interaction.user.id,
+      );
 
       if (subcommand === "add") {
-        const slug = normalizeFarmSlug(interaction.options.getString("slug", true));
+        const slug = normalizeFarmSlug(
+          interaction.options.getString("slug", true),
+        );
         const screenshot = interaction.options.getAttachment("screenshot");
 
         await ensureDiscordFarmUser({
@@ -272,7 +292,8 @@ export class FarmCommand extends Command {
             slug,
             name: interaction.options.getString("name") ?? slug,
             description: interaction.options.getString("description"),
-            defaultRoleId: interaction.options.getRole("default-role")?.id ?? null,
+            defaultRoleId:
+              interaction.options.getRole("default-role")?.id ?? null,
             defaultChannelId:
               interaction.options.getChannel("default-channel")?.id ?? null,
             screenshotUrl: screenshot?.url ?? null,
@@ -289,7 +310,8 @@ export class FarmCommand extends Command {
             set: {
               name: interaction.options.getString("name") ?? slug,
               description: interaction.options.getString("description"),
-              defaultRoleId: interaction.options.getRole("default-role")?.id ?? null,
+              defaultRoleId:
+                interaction.options.getRole("default-role")?.id ?? null,
               defaultChannelId:
                 interaction.options.getChannel("default-channel")?.id ?? null,
               screenshotUrl: screenshot?.url ?? null,
@@ -308,33 +330,32 @@ export class FarmCommand extends Command {
           ...baseContext,
           outcome: "ok",
           durationMs: Date.now() - startedAt,
-          result: { subcommand, farmId: farm?.id ?? null, slug: farm?.slug ?? slug },
+          result: {
+            subcommand,
+            farmId: farm?.id ?? null,
+            slug: farm?.slug ?? slug,
+          },
         });
         return response;
       }
 
       if (subcommand === "list") {
-        const farms = await db.query.discordFarms.findMany({
-          where: (fields, { and, eq: whereEq }) =>
-            and(
-              whereEq(fields.guildId, guildId),
-              whereEq(fields.ownerDiscordUserId, interaction.user.id),
-            ),
-          orderBy: (fields, { asc }) => [asc(fields.slug)],
-        });
-
-        const response = await interaction.reply({
-          content:
-            farms.length === 0
-              ? "You have not added any farms."
-              : farms.map((farm) => `\`${farm.slug}\` — ${farm.name}`).join("\n"),
-          flags: MessageFlags.Ephemeral,
-        });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const response = await interaction.editReply(
+          await managementList(
+            {
+              database: db,
+              guildId,
+              ownerDiscordUserId: interaction.user.id,
+            },
+            { kind: "farms", ownerId: interaction.user.id, page: 0 },
+          ),
+        );
         logInteractionFinish(this.container.logger, {
           ...baseContext,
-          outcome: farms.length === 0 ? "user_error" : "ok",
+          outcome: "ok",
           durationMs: Date.now() - startedAt,
-          result: { subcommand, farmCount: farms.length },
+          result: { subcommand },
         });
         return response;
       }
@@ -368,9 +389,11 @@ export class FarmCommand extends Command {
         await db
           .update(discordFarms)
           .set({
-            defaultRoleId: interaction.options.getRole("role")?.id ?? farm.defaultRoleId,
+            defaultRoleId:
+              interaction.options.getRole("role")?.id ?? farm.defaultRoleId,
             defaultChannelId:
-              interaction.options.getChannel("channel")?.id ?? farm.defaultChannelId,
+              interaction.options.getChannel("channel")?.id ??
+              farm.defaultChannelId,
           })
           .where(eq(discordFarms.id, farm.id));
 
@@ -415,7 +438,8 @@ export class FarmCommand extends Command {
 
         if (crop == null || crop.kind === "ambiguous") {
           const response = await interaction.reply({
-            content: "Choose one item from the crop autocomplete, including larders.",
+            content:
+              "Choose one item from the crop autocomplete, including larders.",
             flags: MessageFlags.Ephemeral,
           });
           logInteractionFinish(this.container.logger, {
@@ -457,9 +481,15 @@ export class FarmCommand extends Command {
           content: [
             `\`${farm.slug}\` — ${farm.name}`,
             farm.description ?? null,
-            farm.defaultRoleId != null ? `Role: <@&${farm.defaultRoleId}>` : null,
-            farm.defaultChannelId != null ? `Channel: <#${farm.defaultChannelId}>` : null,
-            farm.screenshotUrl != null ? `Screenshot: ${farm.screenshotUrl}` : null,
+            farm.defaultRoleId != null
+              ? `Role: <@&${farm.defaultRoleId}>`
+              : null,
+            farm.defaultChannelId != null
+              ? `Channel: <#${farm.defaultChannelId}>`
+              : null,
+            farm.screenshotUrl != null
+              ? `Screenshot: ${farm.screenshotUrl}`
+              : null,
           ]
             .filter((line): line is string => line != null && line.length > 0)
             .join("\n"),
