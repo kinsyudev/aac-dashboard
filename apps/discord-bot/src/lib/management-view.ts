@@ -171,7 +171,7 @@ export function buildManagementList(
     ),
   );
   return {
-    content: notice ?? "",
+    ...(notice ? { content: notice } : {}),
     embeds: [embed],
     components,
     allowedMentions: { parse: [] as const },
@@ -200,7 +200,6 @@ export function buildCropPicker(
     );
 
   return {
-    content: "",
     embeds: [
       new EmbedBuilder()
         .setTitle("Choose a crop")

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCropPicker } from "./management-view";
+import { buildCropPicker, buildManagementList } from "./management-view";
+
+void test("list payload omits content when it has no status notice", () => {
+  const payload = buildManagementList(
+    { kind: "farms", ownerId: "123456789", page: 0 },
+    [],
+  );
+
+  assert.equal("content" in payload, false);
+});
 
 void test("crop picker exposes a selectable page of catalog suggestions", () => {
   const crops = Array.from({ length: 26 }, (_, index) => ({
