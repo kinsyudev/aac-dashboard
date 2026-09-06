@@ -74,8 +74,15 @@ export function buildTimerNotifications(input: {
   return notifications;
 }
 
-export function chooseReplantDurationMode(source: DurationSource) {
-  return source === "explicit" ? "reuse_explicit" : "recompute";
+export type ReplantDurationChoice = "reuse" | "default";
+
+export function chooseReplantDurationMode(
+  source: DurationSource,
+  choice?: ReplantDurationChoice,
+) {
+  if (source !== "explicit" || choice === "default") return "recompute";
+  if (choice === "reuse") return "reuse_explicit";
+  return "choose";
 }
 
 export function shortTimerId(id: string) {

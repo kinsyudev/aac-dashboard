@@ -110,14 +110,16 @@ void test("advance reminder is skipped when disabled or too close", () => {
   );
 });
 
-void test(
-  "replant mode freezes explicit durations and recomputes inferred durations",
-  () => {
-    assert.equal(chooseReplantDurationMode("explicit"), "reuse_explicit");
-    assert.equal(chooseReplantDurationMode("farm_crop_override"), "recompute");
-    assert.equal(chooseReplantDurationMode("game_timer"), "recompute");
-  },
-);
+void test("replant asks how to handle explicit durations and recomputes inferred durations", () => {
+  assert.equal(chooseReplantDurationMode("explicit"), "choose");
+  assert.equal(
+    chooseReplantDurationMode("explicit", "reuse"),
+    "reuse_explicit",
+  );
+  assert.equal(chooseReplantDurationMode("explicit", "default"), "recompute");
+  assert.equal(chooseReplantDurationMode("farm_crop_override"), "recompute");
+  assert.equal(chooseReplantDurationMode("game_timer"), "recompute");
+});
 
 void test("short timer id uses first eight uuid characters", () => {
   assert.equal(
@@ -130,7 +132,8 @@ void test("plantable timer filter includes saplings and braziers", () => {
   assert.equal(
     isLikelyPlantableTimerItem({
       name: "Radiant Archeum Tree Sapling",
-      description: "Plants an Archeum Tree that can convert Auroria Mineral Water into Archeum.",
+      description:
+        "Plants an Archeum Tree that can convert Auroria Mineral Water into Archeum.",
     }),
     true,
   );

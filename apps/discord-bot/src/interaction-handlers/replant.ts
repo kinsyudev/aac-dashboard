@@ -1,20 +1,22 @@
-import { db } from "@acme/db/client";
+import type { ButtonInteraction } from "discord.js";
 import {
   InteractionHandler,
   InteractionHandlerTypes,
 } from "@sapphire/framework";
 import { MessageFlags } from "discord.js";
-import type { ButtonInteraction } from "discord.js";
 
-import { resolveCropAlias } from "../lib/crop-timers";
+import { db } from "@acme/db/client";
+
+import type { ReplantDurationChoice } from "../lib/timers";
 import { getCropCatalog } from "../lib/crop-catalog";
+import { resolveCropAlias } from "../lib/crop-timers";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
-import { buildItemEmbed } from "../lib/messages";
 import {
   logInteractionError,
   logInteractionFinish,
   logInteractionStart,
 } from "../lib/logging";
+import { buildItemEmbed, buildReplantDurationChoice } from "../lib/messages";
 import {
   chooseReplantDurationMode,
   createFarmTimer,
@@ -37,8 +39,14 @@ export class ReplantInteractionHandler extends InteractionHandler {
       return this.none();
     }
 
-    const timerId = interaction.customId.slice("farm-replant:".length);
-    return this.some({ timerId });
+    const match = /^farm-replant:([^:]+)(?::(reuse|default))?$/.exec(
+      interaction.customId,
+    );
+    if (!match?.[1]) return this.none();
+    return this.some({
+      timerId: match[1],
+      choice: match[2] as ReplantDurationChoice | undefined,
+    });
   }
 
   public async run(
@@ -54,6 +62,7 @@ export class ReplantInteractionHandler extends InteractionHandler {
       userId: interaction.user.id,
       options: {
         timerId: parsed.timerId,
+        choice: parsed.choice ?? null,
       },
     };
 
@@ -108,13 +117,19 @@ export class ReplantInteractionHandler extends InteractionHandler {
           ...baseContext,
           outcome: "user_error",
           durationMs: Date.now() - startedAt,
-          result: { reason: "forbidden_user", ownerDiscordUserId: original.ownerDiscordUserId },
+          result: {
+            reason: "forbidden_user",
+            ownerDiscordUserId: original.ownerDiscordUserId,
+          },
         });
 
         return response;
       }
 
-      const userId = await findDashboardUserIdForDiscordUser(db, interaction.user.id);
+      const userId = await findDashboardUserIdForDiscordUser(
+        db,
+        interaction.user.id,
+      );
       const farmUser = await db.query.discordFarmUsers.findFirst({
         where: (fields, { and, eq }) =>
           and(
@@ -123,8 +138,32 @@ export class ReplantInteractionHandler extends InteractionHandler {
           ),
       });
 
-      const mode = chooseReplantDurationMode(original.durationSource);
-      let durationSeconds = original.explicitDurationSeconds ?? original.durationSeconds;
+      const mode = chooseReplantDurationMode(
+        original.durationSource,
+        parsed.choice,
+      );
+      if (mode === "choose") {
+        const response = await interaction.reply({
+          ...buildReplantDurationChoice({
+            timerId: original.id,
+            cropName: original.cropName,
+            durationSeconds:
+              original.explicitDurationSeconds ?? original.durationSeconds,
+          }),
+          flags: MessageFlags.Ephemeral,
+        });
+
+        logInteractionFinish(this.container.logger, {
+          ...baseContext,
+          outcome: "ok",
+          durationMs: Date.now() - startedAt,
+          result: { action: "duration_choice_requested" },
+        });
+
+        return response;
+      }
+      let durationSeconds =
+        original.explicitDurationSeconds ?? original.durationSeconds;
       let durationSource = original.durationSource;
       let explicitDurationSeconds = original.explicitDurationSeconds;
 
@@ -153,7 +192,10 @@ export class ReplantInteractionHandler extends InteractionHandler {
               ...baseContext,
               outcome: "user_error",
               durationMs: Date.now() - startedAt,
-              result: { reason: "recompute_failed", cropName: original.cropName },
+              result: {
+                reason: "recompute_failed",
+                cropName: original.cropName,
+              },
             });
 
             return response;
@@ -184,16 +226,25 @@ export class ReplantInteractionHandler extends InteractionHandler {
         reminderMinutes: farmUser?.reminderMinutes ?? 15,
       });
 
-      const response = await interaction.reply({
+      const responsePayload = {
         embeds: [
-          buildItemEmbed({
-            title: `${timer.cropName} timer restarted`,
-            description: `New timer \`${timer.id.slice(0, 8)}\` is ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
-            color: 0x22c55e,
-          }, original.cropItem.icon),
+          buildItemEmbed(
+            {
+              title: `${timer.cropName} timer restarted`,
+              description: `New timer \`${timer.id.slice(0, 8)}\` is ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+              color: 0x22c55e,
+            },
+            original.cropItem.icon,
+          ),
         ],
-        flags: MessageFlags.Ephemeral,
-      });
+        components: [],
+      };
+      const response = parsed.choice
+        ? await interaction.update(responsePayload)
+        : await interaction.reply({
+            ...responsePayload,
+            flags: MessageFlags.Ephemeral,
+          });
 
       logInteractionFinish(this.container.logger, {
         ...baseContext,

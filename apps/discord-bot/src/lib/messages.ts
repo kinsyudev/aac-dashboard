@@ -18,6 +18,31 @@ export interface ReminderMessageInput {
   lateBySeconds: number;
 }
 
+export function buildReplantDurationChoice(input: {
+  timerId: string;
+  cropName: string;
+  durationSeconds: number;
+}) {
+  return {
+    content: `Replant **${input.cropName}** with the custom ${formatDuration(input.durationSeconds)} duration, or use the current farm/game default?`,
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm-replant:${input.timerId}:reuse`)
+          .setLabel(
+            `Reuse ${formatDuration(input.durationSeconds)}`.slice(0, 80),
+          )
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`farm-replant:${input.timerId}:default`)
+          .setLabel("Use current default")
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+    allowedMentions: { parse: [] as const },
+  };
+}
+
 export function buildItemEmbed(
   embed: APIEmbed,
   icon: string | null | undefined,

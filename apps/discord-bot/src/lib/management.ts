@@ -113,6 +113,14 @@ export async function managementEntries(
   }));
 }
 
+export async function managedFarmChoices(scope: ManagementScope) {
+  return scope.database.query.discordFarms.findMany({
+    columns: { id: true, name: true, slug: true },
+    where: owned(scope, discordFarms),
+    orderBy: (fields, { asc }) => [asc(fields.slug), asc(fields.id)],
+  });
+}
+
 export async function managementList(
   scope: ManagementScope,
   state: ManagementState,

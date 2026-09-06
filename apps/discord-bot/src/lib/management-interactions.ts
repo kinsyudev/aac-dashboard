@@ -12,6 +12,7 @@ import {
   deleteManagedEntry,
   getManagedFarm,
   getManagedTimer,
+  managedFarmChoices,
   managementEntries,
   ManagementInputError,
   managementList,
@@ -22,6 +23,7 @@ import {
   buildCropPicker,
   buildDeleteConfirmation,
   buildManagementModal,
+  buildTimerFarmPicker,
   parseManagementId,
 } from "./management-view";
 
@@ -84,6 +86,51 @@ export async function handleManagementInteraction(
           { ...state, id: undefined },
           { crop: String(crop.id) },
         ),
+      );
+      return;
+    }
+    if (
+      interaction.isButton() &&
+      state.kind === "timers" &&
+      state.action === "edit"
+    ) {
+      if (!state.id) throw new ManagementInputError("Select a timer first.");
+      await interaction.deferUpdate();
+      const [timer, farms] = await Promise.all([
+        getManagedTimer(scope, state.id),
+        managedFarmChoices(scope),
+      ]);
+      const currentIndex = farms.findIndex((farm) => farm.id === timer.farmId);
+      await interaction.editReply(
+        buildTimerFarmPicker(
+          {
+            ...state,
+            page: currentIndex < 0 ? 0 : Math.floor(currentIndex / 24),
+          },
+          farms,
+          timer.farmId,
+        ),
+      );
+      return;
+    }
+    if (
+      interaction.isStringSelectMenu() &&
+      state.kind === "timers" &&
+      state.action === "pick-farm"
+    ) {
+      if (!state.id) throw new ManagementInputError("Select a timer first.");
+      const timer = await getManagedTimer(scope, state.id);
+      const farmId = interaction.values[0];
+      const farm =
+        farmId == null || farmId === "none"
+          ? null
+          : await getManagedFarm(scope, farmId);
+      await interaction.showModal(
+        buildManagementModal(state, {
+          crop: String(timer.cropItemId),
+          farm: farm?.slug ?? "",
+          note: timer.note ?? "",
+        }),
       );
       return;
     }
@@ -194,6 +241,19 @@ export async function handleManagementInteraction(
           state,
           catalog.entries.map((entry) => entry.item),
         ),
+      );
+    } else if (
+      interaction.isButton() &&
+      state.kind === "timers" &&
+      (state.action === "farm-prev" || state.action === "farm-next")
+    ) {
+      if (!state.id) throw new ManagementInputError("Select a timer first.");
+      const [timer, farms] = await Promise.all([
+        getManagedTimer(scope, state.id),
+        managedFarmChoices(scope),
+      ]);
+      await interaction.editReply(
+        buildTimerFarmPicker(state, farms, timer.farmId),
       );
     } else {
       await interaction.editReply(await managementList(scope, state));

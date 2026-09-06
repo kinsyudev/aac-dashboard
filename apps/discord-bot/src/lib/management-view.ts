@@ -28,6 +28,11 @@ export interface CropPickerEntry {
   id: number;
   name: string;
 }
+export interface FarmPickerEntry {
+  id: string;
+  name: string;
+  slug: string;
+}
 
 const PAGE_SIZE = 10;
 export const managementId = (state: ManagementState, action: string) =>
@@ -227,6 +232,65 @@ export function buildCropPicker(
   };
 }
 
+export function buildTimerFarmPicker(
+  input: ManagementState,
+  farms: FarmPickerEntry[],
+  currentFarmId: string | null,
+) {
+  const pages = Math.max(1, Math.ceil(farms.length / 24));
+  const state = {
+    ...input,
+    page: Math.max(0, Math.min(input.page, pages - 1)),
+  };
+  const visible = farms.slice(state.page * 24, (state.page + 1) * 24);
+  const picker = new StringSelectMenuBuilder()
+    .setCustomId(managementId(state, "pick-farm"))
+    .setPlaceholder("Choose a farm")
+    .addOptions(
+      {
+        label: "No farm",
+        description: "Remove this timer from its farm",
+        value: "none",
+        default: currentFarmId == null,
+      },
+      ...visible.map((farm) => ({
+        label: farm.name.slice(0, 100),
+        description: farm.slug.slice(0, 100),
+        value: farm.id,
+        default: farm.id === currentFarmId,
+      })),
+    );
+
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("Choose the timer's farm")
+        .setDescription(
+          "Select a farm, then edit the crop, duration, or note in the form.",
+        )
+        .setColor(0x22c55e)
+        .setFooter({ text: `Farms ${state.page + 1}/${pages}` }),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(picker),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        managementButton(
+          { ...state, page: Math.max(0, state.page - 1) },
+          "farm-prev",
+          "Previous",
+        ).setDisabled(state.page === 0),
+        managementButton(
+          { ...state, page: state.page + 1 },
+          "farm-next",
+          "Next",
+        ).setDisabled(state.page === pages - 1),
+        managementButton({ ...state, kind: "timers", page: 0 }, "list", "Back"),
+      ),
+    ],
+    allowedMentions: { parse: [] as const },
+  };
+}
+
 export function buildDeleteConfirmation(
   state: ManagementState,
   entry: ManagementEntry,
@@ -297,7 +361,9 @@ export function buildManagementModal(
           },
           {
             key: "farm",
-            label: "Farm slug (optional)",
+            label: editing
+              ? "Farm slug (blank removes farm)"
+              : "Farm slug (optional)",
             required: false,
             max: 80,
             placeholder: "main-farm",

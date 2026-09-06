@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ReminderMessageInput } from "./messages";
-import { buildItemEmbed, buildReminderMessage } from "./messages";
+import {
+  buildItemEmbed,
+  buildReminderMessage,
+  buildReplantDurationChoice,
+} from "./messages";
 
 const reminder: ReminderMessageInput = {
   timerId: "12345678-90ab-cdef-1234-567890abcdef",
@@ -61,5 +65,23 @@ void test("confirmation embeds use stored filenames rather than assuming icon an
   assert.equal(
     buildItemEmbed({ title: "Timer created" }, undefined).thumbnail,
     undefined,
+  );
+});
+
+void test("custom-duration replants offer reuse and current-default choices", () => {
+  const message = buildReplantDurationChoice({
+    timerId: reminder.timerId,
+    cropName: reminder.cropName,
+    durationSeconds: 90 * 60,
+  });
+  const buttons = message.components[0]?.toJSON().components;
+
+  assert.match(message.content, /custom 1h 30m duration/);
+  assert.deepEqual(
+    buttons?.map((button) => ("custom_id" in button ? button.custom_id : null)),
+    [
+      `farm-replant:${reminder.timerId}:reuse`,
+      `farm-replant:${reminder.timerId}:default`,
+    ],
   );
 });
