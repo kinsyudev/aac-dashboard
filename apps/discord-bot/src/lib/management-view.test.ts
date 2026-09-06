@@ -12,6 +12,21 @@ void test("list payload omits content when it has no status notice", () => {
   assert.equal("content" in payload, false);
 });
 
+void test("every list control has a unique custom id", () => {
+  const payload = buildManagementList(
+    { kind: "farms", ownerId: "123456789", page: 0 },
+    [],
+  );
+  const customIds = payload.components.flatMap((row) =>
+    row
+      .toJSON()
+      .components.filter((component) => "custom_id" in component)
+      .map((component) => component.custom_id),
+  );
+
+  assert.equal(new Set(customIds).size, customIds.length);
+});
+
 void test("crop picker exposes a selectable page of catalog suggestions", () => {
   const crops = Array.from({ length: 26 }, (_, index) => ({
     id: index + 1,

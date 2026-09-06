@@ -145,18 +145,18 @@ export function buildManagementList(
         ButtonStyle.Danger,
       ),
     );
-  actions.addComponents(managementButton(state, "list", "Refresh"));
+  actions.addComponents(managementButton(state, "refresh", "Refresh"));
   components.push(actions);
   components.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       managementButton(
         { ...state, page: Math.max(0, state.page - 1) },
-        "list",
+        "previous",
         "Previous",
       ).setDisabled(state.page === 0),
       managementButton(
         { ...state, page: state.page + 1 },
-        "list",
+        "next",
         "Next",
       ).setDisabled(state.page === pages - 1),
       managementButton(
