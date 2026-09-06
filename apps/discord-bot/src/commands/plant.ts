@@ -1,28 +1,33 @@
-import { db } from "@acme/db/client";
+import type { ChatInputCommandInteraction } from "discord.js";
 import { Command } from "@sapphire/framework";
 import { ChannelType, MessageFlags } from "discord.js";
-import type { ChatInputCommandInteraction } from "discord.js";
 
-import { resolveCropAlias } from "../lib/crop-timers";
+import { db } from "@acme/db/client";
+
 import {
   findCropSuggestions,
   getCropCatalog,
   resolveCatalogItem,
 } from "../lib/crop-catalog";
+import { resolveCropAlias } from "../lib/crop-timers";
 import { parseDurationSeconds } from "../lib/duration";
 import { resolveReminderDefaults } from "../lib/farms";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
-import { buildItemEmbed } from "../lib/messages";
-import {
-  chooseDuration,
-  createFarmTimer,
-  findFarmCropOverride,
-} from "../lib/timers";
 import {
   logInteractionError,
   logInteractionFinish,
   logInteractionStart,
 } from "../lib/logging";
+import { buildItemEmbed } from "../lib/messages";
+import {
+  findFarmSuggestions,
+  getPlantAutocompleteSuggestions,
+} from "../lib/plant-autocomplete";
+import {
+  chooseDuration,
+  createFarmTimer,
+  findFarmCropOverride,
+} from "../lib/timers";
 
 export class PlantCommand extends Command {
   public override registerApplicationCommands(registry: Command.Registry) {
@@ -40,7 +45,9 @@ export class PlantCommand extends Command {
         .addStringOption((option) =>
           option
             .setName("duration")
-            .setDescription("Override duration, such as 45m, 1h 30m, or 2d 4h."),
+            .setDescription(
+              "Override duration, such as 45m, 1h 30m, or 2d 4h.",
+            ),
         )
         .addRoleOption((option) =>
           option.setName("role").setDescription("Role to ping when ready."),
@@ -58,7 +65,9 @@ export class PlantCommand extends Command {
             .addChannelTypes(ChannelType.GuildText),
         )
         .addStringOption((option) =>
-          option.setName("note").setDescription("Optional note for this timer."),
+          option
+            .setName("note")
+            .setDescription("Optional note for this timer."),
         ),
     );
   }
@@ -83,19 +92,32 @@ export class PlantCommand extends Command {
     logInteractionStart(this.container.logger, baseContext);
 
     try {
-      if (focused.name !== "crop") {
-        const response = await interaction.respond([]);
-        logInteractionFinish(this.container.logger, {
-          ...baseContext,
-          outcome: "ok",
-          durationMs: Date.now() - startedAt,
-          result: { suggestionCount: 0, skipped: true },
-        });
-        return response;
-      }
-
-      const catalog = await getCropCatalog(db);
-      const suggestions = findCropSuggestions(catalog, String(focused.value));
+      const suggestions = await getPlantAutocompleteSuggestions(
+        {
+          focusedName: focused.name,
+          query: String(focused.value),
+        },
+        {
+          crops: async (query) => {
+            const catalog = await getCropCatalog(db);
+            return findCropSuggestions(catalog, query);
+          },
+          farms: async (query) => {
+            const guildId = interaction.guildId;
+            if (!guildId) return [];
+            const farms = await db.query.discordFarms.findMany({
+              columns: { name: true, slug: true },
+              where: (fields, { and, eq }) =>
+                and(
+                  eq(fields.guildId, guildId),
+                  eq(fields.ownerDiscordUserId, interaction.user.id),
+                ),
+              orderBy: (fields, { asc }) => [asc(fields.slug)],
+            });
+            return findFarmSuggestions(farms, query);
+          },
+        },
+      );
       const response = await interaction.respond(suggestions);
 
       logInteractionFinish(this.container.logger, {
@@ -198,7 +220,10 @@ export class PlantCommand extends Command {
           ...baseContext,
           outcome: "user_error",
           durationMs: Date.now() - startedAt,
-          result: { reason: "ambiguous_crop", suggestionCount: crop.matches.length },
+          result: {
+            reason: "ambiguous_crop",
+            suggestionCount: crop.matches.length,
+          },
         });
         return response;
       }
@@ -216,7 +241,10 @@ export class PlantCommand extends Command {
           ...baseContext,
           outcome: "user_error",
           durationMs: Date.now() - startedAt,
-          result: { reason: "ambiguous_item", suggestionCount: exactItem.matches.length },
+          result: {
+            reason: "ambiguous_item",
+            suggestionCount: exactItem.matches.length,
+          },
         });
         return response;
       }
@@ -235,8 +263,7 @@ export class PlantCommand extends Command {
       }
 
       const resolvedItem =
-        crop?.item ??
-        (exactItem?.kind === "match" ? exactItem.item : null);
+        crop?.item ?? (exactItem?.kind === "match" ? exactItem.item : null);
       if (resolvedItem == null) {
         const response = await interaction.editReply({
           content: `I do not have an in-game timer for "${cropInput}". Add a duration override like \`duration:45m\`.`,
@@ -250,7 +277,10 @@ export class PlantCommand extends Command {
         return response;
       }
 
-      const userId = await findDashboardUserIdForDiscordUser(db, interaction.user.id);
+      const userId = await findDashboardUserIdForDiscordUser(
+        db,
+        interaction.user.id,
+      );
       const farm = farmSlug
         ? await db.query.discordFarms.findFirst({
             where: (fields, { and, eq }) =>
@@ -340,11 +370,14 @@ export class PlantCommand extends Command {
 
       const response = await interaction.editReply({
         embeds: [
-          buildItemEmbed({
-            title: `${resolvedItem.name} timer created`,
-            description: `Timer \`${timer.id.slice(0, 8)}\` will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
-            color: 0x22c55e,
-          }, resolvedItem.icon),
+          buildItemEmbed(
+            {
+              title: `${resolvedItem.name} timer created`,
+              description: `Timer \`${timer.id.slice(0, 8)}\` will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+              color: 0x22c55e,
+            },
+            resolvedItem.icon,
+          ),
         ],
       });
 
