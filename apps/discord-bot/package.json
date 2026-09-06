@@ -4,6 +4,8 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
+    "build": "pnpm validate-env && pnpm typecheck",
+    "validate-env": "pnpm with-env node --import tsx src/validate-env.ts",
     "dev": "pnpm with-env tsx watch src/index.ts",
     "start": "pnpm with-env tsx src/index.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",

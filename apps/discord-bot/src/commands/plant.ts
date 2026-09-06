@@ -12,7 +12,9 @@ import {
 import { parseDurationSeconds } from "../lib/duration";
 import { resolveReminderDefaults } from "../lib/farms";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
+import { buildItemEmbed } from "../lib/messages";
 import {
+  chooseDuration,
   createFarmTimer,
   findFarmCropOverride,
 } from "../lib/timers";
@@ -27,11 +29,11 @@ export class PlantCommand extends Command {
     registry.registerChatInputCommand((builder) =>
       builder
         .setName("plant")
-        .setDescription("Create an ArcheAge farm crop timer.")
+        .setDescription("Create an ArcheAge crop or larder timer.")
         .addStringOption((option) =>
           option
             .setName("crop")
-            .setDescription("Crop, bundle, or greenhouse to plant.")
+            .setDescription("Crop, sapling, brazier, or larder to track.")
             .setAutocomplete(true)
             .setRequired(true),
         )
@@ -219,9 +221,9 @@ export class PlantCommand extends Command {
         return response;
       }
 
-      if (crop == null && !(explicitDurationSeconds != null && exactItem?.kind === "match")) {
+      if (crop == null && exactItem == null) {
         const response = await interaction.editReply({
-          content: `I do not have an in-game timer for "${cropInput}". Add a duration override like \`duration:45m\`.`,
+          content: `I do not recognize "${cropInput}". Choose an item from the crop autocomplete.`,
         });
         logInteractionFinish(this.container.logger, {
           ...baseContext,
@@ -279,24 +281,24 @@ export class PlantCommand extends Command {
         itemId: resolvedItem.id,
       });
 
-      const duration =
-        explicitDurationSeconds != null
-          ? {
-              durationSeconds: explicitDurationSeconds,
-              source: "explicit" as const,
-              explicitDurationSeconds,
-            }
-          : farmCropOverrideSeconds != null
-            ? {
-                durationSeconds: farmCropOverrideSeconds,
-                source: "farm_crop_override" as const,
-                explicitDurationSeconds: null,
-              }
-            : {
-                durationSeconds: crop?.growthSeconds ?? 0,
-                source: "game_timer" as const,
-                explicitDurationSeconds: null,
-              };
+      const duration = chooseDuration({
+        explicitDurationSeconds,
+        farmCropOverrideSeconds,
+        gameTimerSeconds: crop?.growthSeconds ?? null,
+      });
+
+      if (duration == null) {
+        const response = await interaction.editReply({
+          content: `I do not have an in-game timer for "${resolvedItem.name}". Add a duration like \`duration:3d\` or save a \`/farm crop-override\`.`,
+        });
+        logInteractionFinish(this.container.logger, {
+          ...baseContext,
+          outcome: "user_error",
+          durationMs: Date.now() - startedAt,
+          result: { reason: "missing_duration" },
+        });
+        return response;
+      }
 
       const farmUser = await db.query.discordFarmUsers.findFirst({
         where: (fields, { and, eq }) =>
@@ -337,7 +339,13 @@ export class PlantCommand extends Command {
       });
 
       const response = await interaction.editReply({
-        content: `Created timer \`${timer.id.slice(0, 8)}\` for ${resolvedItem.name}. It will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+        embeds: [
+          buildItemEmbed({
+            title: `${resolvedItem.name} timer created`,
+            description: `Timer \`${timer.id.slice(0, 8)}\` will be ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+            color: 0x22c55e,
+          }, resolvedItem.icon),
+        ],
       });
 
       logInteractionFinish(this.container.logger, {

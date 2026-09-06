@@ -9,6 +9,7 @@ import type { ButtonInteraction } from "discord.js";
 import { resolveCropAlias } from "../lib/crop-timers";
 import { getCropCatalog } from "../lib/crop-catalog";
 import { findDashboardUserIdForDiscordUser } from "../lib/identity";
+import { buildItemEmbed } from "../lib/messages";
 import {
   logInteractionError,
   logInteractionFinish,
@@ -77,6 +78,7 @@ export class ReplantInteractionHandler extends InteractionHandler {
       const { guildId } = interaction;
 
       const original = await db.query.discordFarmTimers.findFirst({
+        with: { cropItem: { columns: { icon: true } } },
         where: (fields, { eq }) => eq(fields.id, parsed.timerId),
       });
 
@@ -183,7 +185,13 @@ export class ReplantInteractionHandler extends InteractionHandler {
       });
 
       const response = await interaction.reply({
-        content: `Replanted ${timer.cropName}. New timer \`${timer.id.slice(0, 8)}\` is ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+        embeds: [
+          buildItemEmbed({
+            title: `${timer.cropName} timer restarted`,
+            description: `New timer \`${timer.id.slice(0, 8)}\` is ready <t:${Math.floor(timer.readyAt.getTime() / 1000)}:R>.`,
+            color: 0x22c55e,
+          }, original.cropItem.icon),
+        ],
         flags: MessageFlags.Ephemeral,
       });
 

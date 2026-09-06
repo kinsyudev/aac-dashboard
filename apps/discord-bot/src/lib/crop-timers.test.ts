@@ -71,6 +71,7 @@ void test("parses growth timers from item descriptions", () => {
   );
   assert.equal(parseGrowthTimerSeconds(getItemDescription(2)), 2 * 60 * 60);
   assert.equal(parseGrowthTimerSeconds("No timer here"), null);
+  assert.equal(parseGrowthTimerSeconds("Matures in approx. 5h43m"), 5 * 3600 + 43 * 60);
 });
 
 void test("builds aliases for seed, bundle, and greenhouse items", () => {

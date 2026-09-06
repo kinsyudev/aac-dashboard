@@ -87,6 +87,9 @@ export function isLikelyPlantableTimerItem(input: {
   description: string | null;
 }) {
   if (input.description == null) return false;
+  if (/\bLarder$/i.test(input.name)) {
+    return /\b(?:Aging (?:Time|Period)\b|Used for aging\b|designed to properly age\b|installed\b)/i.test(input.description);
+  }
   if (!/Seed(?: Bundle)?$|Greenhouse$|Sapling$|Brazier(?:s)?$/i.test(input.name)) {
     return false;
   }
@@ -245,6 +248,7 @@ export async function findSeedItemsWithTimers(database: typeof appDb) {
       id: items.id,
       name: items.name,
       description: items.description,
+      icon: items.icon,
     })
     .from(items)
     .where(
@@ -254,6 +258,7 @@ export async function findSeedItemsWithTimers(database: typeof appDb) {
         ilike(items.name, "%Greenhouse%"),
         ilike(items.name, "%Sapling%"),
         ilike(items.name, "%Brazier%"),
+        ilike(items.name, "%Larder%"),
       ),
     )
     .orderBy(asc(items.name));

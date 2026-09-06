@@ -4,6 +4,7 @@ export interface CropTimerItem {
   id: number;
   name: string;
   description: string | null;
+  icon?: string | null;
 }
 
 export interface CropAliasMatch {
@@ -21,6 +22,9 @@ export type CropAliasResult = CropAliasMatch | CropAliasAmbiguous | null;
 
 export type CropAliasMap = Map<string, CropAliasMatch[]>;
 
+// AA Classic uses three days, including larders whose imported text still says five.
+const LARDER_AGING_SECONDS = 3 * 24 * 60 * 60;
+
 export function stripArcheAgeMarkup(input: string) {
   return input
     .replaceAll(/\|c[0-9A-Fa-f]{8}/g, "")
@@ -33,10 +37,19 @@ export function parseGrowthTimerSeconds(description: string | null) {
   if (!description) return null;
 
   const clean = stripArcheAgeMarkup(description);
-  const match = /Matures in approx\.\s+((?:\d+\s*[dhms]\s*)+)/i.exec(clean);
+  const match =
+    /(?:Matures in approx\.|Aging (?:Time|Period):)\s+((?:\d+\s*(?:days?|hours?|minutes?|seconds?|[dhms])(?![a-z])\s*)+)/i.exec(
+      clean,
+    );
   if (!match?.[1]) return null;
 
-  return parseDurationSeconds(match[1]);
+  return parseDurationSeconds(
+    match[1]
+      .replace(/days?/gi, "d")
+      .replace(/hours?/gi, "h")
+      .replace(/minutes?/gi, "m")
+      .replace(/seconds?/gi, "s"),
+  );
 }
 
 export function normalizeAlias(input: string) {
@@ -83,6 +96,14 @@ export function aliasesForItem(name: string) {
     aliases.add(`${base} braziers`);
   }
 
+  // Keep other larder names explicit so "honey" does not select an aging container.
+  if (normalizedName === "multi-purpose aging larder") {
+    aliases.add("larder");
+    aliases.add("aging larder");
+    aliases.add("multi-purpose larder");
+    aliases.add("multipurpose larder");
+  }
+
   return Array.from(aliases);
 }
 
@@ -90,7 +111,9 @@ export function buildCropAliases(items: CropTimerItem[]) {
   const aliases: CropAliasMap = new Map();
 
   for (const item of items) {
-    const growthSeconds = parseGrowthTimerSeconds(item.description);
+    const growthSeconds = /\bLarder$/i.test(item.name)
+      ? LARDER_AGING_SECONDS
+      : parseGrowthTimerSeconds(item.description);
     if (growthSeconds == null) continue;
 
     for (const alias of aliasesForItem(item.name)) {

@@ -112,6 +112,18 @@ For more on the Better Auth CLI, see the [official docs](https://www.better-auth
 
 The farm bot lives in `apps/discord-bot` and runs as a single long-running worker.
 
+Use `/plant crop:larder` for a Multi-Purpose Aging Larder, or select Herb Larder,
+Cheese Larder, or Honey Larder from autocomplete. All larders default to **3 days**
+on AA Classic, overriding older imported descriptions that say 5 days. Start the
+timer when ingredients are added. An explicit `duration` or saved
+`/farm crop-override` takes precedence over the default.
+
+Larders use the existing advance reminder, ready notification, `/timers`,
+`/timer cancel`, and Replant flows. These track one aging cycle; they do not track
+empty-container expiry. Crop and larder reminders, timer creation confirmations,
+and Replant confirmations show the item's icon from
+`https://aa-classic.com/game/icons/` when an icon filename is available.
+
 Required environment variables:
 
 - `DATABASE_URL`
@@ -121,9 +133,18 @@ Required environment variables:
 Useful commands:
 
 ```bash
+pnpm -F @acme/discord-bot build
+pnpm -F @acme/discord-bot validate-env
 pnpm -F @acme/discord-bot dev
 pnpm -F @acme/discord-bot start
 pnpm -F @acme/discord-bot test
 pnpm -F @acme/discord-bot typecheck
 pnpm -F @acme/discord-bot lint
 ```
+
+The bot's `build` loads the root `.env`, validates its T3 environment schema
+(including in CI), and runs TypeScript checking. It exits with an error if required
+configuration is missing or invalid, without connecting to Discord or the database.
+Turbo always reruns this build so environment validation cannot be skipped by a
+cached result. The bot continues to run TypeScript through `tsx`; this build does
+not emit a JavaScript bundle.

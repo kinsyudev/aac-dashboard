@@ -1,7 +1,7 @@
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod/v4";
 
-export function botEnv() {
+export function botEnv(options: { skipValidation?: boolean } = {}) {
   return createEnv({
     server: {
       AAC_DISCORD_BOT_TOKEN: z.string().min(1),
@@ -11,6 +11,7 @@ export function botEnv() {
     },
     runtimeEnv: process.env,
     skipValidation:
-      !!process.env.CI || process.env.npm_lifecycle_event === "lint",
+      options.skipValidation ??
+      (!!process.env.CI || process.env.npm_lifecycle_event === "lint"),
   });
 }

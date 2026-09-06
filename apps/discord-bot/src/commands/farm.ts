@@ -5,8 +5,11 @@ import { Command } from "@sapphire/framework";
 import { ChannelType, MessageFlags } from "discord.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 
-import { resolveCropAlias } from "../lib/crop-timers";
-import { findCropSuggestions, getCropCatalog } from "../lib/crop-catalog";
+import {
+  findCropSuggestions,
+  getCropCatalog,
+  resolveCatalogItem,
+} from "../lib/crop-catalog";
 import { parseDurationSeconds } from "../lib/duration";
 import {
   ensureDiscordFarmUser,
@@ -405,14 +408,14 @@ export class FarmCommand extends Command {
         }
 
         const catalog = await getCropCatalog(db);
-        const crop = resolveCropAlias(
-          catalog.aliases,
+        const crop = resolveCatalogItem(
+          catalog,
           interaction.options.getString("crop", true),
         );
 
         if (crop == null || crop.kind === "ambiguous") {
           const response = await interaction.reply({
-            content: "That crop did not resolve to one seed, bundle, or greenhouse.",
+            content: "Choose one item from the crop autocomplete, including larders.",
             flags: MessageFlags.Ephemeral,
           });
           logInteractionFinish(this.container.logger, {

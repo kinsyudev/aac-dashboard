@@ -4,6 +4,7 @@ import {
   discordFarmNotifications,
   discordFarmTimers,
   discordFarms,
+  items,
 } from "@acme/db/schema";
 import type { SapphireClient } from "@sapphire/framework";
 
@@ -33,6 +34,7 @@ export async function pollDueFarmNotifications(input: {
       guildId: discordFarmTimers.guildId,
       ownerDiscordUserId: discordFarmTimers.ownerDiscordUserId,
       cropName: discordFarmTimers.cropName,
+      cropIcon: items.icon,
       note: discordFarmTimers.note,
       reminderChannelId: discordFarmTimers.reminderChannelId,
       pingRoleId: discordFarmTimers.pingRoleId,
@@ -46,6 +48,7 @@ export async function pollDueFarmNotifications(input: {
       eq(discordFarmTimers.id, discordFarmNotifications.timerId),
     )
     .leftJoin(discordFarms, eq(discordFarms.id, discordFarmTimers.farmId))
+    .leftJoin(items, eq(items.id, discordFarmTimers.cropItemId))
     .where(
       and(
         eq(discordFarmNotifications.status, "pending"),
@@ -97,6 +100,7 @@ export async function pollDueFarmNotifications(input: {
           timerId: row.timerId,
           kind: row.notificationKind,
           cropName: row.cropName,
+          cropIcon: row.cropIcon,
           note: row.note,
           farmSlug: row.farmSlug,
           plantedByDiscordUserId: row.ownerDiscordUserId,

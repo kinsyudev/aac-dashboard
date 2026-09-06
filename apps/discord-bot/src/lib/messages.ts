@@ -1,9 +1,5 @@
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-} from "discord.js";
 import type { APIEmbed, MessageCreateOptions } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 
 import { formatDuration } from "./duration";
 import { shortTimerId } from "./timers";
@@ -12,6 +8,7 @@ export interface ReminderMessageInput {
   timerId: string;
   kind: "advance" | "ready";
   cropName: string;
+  cropIcon: string | null;
   note: string | null;
   farmSlug: string | null;
   plantedByDiscordUserId: string;
@@ -19,6 +16,18 @@ export interface ReminderMessageInput {
   readyAt: Date;
   durationSeconds: number;
   lateBySeconds: number;
+}
+
+export function buildItemEmbed(
+  embed: APIEmbed,
+  icon: string | null | undefined,
+): APIEmbed {
+  return {
+    ...embed,
+    ...(icon
+      ? { thumbnail: { url: `https://aa-classic.com/game/icons/${icon}` } }
+      : {}),
+  };
 }
 
 export function buildReminderMessage(
@@ -43,7 +52,11 @@ export function buildReminderMessage(
 
   const fields: APIEmbed["fields"] = [
     { name: "Timer", value: shortTimerId(input.timerId), inline: true },
-    { name: "Duration", value: formatDuration(input.durationSeconds), inline: true },
+    {
+      name: "Duration",
+      value: formatDuration(input.durationSeconds),
+      inline: true,
+    },
     {
       name: "Ready",
       value: `<t:${Math.floor(input.readyAt.getTime() / 1000)}:R>`,
@@ -69,7 +82,17 @@ export function buildReminderMessage(
 
   const message: MessageCreateOptions = {
     content: target,
-    embeds: [{ title, description, color: input.kind === "advance" ? 0xf59e0b : 0x22c55e, fields }],
+    embeds: [
+      buildItemEmbed(
+        {
+          title,
+          description,
+          color: input.kind === "advance" ? 0xf59e0b : 0x22c55e,
+          fields,
+        },
+        input.cropIcon,
+      ),
+    ],
   };
 
   if (input.kind === "ready") {
