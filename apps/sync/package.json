@@ -10,6 +10,7 @@
     "sync-items:notify-new": "pnpm with-env tsx src/sync-items.ts --notify-new-items",
     "sync-prices": "pnpm with-env tsx src/sync-prices.ts",
     "sync-prices:backfill": "pnpm with-env tsx src/sync-prices-backfill.ts",
+    "find-volume-spikes": "pnpm with-env node --import tsx src/find-volume-spikes.ts",
     "classify-proficiencies": "pnpm with-env tsx src/classify-proficiencies.ts",
     "fix-handicraft-lunagems": "pnpm with-env tsx src/fix-handicraft-lunagems.ts",
     "fix-machining-mana-seals": "pnpm with-env tsx src/fix-machining-mana-seals.ts",
