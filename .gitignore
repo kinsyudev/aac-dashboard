@@ -29,6 +29,7 @@ build
 
 # misc
 .DS_Store
+*:Zone.Identifier
 *.pem
 .superpowers/
 
