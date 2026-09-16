@@ -1,7 +1,12 @@
 import type { inferProcedureOutput } from "@trpc/server";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
 import type { AppRouter } from "@acme/api";
 import { Badge } from "@acme/ui/badge";
@@ -941,7 +946,15 @@ function RegradePage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <RegradeCostOverview
+        overrideMap={overrideMap}
+        proficiencyMap={proficiencyMap}
+      />
+
+      <div
+        id="regrade-detail"
+        className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]"
+      >
         <aside className="space-y-3">
           <div className="flex gap-2">
             <Button
@@ -2588,6 +2601,471 @@ function RegradeCraftBreakdown({
       ) : null}
     </RecipeCardShell>
   );
+}
+
+const REGRADE_OVERVIEW_GROUPS = {
+  Leather: ["Jerkin", "Breeches", "Cap", "Fists", "Guards", "Belt", "Boots"],
+  Cloth: ["Shirt", "Pants", "Hood", "Gloves", "Sleeves", "Sash", "Shoes"],
+  Plate: [
+    "Cuirass",
+    "Greaves",
+    "Helm",
+    "Gauntlets",
+    "Vambraces",
+    "Tassets",
+    "Sabatons",
+  ],
+} as const;
+
+type RegradeOverviewGroup = keyof typeof REGRADE_OVERVIEW_GROUPS | "Weapons";
+
+function chunkValues<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function RegradeCostOverview({
+  overrideMap,
+  proficiencyMap,
+}: {
+  overrideMap: OverrideMap;
+  proficiencyMap: ProficiencyMap;
+}) {
+  const trpc = useTRPC();
+  const [group, setGroup] = useState<RegradeOverviewGroup>("Cloth");
+  const [grades, setGrades] = useState<number[]>([9, 10]);
+  const [glowing, setGlowing] = useState(true);
+  const gearTypes = useMemo(() => getMagnificentGearTypes(), []);
+  const visibleTypes = useMemo(() => {
+    if (group === "Weapons") {
+      return gearTypes.filter(
+        (type) => type.representativeItem.type === "weapon",
+      );
+    }
+    const pieces: readonly string[] = REGRADE_OVERVIEW_GROUPS[group];
+    return gearTypes.filter((type) => pieces.includes(type.piece));
+  }, [gearTypes, group]);
+
+  const names = useMemo(
+    () => [
+      ...new Set(
+        visibleTypes.flatMap((type) => [
+          type.sealedUpgradeNames.epherium,
+          type.sealedUpgradeNames.delphinad,
+          type.sealedUpgradeNames.ayanad,
+          ...(["Magnificent", "Epherium", "Delphinad"] as const).flatMap(
+            (tier) => getMagnificentVariantNames(type.piece, tier),
+          ),
+        ]),
+      ),
+    ],
+    [visibleTypes],
+  );
+  const exactQueries = useQueries({
+    queries: chunkValues(names, 50).map((chunk) =>
+      trpc.items.byExactNames.queryOptions(chunk),
+    ),
+  });
+  const exactMap = new Map(
+    exactQueries
+      .flatMap((query) => query.data ?? [])
+      .map((row) => [row.item.name, row.item]),
+  );
+  const sealNames = [
+    ...new Set(
+      visibleTypes.flatMap((type) =>
+        getMagnificentVariantNames(type.piece, "Delphinad").flatMap((name) => {
+          const item = exactMap.get(name);
+          const equip = item ? detectPieceAndTier(item.name) : null;
+          if (!item || !equip) return [];
+          const sealName = resolveTieredManaSealName("delphinad", {
+            name: item.name,
+            category: item.category,
+            equip,
+          });
+          return sealName ? [sealName] : [];
+        }),
+      ),
+    ),
+  ];
+  const sealQueries = useQueries({
+    queries: chunkValues(sealNames, 50).map((chunk) =>
+      trpc.items.byExactNames.queryOptions(chunk),
+    ),
+  });
+  const sealItemsByName = new Map(
+    sealQueries
+      .flatMap((query) => query.data ?? [])
+      .map((row) => [row.item.name, row.item]),
+  );
+  const craftIds = [
+    ...new Set([
+      ...visibleTypes.map((type) => type.representativeItem.id),
+      ...visibleTypes.flatMap((type) =>
+        [
+          type.sealedUpgradeNames.epherium,
+          type.sealedUpgradeNames.delphinad,
+          type.sealedUpgradeNames.ayanad,
+        ].flatMap((name) => {
+          const item = exactMap.get(name);
+          return item ? [item.id] : [];
+        }),
+      ),
+      ...[...sealItemsByName.values()].map((item) => item.id),
+    ]),
+  ];
+  const dependenciesReady =
+    exactQueries.every((query) => query.isSuccess) &&
+    sealQueries.every((query) => query.isSuccess);
+  const craftQueries = useQueries({
+    queries: chunkValues(craftIds, 50).map((chunk) => ({
+      ...trpc.crafts.forItems.queryOptions(chunk),
+      enabled: dependenciesReady,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const craftDataById = new Map<number, ForItemOutput>(
+    craftQueries.flatMap((query) =>
+      Object.entries(query.data ?? {}).flatMap(([id, data]) =>
+        data ? [[Number(id), data] as const] : [],
+      ),
+    ),
+  );
+  const consumableIds = [
+    ...new Set([
+      ...regradeData.scrolls.map((scroll) => scroll.id),
+      ...getObtainableRegradeCharms().map((charm) => charm.id),
+    ]),
+  ];
+  const consumableQuery = useQuery(
+    trpc.items.pricesBatch.queryOptions(consumableIds),
+  );
+  const consumablePrices: ConsumablePriceMap = new Map(
+    (consumableQuery.data ?? []).flatMap((price) => {
+      const value = overrideMap.get(price.itemId) ?? getMarketPrice(price);
+      return value > 0 ? [[price.itemId, value] as const] : [];
+    }),
+  );
+  const ready =
+    dependenciesReady &&
+    craftQueries.every((query) => query.isSuccess) &&
+    consumableQuery.isSuccess;
+  const failed =
+    exactQueries.some((query) => query.isError) ||
+    sealQueries.some((query) => query.isError) ||
+    craftQueries.some((query) => query.isError) ||
+    consumableQuery.isError;
+  const rows = ready
+    ? visibleTypes.map((type) =>
+        getRegradeOverviewRow({
+          type,
+          grades,
+          glowing,
+          exactMap,
+          sealItemsByName,
+          craftDataById,
+          consumablePrices,
+          overrideMap,
+          proficiencyMap,
+        }),
+      )
+    : [];
+
+  return (
+    <section
+      className="space-y-4 rounded-lg border p-4"
+      aria-label="Regrade cost overview"
+    >
+      <div>
+        <h2 className="text-lg font-semibold">Cost overview</h2>
+        <p className="text-muted-foreground text-sm">
+          Expected cost from a Grand Magnificent piece to at least the selected
+          grade, then through sealed Ayanad. The initial base piece is shown
+          separately.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {(["Leather", "Cloth", "Plate", "Weapons"] as const).map((option) => (
+          <Button
+            key={option}
+            type="button"
+            size="sm"
+            variant={group === option ? "default" : "outline"}
+            onClick={() => setGroup(option)}
+          >
+            {option}
+          </Button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground text-sm">Target grades</span>
+        {TARGET_GRADES.map((grade) => (
+          <Button
+            key={grade}
+            type="button"
+            size="sm"
+            variant={grades.includes(grade) ? "default" : "outline"}
+            onClick={() =>
+              setGrades((current) =>
+                current.includes(grade)
+                  ? current.length > 1
+                    ? current.filter((value) => value !== grade)
+                    : current
+                  : [...current, grade].sort((a, b) => a - b),
+              )
+            }
+          >
+            {regradeData.grades[grade]?.name ?? grade}
+          </Button>
+        ))}
+        <label className="ml-2 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={glowing}
+            onChange={(event) => setGlowing(event.target.checked)}
+          />
+          Glowing proc
+        </label>
+      </div>
+      {failed ? (
+        <p className="text-muted-foreground text-sm">
+          Could not load cost data.
+        </p>
+      ) : !ready ? (
+        <p className="text-muted-foreground text-sm">Loading costs…</p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr className="text-left">
+                <th className="px-3 py-2">Piece</th>
+                <th className="px-3 py-2">Grade</th>
+                <th className="px-3 py-2 text-right">Base piece</th>
+                <th className="px-3 py-2 text-right">Regrading</th>
+                <th className="px-3 py-2 text-right">Upgrade chain</th>
+                <th className="px-3 py-2 text-right">Total</th>
+                <th className="px-3 py-2 text-right">Labor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.flatMap((row) =>
+                grades.map((grade) => {
+                  const result = row.results.get(grade);
+                  const available =
+                    result && Number.isFinite(result.expectedCostGold);
+                  return (
+                    <tr key={`${row.type.piece}:${grade}`} className="border-t">
+                      <td className="px-3 py-2 font-medium">
+                        <Link
+                          to="/regrade"
+                          hash="regrade-detail"
+                          search={serializeRegradeSearch({
+                            piece: row.type.piece,
+                            selectedTargetGrade: grade,
+                            ayanadTargetMode: "any",
+                            glowingProcEnabled: glowing,
+                          })}
+                          className="hover:underline"
+                        >
+                          {row.type.displayName}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2">
+                        {regradeData.grades[grade]?.name}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {formatGold(row.baseGold)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {available
+                          ? formatGold(
+                              result.expectedCostGold - row.upgradeGold,
+                            )
+                          : "n/a"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {formatGold(row.upgradeGold)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold">
+                        {available
+                          ? formatGold(row.baseGold + result.expectedCostGold)
+                          : "n/a"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {available
+                          ? (row.baseLabor + result.expectedLabor).toFixed(1)
+                          : "n/a"}
+                      </td>
+                    </tr>
+                  );
+                }),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-muted-foreground text-xs">
+        Regrading includes replacement pieces after destruction. Upgrade chain
+        includes expected Delphinad variant rerolls. Costs use market prices and
+        your Price Overrides with default buy choices; open a piece to adjust
+        its craft choices.
+      </p>
+    </section>
+  );
+}
+
+function getRegradeOverviewRow(input: {
+  type: ReturnType<typeof getMagnificentGearTypes>[number];
+  grades: number[];
+  glowing: boolean;
+  exactMap: ReadonlyMap<string, CraftItem>;
+  sealItemsByName: ReadonlyMap<string, CraftItem>;
+  craftDataById: ReadonlyMap<number, ForItemOutput>;
+  consumablePrices: ConsumablePriceMap;
+  overrideMap: OverrideMap;
+  proficiencyMap: ProficiencyMap;
+}) {
+  const {
+    type,
+    grades,
+    glowing,
+    exactMap,
+    sealItemsByName,
+    craftDataById,
+    consumablePrices,
+    overrideMap,
+    proficiencyMap,
+  } = input;
+  const modes: CraftModeMap = {};
+  const baseData = craftDataById.get(type.representativeItem.id);
+  let baseGold = Number.NaN;
+  let baseLabor = Number.NaN;
+  if (baseData?.crafts.length) {
+    const priceMap = buildPriceMap(baseData.prices);
+    const buyModes = getDefaultBuyCraftModes(baseData.subcraftsByItemId, modes);
+    const craft = pickCheapestCraftForItem(
+      baseData.crafts,
+      type.representativeItem.id,
+      baseData.subcraftsByItemId,
+      priceMap,
+      overrideMap,
+      buyModes,
+    );
+    if (
+      craft.materials.every(
+        ({ item }) => getItemPrice(item.id, priceMap, overrideMap) > 0,
+      )
+    ) {
+      baseGold = getCraftEntryUnitCost(
+        craft,
+        type.representativeItem.id,
+        baseData.subcraftsByItemId,
+        priceMap,
+        overrideMap,
+        buyModes,
+      );
+      baseLabor = getSelectedCraftUnitLabor(
+        craft,
+        type.representativeItem.id,
+        baseData.subcraftsByItemId,
+        priceMap,
+        overrideMap,
+        proficiencyMap,
+        buyModes,
+      );
+    }
+  }
+  const sealed = type.sealedUpgradeNames;
+  const epherium = exactMap.get(sealed.epherium);
+  const delphinad = exactMap.get(sealed.delphinad);
+  const ayanad = exactMap.get(sealed.ayanad);
+  const stage1 = epherium
+    ? resolveUpgradeStage({
+        craftData: craftDataById.get(epherium.id) ?? null,
+        targetItemId: epherium.id,
+        targetItemName: epherium.name,
+        consumedItemIds: getExistingItemIds(
+          getMagnificentVariantNames(type.piece, "Magnificent"),
+          exactMap,
+        ),
+        manualCraftModes: modes,
+        overrideMap,
+        proficiencyMap,
+      })
+    : null;
+  const stage2 = delphinad
+    ? resolveUpgradeStage({
+        craftData: craftDataById.get(delphinad.id) ?? null,
+        targetItemId: delphinad.id,
+        targetItemName: delphinad.name,
+        consumedItemIds: getExistingItemIds(
+          getMagnificentVariantNames(type.piece, "Epherium"),
+          exactMap,
+        ),
+        manualCraftModes: modes,
+        overrideMap,
+        proficiencyMap,
+      })
+    : null;
+  const stage3 = ayanad
+    ? resolveUpgradeStage({
+        craftData: craftDataById.get(ayanad.id) ?? null,
+        targetItemId: ayanad.id,
+        targetItemName: ayanad.name,
+        consumedItemIds: getExistingItemIds(
+          getMagnificentVariantNames(type.piece, "Delphinad"),
+          exactMap,
+        ),
+        manualCraftModes: modes,
+        overrideMap,
+        proficiencyMap,
+      })
+    : null;
+  const reroll = stage3
+    ? resolveIntermediateRerollCost({
+        tier: "delphinad",
+        itemName: stage3.consumedItemName,
+        itemCategory: stage3.consumedItemCategory,
+        sealItemsByName,
+        sealCraftDataByItemId: craftDataById,
+        glowingProcEnabled: glowing,
+        manualCraftModes: modes,
+        overrideMap,
+        proficiencyMap,
+      })
+    : null;
+  const upgradeGold =
+    stage1 && stage2 && stage3 && reroll
+      ? stage1.costGold + stage2.costGold + stage3.costGold + reroll.costGold
+      : Number.NaN;
+  const upgradeLabor =
+    stage1 && stage2 && stage3 && reroll
+      ? stage1.labor + stage2.labor + stage3.labor + reroll.labor
+      : Number.NaN;
+  const results = new Map(
+    grades.map((grade) => [
+      grade,
+      Number.isFinite(baseGold) && Number.isFinite(upgradeGold)
+        ? solveExpectedRegradeToTarget({
+            item: type.representativeItem,
+            targetGrade: grade,
+            baseRecraftCostGold: baseGold,
+            baseRecraftLabor: baseLabor,
+            upgradeCostGold: upgradeGold,
+            upgradeLabor,
+            saleValuesByGrade: new Map(),
+            consumablePrices,
+            candidateCharmIds: getObtainableRegradeCharms().map(
+              (charm) => charm.id,
+            ),
+          })
+        : null,
+    ]),
+  );
+  return { type, baseGold, baseLabor, upgradeGold, results };
 }
 
 function useRegradeCraftModePreferences(scope: string) {
