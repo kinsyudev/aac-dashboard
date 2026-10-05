@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "apply-custom-crafts": "pnpm with-env tsx src/apply-custom-crafts.ts",
     "build-static-api-cache": "pnpm with-env tsx src/build-static-api-cache.ts",
     "sync-items": "pnpm with-env tsx src/sync-items.ts",
     "sync-items:refresh-crafts": "pnpm with-env tsx src/sync-items.ts --refresh-crafts",

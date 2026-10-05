@@ -3,6 +3,7 @@ import { db } from "@acme/db/client";
 import { craftMaterials, craftProducts, crafts, items } from "@acme/db/schema";
 
 import type { AlertItem } from "./item-alerts";
+import { applyCustomCrafts } from "./custom-crafts";
 import { recordItemDiscoveries, sendItemDiscoveryAlerts } from "./item-alerts";
 import { buildStaticApiCache } from "./static-api-cache";
 import { fetchJsonWithRetry } from "./sync-items-fetch";
@@ -390,6 +391,9 @@ async function main() {
       `  ${craftsDone}/${craftsToSync.length} processed, ${insertable.length}/${chunk.length} synced`,
     );
   }
+
+  console.log("Applying custom crafts...");
+  await applyCustomCrafts(db);
 
   const totalCrafts = await db.$count(crafts);
   const totalProducts = await db.$count(craftProducts);
