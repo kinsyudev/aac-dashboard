@@ -325,6 +325,8 @@ export function planTargetRoute(input: {
   desiredStatIds: string[];
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
+  // the item's role; inferred from the stats when left out
+  role?: GearSubtype;
 }): TargetRoute {
   const context = createPlanContext(input);
   const plan = planFromState(
@@ -365,6 +367,7 @@ export function planOptimalStrategy({
   targetGrade,
   targetProgress,
   materialPricing,
+  role,
 }: {
   kind: GearKind;
   targetGrade: Grade;
@@ -372,6 +375,8 @@ export function planOptimalStrategy({
   desiredStatIds: string[];
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
+  // the item's role; inferred from the stats when left out
+  role?: GearSubtype;
 } & BaseItemCostOptions): OptimalStrategyRoute {
   const baseItemCost = estimateBaseItemCost({
     kind,
@@ -383,6 +388,7 @@ export function planOptimalStrategy({
     targetGrade,
     targetProgress,
     desiredStatIds,
+    role,
     prices,
     materialPricing,
   });
@@ -416,6 +422,8 @@ export function compareCurrentItem(
     current: CurrentItemInput;
     prices: PlannerPrices;
     materialPricing?: MaterialPricingOptions;
+    // the item's role; inferred from the stats when left out
+    role?: GearSubtype;
   },
   baseItemCost = 0,
 ): CurrentComparison {
@@ -504,6 +512,8 @@ export function compareCurrentStrategy({
   current: CurrentItemInput;
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
+  // the item's role; inferred from the stats when left out
+  role?: GearSubtype;
 } & BaseItemCostOptions): CurrentStrategyComparison {
   const baseItemCost = estimateBaseItemCost({
     kind: input.kind,
@@ -546,8 +556,12 @@ function createPlanContext(input: {
   desiredStatIds: string[];
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
+  // the item's role; inferred from the stats when left out
+  role?: GearSubtype;
 }): PlanContext {
-  const subtype = inferSubtype(input.desiredStatIds, input.kind);
+  const subtype: SubtypeInference = input.role
+    ? { status: "inferred", subtype: input.role }
+    : inferSubtype(input.desiredStatIds, input.kind);
 
   return {
     ...input,
@@ -968,6 +982,20 @@ function buildCostBreakdown({
     salvageCredit,
     totalCost: materialCost + craftGold + rerollCost - salvageCredit,
   };
+}
+
+// The role an item with these stats is planned as: the one the stats name (the first one's, if they name
+// several), or else the one whose item rolls them all earliest.
+export function getPlannerRole(kind: GearKind, statIds: string[]): GearSubtype {
+  const subtype = inferSubtype(statIds, kind);
+  if (subtype.status === "conflict") {
+    // stats from different roles: go with the first one picked
+    const first = statIds
+      .map((statId) => statById.get(statId)?.subtypesByKind[kind]?.[0])
+      .find(Boolean);
+    if (first) return first;
+  }
+  return resolveRole(kind, subtype, statIds);
 }
 
 // The role whose item to plan for. Without one named by the stats, the role whose item rolls all of them

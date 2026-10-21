@@ -29,6 +29,7 @@ const plannerGradeSchema = z.enum([
 
 const costumePlannerStateSchema = z.object({
   kind: z.enum(["costume", "undergarment"]),
+  role: z.enum(["healing", "magic", "melee", "ranged"]).optional(),
   targetGrade: plannerGradeSchema,
   targetProgress: z.number().min(0).max(100),
   targetStats: z.array(z.string()).max(5),

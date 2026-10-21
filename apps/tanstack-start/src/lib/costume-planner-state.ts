@@ -1,12 +1,15 @@
-import type { GearKind, Grade } from "./costume-planner.ts";
+import type { GearKind, GearSubtype, Grade } from "./costume-planner.ts";
 import {
   getAvailableStatIds,
+  getPlannerRole,
   getStatLineCount,
   GRADES,
 } from "./costume-planner.ts";
 
 export interface CostumePlannerState {
   kind: GearKind;
+  // the item's role (each role's costume/undergarment has its own stat pool)
+  role: GearSubtype;
   targetGrade: Grade;
   targetProgress: number;
   targetStats: string[];
@@ -25,6 +28,7 @@ export interface CostumePlannerState {
 
 export interface CostumePlannerSearch {
   k?: GearKind;
+  r?: GearSubtype;
   tg?: Grade;
   tp?: number;
   ts?: string;
@@ -43,6 +47,7 @@ export interface CostumePlannerSearch {
 
 export const DEFAULT_COSTUME_PLANNER_STATE: CostumePlannerState = {
   kind: "costume",
+  role: "ranged",
   targetGrade: "mythic",
   targetProgress: 100,
   targetStats: [
@@ -66,6 +71,7 @@ export const DEFAULT_COSTUME_PLANNER_STATE: CostumePlannerState = {
 };
 
 const GEAR_KINDS = ["costume", "undergarment"] as const;
+const GEAR_SUBTYPES = ["healing", "magic", "melee", "ranged"] as const;
 
 export function normalizeCostumePlannerState(
   input: Partial<CostumePlannerState>,
@@ -79,9 +85,17 @@ export function normalizeCostumePlannerState(
   const currentGrade = isGrade(input.currentGrade)
     ? input.currentGrade
     : DEFAULT_COSTUME_PLANNER_STATE.currentGrade;
+  // saved loadouts and links from before the role was chosen: take the role their target stats imply
+  const role = isGearSubtype(input.role)
+    ? input.role
+    : getPlannerRole(
+        kind,
+        input.targetStats ?? DEFAULT_COSTUME_PLANNER_STATE.targetStats,
+      );
 
   return {
     kind,
+    role,
     targetGrade,
     targetProgress: clampNumber(
       input.targetProgress,
@@ -92,6 +106,7 @@ export function normalizeCostumePlannerState(
     targetStats: normalizeStats(
       input.targetStats ?? DEFAULT_COSTUME_PLANNER_STATE.targetStats,
       kind,
+      role,
       targetGrade,
     ),
     currentEnabled: input.currentEnabled === true,
@@ -102,7 +117,7 @@ export function normalizeCostumePlannerState(
       100,
       DEFAULT_COSTUME_PLANNER_STATE.currentProgress,
     ),
-    currentStats: normalizeStats(input.currentStats, kind, currentGrade),
+    currentStats: normalizeStats(input.currentStats, kind, role, currentGrade),
     serendipityOverride: normalizeOptionalText(input.serendipityOverride),
     currentItemValue: normalizeOptionalText(input.currentItemValue),
     honorGoldPerThousand:
@@ -124,6 +139,7 @@ export function parseCostumePlannerSearch(
 
   return normalizeCostumePlannerState({
     kind: readGearKind(params.k),
+    role: readGearSubtype(params.r),
     targetGrade: readGrade(params.tg),
     targetProgress: readNumber(params.tp),
     targetStats: readList(params.ts),
@@ -148,6 +164,9 @@ export function serializeCostumePlannerSearch(
   const result: CostumePlannerSearch = {};
 
   if (state.kind !== DEFAULT_COSTUME_PLANNER_STATE.kind) result.k = state.kind;
+  if (state.role !== getPlannerRole(state.kind, state.targetStats)) {
+    result.r = state.role;
+  }
   if (state.targetGrade !== DEFAULT_COSTUME_PLANNER_STATE.targetGrade) {
     result.tg = state.targetGrade;
   }
@@ -188,9 +207,10 @@ export function serializeCostumePlannerSearch(
 function normalizeStats(
   value: string[] | undefined,
   kind: GearKind,
+  role: GearSubtype,
   grade: Grade,
 ): string[] {
-  const allowed = new Set(getAvailableStatIds(kind, grade, "any"));
+  const allowed = new Set(getAvailableStatIds(kind, grade, role));
   const maxStats = getStatLineCount(kind, grade);
   const seen = new Set<string>();
   const stats: string[] = [];
@@ -211,6 +231,10 @@ function readString(value: unknown): string | undefined {
 
 function readGearKind(value: unknown): GearKind | undefined {
   return isGearKind(value) ? value : undefined;
+}
+
+function readGearSubtype(value: unknown): GearSubtype | undefined {
+  return isGearSubtype(value) ? value : undefined;
 }
 
 function readGrade(value: unknown): Grade | undefined {
@@ -272,6 +296,10 @@ function normalizeOptionalText(value: string | undefined): string {
 
 function isGearKind(value: unknown): value is GearKind {
   return GEAR_KINDS.includes(value as GearKind);
+}
+
+function isGearSubtype(value: unknown): value is GearSubtype {
+  return GEAR_SUBTYPES.includes(value as GearSubtype);
 }
 
 function isGrade(value: unknown): value is Grade {
