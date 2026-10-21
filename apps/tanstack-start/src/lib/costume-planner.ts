@@ -6,8 +6,11 @@ import type {
   PlannerMaterialId,
   PlannerStat,
   PlannerSubtype,
+  SynthesisBar,
+  SynthiumTier,
 } from "./costume-planner-data.ts";
 import {
+  BASIC_SYNTHESIS_BAR,
   GRADES,
   MATERIAL_LABELS,
   MATERIAL_PRICE_LOOKUP_NAMES,
@@ -16,8 +19,11 @@ import {
   SALVAGE_OUTPUTS,
   STAT_LINE_THRESHOLDS,
   SUBTYPE_ORDER,
-  SYNTHESIS_MILESTONES,
+  SYNTHESIS_BARS,
+  SYNTHIUM_CRAFTS,
+  SYNTHIUM_STONE_IDS,
 } from "./costume-planner-data.ts";
+import { STAT_POOLS } from "./costume-planner-pools.ts";
 
 export {
   GRADES,
@@ -26,6 +32,7 @@ export {
   PLANNER_STATS,
   PRICE_LOOKUP_ITEM_NAMES,
   STAT_LINE_THRESHOLDS,
+  SYNTHESIS_BARS,
 };
 export type {
   GearKind,
@@ -35,6 +42,7 @@ export type {
   PlannerMaterialId,
   PlannerStat,
   PlannerSubtype,
+  SynthiumTier,
 };
 
 export type SubtypeInference =
@@ -47,6 +55,7 @@ export type PlannerPrices = Partial<Record<PlannerMaterialId, number>>;
 export interface RerollEstimate {
   availableOutcomes: number;
   favorableOutcomes: number;
+  successChance: number;
   expectedAttempts: number;
   expectedCost: number;
 }
@@ -56,9 +65,14 @@ export interface BaseItemCostOptions {
 }
 
 export interface MaterialPricingOptions {
+  // also price synthium stones through the bound recipes that start from Activity Tokens, when cheaper
   boundSynthiumForEpicPlus?: boolean;
+  // gold value of one Activity Token (they can't be traded; defaults to 0)
+  activityTokenPrice?: number;
   serendipityStonePrice?: number;
 }
+
+export type SynthiumSource = "market" | "crafted" | "activityTokens";
 
 export interface CostBreakdown {
   materialCost: number;
@@ -68,6 +82,9 @@ export interface CostBreakdown {
   totalCost: number;
   expectedRerolls: number;
   materials: PlannerMaterialAmount[];
+  // base items bought, counting restarts (included in totalCost)
+  baseItemCost?: number;
+  expectedRestarts?: number;
 }
 
 export interface RouteCheckpoint {
@@ -99,7 +116,11 @@ export interface StrategyCheckpoint {
 
 export interface OptimalStrategyRoute extends TargetRoute {
   baseItemCost: number;
+  // includes the base item of every attempt, salvage and expected restarts
   targetCost: CostBreakdown;
+  // grades where a fresh item is salvaged if its free rolls miss
+  restartGrades: Grade[];
+  expectedRestarts: number;
   strategyCheckpoints: StrategyCheckpoint[];
 }
 
@@ -128,25 +149,32 @@ export interface CurrentStrategyComparison extends CurrentComparison {
 
 const statById = new Map(PLANNER_STATS.map((stat) => [stat.id, stat]));
 
-export function inferSubtype(statIds: string[]): SubtypeInference {
-  const subtypes = new Set<GearSubtype>();
+export function inferSubtype(
+  statIds: string[],
+  kind: GearKind,
+): SubtypeInference {
+  let candidates: GearSubtype[] | undefined;
+  const named = new Set<GearSubtype>();
 
   for (const statId of statIds) {
-    const stat = statById.get(statId);
-    for (const subtype of stat?.subtypes ?? []) {
-      subtypes.add(subtype);
-    }
+    const subtypes = statById.get(statId)?.subtypesByKind[kind];
+    if (!subtypes) continue;
+    for (const subtype of subtypes) named.add(subtype);
+    candidates = (candidates ?? subtypes).filter((subtype) =>
+      subtypes.includes(subtype),
+    );
   }
 
-  if (subtypes.size === 0) return { status: "any", subtype: "any" };
-  if (subtypes.size === 1) {
-    const subtype = SUBTYPE_ORDER.find((candidate) => subtypes.has(candidate));
-    if (subtype) return { status: "inferred", subtype };
-  }
+  if (!candidates) return { status: "any", subtype: "any" };
+  const [only, ...rest] = SUBTYPE_ORDER.filter((subtype) =>
+    candidates.includes(subtype),
+  );
+  if (only && rest.length === 0) return { status: "inferred", subtype: only };
+  if (only) return { status: "any", subtype: "any" };
 
   return {
     status: "conflict",
-    subtypes: SUBTYPE_ORDER.filter((subtype) => subtypes.has(subtype)),
+    subtypes: SUBTYPE_ORDER.filter((subtype) => named.has(subtype)),
   };
 }
 
@@ -154,23 +182,35 @@ export function getPlannerStats(kind: GearKind): PlannerStat[] {
   return PLANNER_STATS.filter((stat) => stat.kinds.includes(kind));
 }
 
+// Stats that can roll at `grade`. "any" is every role's item together.
 export function getAvailableStatIds(
   kind: GearKind,
   grade: Grade,
   subtype: PlannerSubtype,
 ): string[] {
   const gradeIndex = getGradeIndex(grade);
+  const roles = subtype === "any" ? SUBTYPE_ORDER : [subtype];
+  const available = new Set<string>();
+
+  for (const role of roles) {
+    for (const [statId, , unlockGrade] of STAT_POOLS[kind][role]) {
+      if (getGradeIndex(unlockGrade) <= gradeIndex) available.add(statId);
+    }
+  }
 
   return getPlannerStats(kind)
-    .filter((stat) => {
-      const unlockGrade = stat.unlockGradeByKind[kind];
-      if (unlockGrade == null) return false;
-      if (getGradeIndex(unlockGrade) > gradeIndex) return false;
-      if (!stat.subtypes?.length) return true;
-      if (subtype === "any") return true;
-      return stat.subtypes.includes(subtype);
-    })
-    .map((stat) => stat.id);
+    .map((stat) => stat.id)
+    .filter((statId) => available.has(statId));
+}
+
+// The grade a role's item first rolls a stat at.
+export function getStatUnlockGrade(
+  kind: GearKind,
+  subtype: PlannerSubtype,
+  statId: string,
+): Grade | undefined {
+  if (subtype === "any") return statById.get(statId)?.unlockGradeByKind[kind];
+  return STAT_POOLS[kind][subtype].find(([id]) => id === statId)?.[2];
 }
 
 export function getStatLineCount(kind: GearKind, grade: Grade): number {
@@ -197,6 +237,9 @@ export function getNextStatLineThreshold(
   });
 }
 
+// Serendipity Stones to roll any one of `desiredStatIds` onto a non-target line at `grade`. A roll picks a stat
+// with chance weight / total weight of the stats unlocked at that grade, and never one already on the item: the
+// kept targets, the other non-target lines and the line being replaced are all excluded.
 export function estimateExpectedRerolls({
   desiredStatIds,
   freeAttempts = 0,
@@ -214,28 +257,48 @@ export function estimateExpectedRerolls({
   freeAttempts?: number;
   serendipityPrice?: number;
 }): RerollEstimate {
-  const kept = new Set(keptStatIds);
-  const available = getAvailableStatIds(kind, grade, subtype).filter(
-    (statId) => !kept.has(statId),
+  const role = resolveRole(kind, subtype, [...desiredStatIds, ...keptStatIds]);
+  const gradeIndex = getGradeIndex(grade);
+  const pool = STAT_POOLS[kind][role].filter(
+    ([, , unlockGrade]) => getGradeIndex(unlockGrade) <= gradeIndex,
   );
-  const availableSet = new Set(available);
-  const favorable = desiredStatIds.filter(
-    (statId) => !kept.has(statId) && availableSet.has(statId),
+  const weightOf = new Map(pool.map(([statId, weight]) => [statId, weight]));
+  const kept = new Set(keptStatIds.filter((statId) => weightOf.has(statId)));
+  const favorable = [
+    ...new Set(desiredStatIds.filter((statId) => !kept.has(statId))),
+  ].filter((statId) => weightOf.has(statId));
+  const otherLines = Math.max(1, getStatLineCount(kind, grade) - kept.size);
+  const sum = (statIds: Iterable<string>) =>
+    [...statIds].reduce(
+      (total, statId) => total + (weightOf.get(statId) ?? 0),
+      0,
+    );
+  // a non-target line holds a stat rolled by weight, so its expected weight is sum(w^2) / sum(w)
+  const junk = [...weightOf].filter(
+    ([statId]) => !kept.has(statId) && !favorable.includes(statId),
   );
+  const junkWeight =
+    junk.reduce((total, [, weight]) => total + weight * weight, 0) /
+    Math.max(
+      1,
+      junk.reduce((total, [, weight]) => total + weight, 0),
+    );
+  const totalWeight = Math.max(
+    sum(weightOf.keys()) - sum(kept) - otherLines * junkWeight,
+    sum(favorable),
+  );
+  const successChance = totalWeight > 0 ? sum(favorable) / totalWeight : 0;
   const expectedAttempts =
-    favorable.length > 0 ? available.length / favorable.length : 0;
-  const successChance =
-    available.length > 0 ? favorable.length / available.length : 0;
-  const paidAttempts =
     successChance > 0
-      ? Math.pow(1 - successChance, freeAttempts) * expectedAttempts
+      ? Math.pow(1 - successChance, freeAttempts) / successChance
       : 0;
 
   return {
-    availableOutcomes: available.length,
+    availableOutcomes: pool.length - kept.size - otherLines,
     favorableOutcomes: favorable.length,
-    expectedAttempts: paidAttempts,
-    expectedCost: paidAttempts * serendipityPrice,
+    successChance,
+    expectedAttempts,
+    expectedCost: expectedAttempts * serendipityPrice,
   };
 }
 
@@ -254,14 +317,8 @@ export function estimateBaseItemCost({
   return 15 + 14 * honorGoldPerThousand;
 }
 
-export function planTargetRoute({
-  desiredStatIds,
-  kind,
-  materialPricing,
-  prices,
-  targetGrade,
-  targetProgress,
-}: {
+// Route for a fresh item that never restarts: synthesis from basic plus expected Serendipity Stones.
+export function planTargetRoute(input: {
   kind: GearKind;
   targetGrade: Grade;
   targetProgress: number;
@@ -269,74 +326,34 @@ export function planTargetRoute({
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
 }): TargetRoute {
-  const subtype = inferSubtype(desiredStatIds);
-  const plannerSubtype = resolvePlannerSubtype(subtype);
-  const serendipityPrice = getMaterialPrice(
-    "serendipityStone",
-    prices,
-    materialPricing,
+  const context = createPlanContext(input);
+  const plan = planFromState(
+    context,
+    { grade: "basic", progress: 0, keptStatIds: [] },
+    Infinity,
   );
-  const kept: string[] = [];
-  const checkpoints: RouteCheckpoint[] = [];
-  const freeRerollGrades = getGradeUpRerollGrades("grand", targetGrade);
-  let expectedRerolls = 0;
-
-  for (const grade of GRADES) {
-    if (getGradeIndex(grade) > getGradeIndex(targetGrade)) break;
-
-    const desiredAtGrade = desiredStatIds.filter((statId) => {
-      const stat = statById.get(statId);
-      return stat?.unlockGradeByKind[kind] === grade;
-    });
-    if (!desiredAtGrade.length) continue;
-
-    let gradeRerolls = 0;
-    for (const statId of desiredAtGrade) {
-      const estimate = estimateExpectedRerolls({
-        kind,
-        grade,
-        subtype: plannerSubtype,
-        desiredStatIds: [statId],
-        freeAttempts: consumeUsableFreeRerolls(freeRerollGrades, grade),
-        keptStatIds: kept,
-        serendipityPrice,
-      });
-      gradeRerolls += estimate.expectedAttempts;
-      kept.push(statId);
-    }
-    expectedRerolls += gradeRerolls;
-    checkpoints.push({
-      grade,
-      action: `Reroll for ${formatStatList(desiredAtGrade)}.`,
-      expectedRerolls: gradeRerolls,
-    });
-  }
-
-  const synthesis = getSynthesisDifference(
-    "grand",
-    0,
-    targetGrade,
-    targetProgress,
-  );
+  const materials = [...plan.materials].map(([id, amount]) => ({
+    id,
+    amount,
+  }));
   const materialCost = getMaterialCost(
-    synthesis.materials,
-    prices,
-    materialPricing,
+    materials,
+    input.prices,
+    input.materialPricing,
   );
-  const rerollCost = expectedRerolls * serendipityPrice;
+  const rerollCost = plan.rerolls * context.serendipityPrice;
 
   return {
-    subtype,
-    checkpoints,
-    targetCost: {
+    subtype: context.subtype,
+    checkpoints: plan.checkpoints,
+    targetCost: buildCostBreakdown({
+      materials,
       materialCost,
-      craftGold: synthesis.craftGold,
+      craftGold: plan.craftGold,
+      expectedRerolls: plan.rerolls,
       rerollCost,
       salvageCredit: 0,
-      totalCost: materialCost + synthesis.craftGold + rerollCost,
-      expectedRerolls,
-      materials: synthesis.materials,
-    },
+    }),
   };
 }
 
@@ -356,176 +373,129 @@ export function planOptimalStrategy({
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
 } & BaseItemCostOptions): OptimalStrategyRoute {
-  const route = planTargetRoute({
-    kind,
-    targetGrade,
-    targetProgress,
-    desiredStatIds,
-    prices,
-    materialPricing,
-  });
   const baseItemCost = estimateBaseItemCost({
     kind,
     prices,
     honorGoldPerThousand,
   });
-  const targetCost = addFlatCost(route.targetCost, baseItemCost);
+  const context = createPlanContext({
+    kind,
+    targetGrade,
+    targetProgress,
+    desiredStatIds,
+    prices,
+    materialPricing,
+  });
+  const fresh = planFreshRoute(context, baseItemCost);
 
   return {
-    ...route,
+    subtype: context.subtype,
+    checkpoints: fresh.checkpoints,
     baseItemCost,
-    targetCost,
+    targetCost: fresh.cost,
+    restartGrades: fresh.restartGrades,
+    expectedRestarts: fresh.expectedRestarts,
     strategyCheckpoints: buildStrategyCheckpoints({
-      baseRoute: route,
+      checkpoints: fresh.checkpoints,
       baseItemCost,
-      serendipityPrice: getMaterialPrice(
-        "serendipityStone",
-        prices,
-        materialPricing,
-      ),
+      restartGrades: fresh.restartGrades,
+      serendipityPrice: context.serendipityPrice,
       targetGrade,
-      targetCost,
+      targetCost: fresh.cost,
     }),
   };
 }
 
-export function compareCurrentItem({
-  current,
-  desiredStatIds,
-  kind,
-  prices,
-  targetGrade,
-  targetProgress,
-  materialPricing,
-}: {
-  kind: GearKind;
-  targetGrade: Grade;
-  targetProgress: number;
-  desiredStatIds: string[];
-  current: CurrentItemInput;
-  prices: PlannerPrices;
-  materialPricing?: MaterialPricingOptions;
-}): CurrentComparison {
-  const route = planTargetRoute({
-    kind,
-    targetGrade,
-    targetProgress,
-    desiredStatIds,
-    prices,
-    materialPricing,
-  });
-  const plannerSubtype = resolvePlannerSubtype(route.subtype);
-  const currentStatSet = new Set(current.statIds);
-  const keptTargetStats = desiredStatIds.filter((statId) =>
-    currentStatSet.has(statId),
+// The current item against salvaging it and starting over. Without a base item cost, a fresh item is free.
+export function compareCurrentItem(
+  input: {
+    kind: GearKind;
+    targetGrade: Grade;
+    targetProgress: number;
+    desiredStatIds: string[];
+    current: CurrentItemInput;
+    prices: PlannerPrices;
+    materialPricing?: MaterialPricingOptions;
+  },
+  baseItemCost = 0,
+): CurrentComparison {
+  const { current } = input;
+  const context = createPlanContext(input);
+  const fresh = planFreshRoute(context, baseItemCost);
+  const currentStats = new Set(current.statIds);
+  const plan = planFromState(
+    context,
+    {
+      grade: current.grade,
+      progress: current.progress,
+      keptStatIds: input.desiredStatIds.filter((statId) =>
+        currentStats.has(statId),
+      ),
+    },
+    fresh.cost.totalCost,
   );
-  const missingTargetStats = desiredStatIds
-    .filter((statId) => !currentStatSet.has(statId))
-    .sort(
-      (left, right) =>
-        getGradeIndex(getRerollGrade(kind, current.grade, left)) -
-        getGradeIndex(getRerollGrade(kind, current.grade, right)),
-    );
-  const serendipityPrice = getMaterialPrice(
-    "serendipityStone",
-    prices,
-    materialPricing,
+  const continueCost = combineAttempts(
+    plan,
+    fresh.cost,
+    context,
+    plan.restartChance,
   );
-  const synthesis = getSynthesisDifference(
-    current.grade,
-    current.progress,
-    targetGrade,
-    targetProgress,
-  );
-  const materialCost = getMaterialCost(
-    synthesis.materials,
-    prices,
-    materialPricing,
-  );
-  const freeRerollGrades = getGradeUpRerollGrades(current.grade, targetGrade);
-  let expectedRerolls = 0;
-
-  const estimatedKeptTargetStats = [...keptTargetStats];
-  for (const statId of missingTargetStats) {
-    const rerollGrade = getRerollGrade(kind, current.grade, statId);
-    const estimate = estimateExpectedRerolls({
-      kind,
-      grade: rerollGrade,
-      subtype: plannerSubtype,
-      desiredStatIds: [statId],
-      freeAttempts: consumeUsableFreeRerolls(freeRerollGrades, rerollGrade),
-      keptStatIds: estimatedKeptTargetStats,
-      serendipityPrice,
-    });
-    expectedRerolls += estimate.expectedAttempts;
-    estimatedKeptTargetStats.push(statId);
-  }
-
-  const continueCost = buildCostBreakdown({
-    materials: synthesis.materials,
-    materialCost,
-    craftGold: synthesis.craftGold,
-    expectedRerolls,
-    rerollCost: expectedRerolls * serendipityPrice,
-    salvageCredit: 0,
-  });
   const salvageCredit =
-    getMaterialCost(SALVAGE_OUTPUTS[current.grade] ?? [], prices) +
-    (current.currentItemValue ?? 0) -
-    getMaterialPrice("brilliantMornstone", prices);
-  const restartCost = {
-    ...route.targetCost,
-    salvageCredit,
-    totalCost: route.targetCost.totalCost - salvageCredit,
+    salvageValue(current.grade, context) + (current.currentItemValue ?? 0);
+  const restartCost: CostBreakdown = {
+    ...fresh.cost,
+    salvageCredit: fresh.cost.salvageCredit + salvageCredit,
+    totalCost: fresh.cost.totalCost - salvageCredit,
   };
-  const synthCheckpoint = getNextUsefulSynthCheckpoint({
-    current,
-    desiredStatIds,
-    keptTargetStatCount: keptTargetStats.length,
-    kind,
-    subtype: plannerSubtype,
-    targetGrade,
-  });
-  const synthGrade = synthCheckpoint?.grade;
-  const synthCost =
-    synthCheckpoint && missingTargetStats.length > 0
-      ? buildSynthCost({
-          current,
-          materialPricing,
-          prices,
-          synthGrade: synthCheckpoint.grade,
-        })
+  const missing = input.desiredStatIds.some(
+    (statId) => !currentStats.has(statId),
+  );
+  const synthGrade =
+    missing && !plan.rerollNow && plan.nextGrade !== current.grade
+      ? plan.nextGrade
       : undefined;
-  const baseRecommendation =
-    continueCost.totalCost <= restartCost.totalCost ? "continue" : "restart";
   const recommendation =
-    synthCost &&
-    (baseRecommendation === "restart" || keptTargetStats.length === 0) &&
-    synthCost.totalCost < restartCost.totalCost
-      ? "synth"
-      : baseRecommendation;
+    plan.restartNow || restartCost.totalCost < continueCost.totalCost
+      ? "restart"
+      : synthGrade
+        ? "synth"
+        : "continue";
+  const synthesis = synthGrade
+    ? getSynthesisRequirement(current.grade, current.progress, synthGrade, 0)
+    : undefined;
 
   return {
     recommendation,
     continueCost,
     restartCost,
-    synthCost,
+    synthCost: synthesis
+      ? buildCostBreakdown({
+          materials: synthesis.materials,
+          materialCost: getMaterialCost(
+            synthesis.materials,
+            context.prices,
+            context.materialPricing,
+          ),
+          craftGold: synthesis.craftGold,
+          expectedRerolls: 0,
+          rerollCost: 0,
+          salvageCredit: 0,
+        })
+      : undefined,
     synthGrade,
-    synthReason: synthCheckpoint?.reason,
-    subtype: route.subtype,
-    checkpoints: route.checkpoints,
+    synthReason: synthGrade
+      ? STAT_LINE_THRESHOLDS[input.kind].includes(synthGrade)
+        ? "statLine"
+        : "gradeReroll"
+      : undefined,
+    subtype: context.subtype,
+    checkpoints: plan.checkpoints,
   };
 }
 
 export function compareCurrentStrategy({
-  current,
-  desiredStatIds,
   honorGoldPerThousand,
-  kind,
-  prices,
-  targetGrade,
-  targetProgress,
-  materialPricing,
+  ...input
 }: {
   kind: GearKind;
   targetGrade: Grade;
@@ -535,47 +505,443 @@ export function compareCurrentStrategy({
   prices: PlannerPrices;
   materialPricing?: MaterialPricingOptions;
 } & BaseItemCostOptions): CurrentStrategyComparison {
-  const comparison = compareCurrentItem({
-    kind,
-    targetGrade,
-    targetProgress,
-    desiredStatIds,
-    current,
-    prices,
-    materialPricing,
-  });
   const baseItemCost = estimateBaseItemCost({
-    kind,
-    prices,
+    kind: input.kind,
+    prices: input.prices,
     honorGoldPerThousand,
   });
-  const restartCost = addFlatCost(comparison.restartCost, baseItemCost);
-  const recommendation =
-    comparison.recommendation === "synth"
-      ? "synth"
-      : comparison.continueCost.totalCost <= restartCost.totalCost
-        ? "continue"
-        : "restart";
+  const comparison = compareCurrentItem(input, baseItemCost);
 
   return {
     ...comparison,
-    recommendation,
-    restartCost,
     baseItemCost,
     strategyCheckpoints: buildCurrentStrategyCheckpoints({
-      comparison: {
-        ...comparison,
-        recommendation,
-        restartCost,
-      },
-      current,
+      comparison,
+      current: input.current,
       serendipityPrice: getMaterialPrice(
         "serendipityStone",
-        prices,
-        materialPricing,
+        input.prices,
+        input.materialPricing,
       ),
     }),
   };
+}
+
+interface PlanContext {
+  kind: GearKind;
+  role: GearSubtype;
+  subtype: SubtypeInference;
+  targetGrade: Grade;
+  targetProgress: number;
+  desiredStatIds: string[];
+  prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
+  serendipityPrice: number;
+}
+
+function createPlanContext(input: {
+  kind: GearKind;
+  targetGrade: Grade;
+  targetProgress: number;
+  desiredStatIds: string[];
+  prices: PlannerPrices;
+  materialPricing?: MaterialPricingOptions;
+}): PlanContext {
+  const subtype = inferSubtype(input.desiredStatIds, input.kind);
+
+  return {
+    ...input,
+    subtype,
+    role: resolveRole(input.kind, subtype, input.desiredStatIds),
+    serendipityPrice: getMaterialPrice(
+      "serendipityStone",
+      input.prices,
+      input.materialPricing,
+    ),
+  };
+}
+
+interface StatePlan {
+  // expected gold from this state to the target, a restart priced at the fresh cost minus salvage
+  cost: number;
+  // chance this item gets salvaged on the way, and what this item spends before finishing or salvage
+  restartChance: number;
+  materials: Map<PlannerMaterialId, number>;
+  craftGold: number;
+  rerolls: number;
+  salvage: number;
+  checkpoints: RouteCheckpoint[];
+  restartGrades: Grade[];
+  // whether the next step is buying Serendipity Stones at the current grade, else the grade to synthesize to
+  rerollNow: boolean;
+  restartNow: boolean;
+  nextGrade: Grade;
+}
+
+// Fresh route: a new base item at basic, restarting when it pays. The fresh cost and the plan depend on each
+// other (a restart costs a fresh start): solve for the fixed point.
+interface FreshRoute {
+  cost: CostBreakdown;
+  checkpoints: RouteCheckpoint[];
+  restartGrades: Grade[];
+  expectedRestarts: number;
+}
+
+// the same fresh route is asked for again for every current-item comparison
+const freshRouteCache = new Map<string, FreshRoute>();
+
+function planFreshRoute(
+  context: PlanContext,
+  baseItemCost: number,
+): FreshRoute {
+  const key = JSON.stringify([
+    context.kind,
+    context.role,
+    context.targetGrade,
+    context.targetProgress,
+    context.desiredStatIds,
+    context.prices,
+    context.materialPricing,
+    baseItemCost,
+  ]);
+  const cached = freshRouteCache.get(key);
+  if (cached) return cached;
+  const route = solveFreshRoute(context, baseItemCost);
+  if (freshRouteCache.size >= 64) freshRouteCache.clear();
+  freshRouteCache.set(key, route);
+  return route;
+}
+
+function solveFreshRoute(
+  context: PlanContext,
+  baseItemCost: number,
+): FreshRoute {
+  const start = { grade: "basic" as const, progress: 0, keptStatIds: [] };
+  // The plan's cost grows with the fresh cost at a rate equal to its restart chance, piecewise linearly, so
+  // Newton steps reach the fixed point in a few iterations.
+  let freshCost = baseItemCost + planFromState(context, start, Infinity).cost;
+  let plan = planFromState(context, start, freshCost);
+  for (let iteration = 0; iteration < 50; iteration += 1) {
+    const slope = Math.min(plan.restartChance, 1 - 1e-9);
+    const updated =
+      (baseItemCost + plan.cost - slope * freshCost) / (1 - slope);
+    const converged = Math.abs(updated - freshCost) < 1e-6;
+    freshCost = updated;
+    plan = planFromState(context, start, freshCost);
+    if (converged) break;
+  }
+
+  const attempts = 1 / Math.max(1e-9, 1 - plan.restartChance);
+  const materials = [...plan.materials].map(([id, amount]) => ({
+    id,
+    amount: amount * attempts,
+  }));
+  const expectedRerolls = plan.rerolls * attempts;
+
+  return {
+    cost: {
+      materials,
+      materialCost: getMaterialCost(
+        materials,
+        context.prices,
+        context.materialPricing,
+      ),
+      craftGold: plan.craftGold * attempts,
+      rerollCost: expectedRerolls * context.serendipityPrice,
+      salvageCredit: plan.salvage * attempts,
+      expectedRerolls,
+      baseItemCost: baseItemCost * attempts,
+      expectedRestarts: attempts - 1,
+      totalCost: freshCost,
+    },
+    checkpoints: plan.checkpoints,
+    restartGrades: plan.restartGrades,
+    expectedRestarts: attempts - 1,
+  };
+}
+
+// What finishing from a state costs, with this item's own spend plus a fresh route for the chance it restarts.
+function combineAttempts(
+  plan: StatePlan,
+  fresh: CostBreakdown,
+  context: PlanContext,
+  restartChance: number,
+): CostBreakdown {
+  const materials = new Map(plan.materials);
+  for (const material of fresh.materials) {
+    materials.set(
+      material.id,
+      (materials.get(material.id) ?? 0) + material.amount * restartChance,
+    );
+  }
+  const amounts = [...materials].map(([id, amount]) => ({ id, amount }));
+  const expectedRerolls = plan.rerolls + fresh.expectedRerolls * restartChance;
+  const materialCost = getMaterialCost(
+    amounts,
+    context.prices,
+    context.materialPricing,
+  );
+  const craftGold = plan.craftGold + fresh.craftGold * restartChance;
+  const rerollCost = expectedRerolls * context.serendipityPrice;
+  const salvageCredit = plan.salvage + fresh.salvageCredit * restartChance;
+
+  return {
+    materials: amounts,
+    materialCost,
+    craftGold,
+    rerollCost,
+    salvageCredit,
+    expectedRerolls,
+    baseItemCost: (fresh.baseItemCost ?? 0) * restartChance,
+    expectedRestarts: restartChance * (1 + (fresh.expectedRestarts ?? 0)),
+    totalCost: plan.cost,
+  };
+}
+
+// Plan from an item state, one missing target at a time in the order they unlock. Reaching a grade gives free
+// rolls: the new line, if the grade adds one, and the free replacement. For each target the plan picks the grade
+// at which, if no free roll has hit it yet, it is either bought with Serendipity Stones or the item is salvaged
+// for a fresh start costing `freshCost`. A roll counts as a hit on any target still missing that can roll there.
+function planFromState(
+  context: PlanContext,
+  start: {
+    grade: Grade | "basic";
+    progress: number;
+    keptStatIds: string[];
+  },
+  freshCost: number,
+): StatePlan {
+  const { kind, prices, materialPricing, role, serendipityPrice } = context;
+  const { targetGrade, targetProgress } = context;
+  const pool = STAT_POOLS[kind][role].map(([statId, weight, unlockGrade]) => ({
+    statId,
+    weight,
+    unlockIndex: getGradeIndex(unlockGrade),
+  }));
+  const kept = start.keptStatIds.filter((statId) =>
+    pool.some((entry) => entry.statId === statId),
+  );
+  const missing = pool
+    .filter(
+      (entry) =>
+        context.desiredStatIds.includes(entry.statId) &&
+        !kept.includes(entry.statId),
+    )
+    .sort(
+      (left, right) =>
+        left.unlockIndex - right.unlockIndex || right.weight - left.weight,
+    );
+  const missingIds = missing.map((entry) => entry.statId);
+  const startIndex = start.grade === "basic" ? -1 : getGradeIndex(start.grade);
+  const targetIndex = getGradeIndex(targetGrade);
+  const gradeOf = (index: number): Grade => GRADES[index] ?? targetGrade;
+  const gradeAt = (index: number): Grade | "basic" =>
+    index < 0 ? "basic" : gradeOf(index);
+  const lines = (index: number) =>
+    index < 0 ? 0 : getStatLineCount(kind, gradeOf(index));
+
+  // from one grade to another; `final` runs on to the target progress
+  const synthesis = (fromIndex: number, toIndex: number, final: boolean) =>
+    getSynthesisRequirement(
+      gradeAt(fromIndex),
+      fromIndex === startIndex ? start.progress : 0,
+      gradeOf(toIndex),
+      final ? targetProgress : 0,
+    );
+  const synthesisCache = new Map<string, number>();
+  const synthCost = (fromIndex: number, toIndex: number, final: boolean) => {
+    const key = `${fromIndex}:${toIndex}:${final}`;
+    let cost = synthesisCache.get(key);
+    if (cost == null) {
+      const required = synthesis(fromIndex, toIndex, final);
+      cost =
+        getMaterialCost(required.materials, prices, materialPricing) +
+        required.craftGold;
+      synthesisCache.set(key, cost);
+    }
+    return cost;
+  };
+
+  // chance one roll at `gradeIndex` gets the step's target, or another missing one from the same unlock tier
+  // (same tier, same weight: whichever comes first is kept), and the free rolls on reaching that grade
+  const rollChance = (step: number, gradeIndex: number) => {
+    const owned = kept.length + step;
+    if (lines(gradeIndex) <= owned) return 0;
+    const tier = missing[step]?.unlockIndex;
+    return estimateExpectedRerolls({
+      kind,
+      grade: gradeOf(gradeIndex),
+      subtype: role,
+      desiredStatIds: missing
+        .slice(step)
+        .filter((entry) => entry.unlockIndex === tier)
+        .map((entry) => entry.statId),
+      keptStatIds: [...kept, ...missingIds.slice(0, step)],
+    }).successChance;
+  };
+  const freeRolls = (step: number, gradeIndex: number) => {
+    const owned = kept.length + step;
+    const before = lines(gradeIndex - 1);
+    return lines(gradeIndex) - before + (before > owned ? 1 : 0);
+  };
+
+  // best[step][fromIndex]: expected cost to finish from `step` with the item at grade `fromIndex`, whose free
+  // rolls are spent
+  const memo = new Map<string, PlanChoice>();
+  const best = (step: number, fromIndex: number): PlanChoice => {
+    const key = `${step}:${fromIndex}`;
+    const cached = memo.get(key);
+    if (cached) return cached;
+
+    let result: PlanChoice;
+    if (step === missing.length) {
+      result = {
+        cost: synthCost(fromIndex, targetIndex, true),
+        decisionIndex: targetIndex,
+        missChance: 0,
+        payRerolls: 0,
+        restart: false,
+      };
+    } else {
+      result = {
+        cost: Infinity,
+        decisionIndex: targetIndex,
+        missChance: 1,
+        payRerolls: Infinity,
+        restart: false,
+      };
+      let missChance = 1;
+      const firstIndex = Math.max(fromIndex, 0);
+      for (let index = firstIndex; index <= targetIndex; index += 1) {
+        const chance = rollChance(step, index);
+        if (index > fromIndex) {
+          missChance *= Math.pow(1 - chance, freeRolls(step, index));
+        }
+        if (chance <= 0) continue;
+        const payRerolls = 1 / chance;
+        const after = best(step + 1, index).cost;
+        const keepGoing = payRerolls * serendipityPrice + after;
+        const startOver = freshCost - salvageValue(gradeOf(index), context);
+        const cost =
+          (index > fromIndex ? synthCost(fromIndex, index, false) : 0) +
+          (1 - missChance) * after +
+          missChance * Math.min(keepGoing, startOver);
+        if (cost < result.cost - 1e-9) {
+          result = {
+            cost,
+            decisionIndex: index,
+            missChance,
+            payRerolls,
+            restart: startOver < keepGoing,
+          };
+        }
+      }
+      if (!Number.isFinite(result.cost)) {
+        // a target this item can't roll: plan the rest without it
+        result = { ...best(step + 1, fromIndex), missChance: 0 };
+      }
+    }
+
+    memo.set(key, result);
+    return result;
+  };
+
+  const plan: StatePlan = {
+    cost: best(0, startIndex).cost,
+    restartChance: 0,
+    materials: new Map(),
+    craftGold: 0,
+    rerolls: 0,
+    salvage: 0,
+    checkpoints: [],
+    restartGrades: [],
+    rerollNow: false,
+    restartNow: false,
+    nextGrade: targetGrade,
+  };
+  const addSynthesis = (
+    fromIndex: number,
+    toIndex: number,
+    share: number,
+    final = false,
+  ) => {
+    if (toIndex < fromIndex || share <= 0) return;
+    const used = synthesis(fromIndex, toIndex, final);
+    for (const material of used.materials) {
+      plan.materials.set(
+        material.id,
+        (plan.materials.get(material.id) ?? 0) + material.amount * share,
+      );
+    }
+    plan.craftGold += used.craftGold * share;
+  };
+
+  // follow the plan forward: what this item spends before it finishes or is salvaged
+  let reach = 1;
+  let fromIndex = startIndex;
+  for (let step = 0; step < missing.length; step += 1) {
+    const choice = best(step, fromIndex);
+    const decisionIndex = choice.decisionIndex;
+    const grade = gradeOf(decisionIndex);
+    if (decisionIndex > fromIndex)
+      addSynthesis(fromIndex, decisionIndex, reach);
+    const miss = reach * choice.missChance;
+    const statList = formatStatList(missingIds.slice(step, step + 1));
+
+    if (step === 0) {
+      plan.rerollNow = decisionIndex === startIndex && !choice.restart;
+      plan.restartNow = decisionIndex === startIndex && choice.restart;
+      plan.nextGrade =
+        decisionIndex === startIndex ? grade : gradeOf(startIndex + 1);
+    }
+    const previous = plan.checkpoints.at(-1);
+    if (choice.restart) {
+      plan.restartGrades.push(grade);
+      plan.restartChance += miss;
+      plan.salvage += miss * salvageValue(grade, context);
+      reach -= miss;
+      plan.checkpoints.push({
+        grade,
+        action:
+          decisionIndex === startIndex
+            ? `Salvage and start over rather than buy ${statList}.`
+            : `Use the free rolls up to ${formatGrade(grade)} for ${statList}; if they all miss, salvage and start over.`,
+        expectedRerolls: 0,
+      });
+    } else {
+      const rerolls = miss * choice.payRerolls;
+      plan.rerolls += rerolls;
+      if (previous?.grade === grade && previous.expectedRerolls > 0) {
+        previous.action = previous.action.replace(/\.$/, `, ${statList}.`);
+        previous.expectedRerolls += rerolls / Math.max(reach, 1e-9);
+      } else {
+        plan.checkpoints.push({
+          grade,
+          action: `Reroll for ${statList}.`,
+          expectedRerolls: rerolls / Math.max(reach, 1e-9),
+        });
+      }
+    }
+    fromIndex = decisionIndex;
+  }
+  addSynthesis(fromIndex, targetIndex, reach, true);
+
+  return plan;
+}
+
+interface PlanChoice {
+  cost: number;
+  decisionIndex: number;
+  missChance: number;
+  payRerolls: number;
+  restart: boolean;
+}
+
+function salvageValue(grade: Grade, context: PlanContext): number {
+  return (
+    getMaterialCost(SALVAGE_OUTPUTS[grade] ?? [], context.prices) -
+    getMaterialPrice("brilliantMornstone", context.prices)
+  );
 }
 
 function buildCostBreakdown({
@@ -604,66 +970,49 @@ function buildCostBreakdown({
   };
 }
 
-function addFlatCost(cost: CostBreakdown, amount: number): CostBreakdown {
-  return {
-    ...cost,
-    totalCost: cost.totalCost + amount,
-  };
-}
-
-function getGradeUpRerollGrades(fromGrade: Grade, toGrade: Grade): Grade[] {
-  const fromGradeIndex = getGradeIndex(fromGrade);
-  const toGradeIndex = getGradeIndex(toGrade);
-
-  return GRADES.filter((grade) => {
-    const gradeIndex = getGradeIndex(grade);
-    return gradeIndex > fromGradeIndex && gradeIndex <= toGradeIndex;
-  });
-}
-
-function consumeUsableFreeRerolls(
-  freeRerollGrades: Grade[],
-  minimumGrade: Grade,
-): number {
-  const minimumGradeIndex = getGradeIndex(minimumGrade);
-
-  for (let index = 0; index < freeRerollGrades.length; ) {
-    const grade = freeRerollGrades[index];
-    if (!grade) break;
-    if (getGradeIndex(grade) < minimumGradeIndex) {
-      index += 1;
-      continue;
-    }
-
-    freeRerollGrades.splice(index, 1);
-    return 1;
+// The role whose item to plan for. Without one named by the stats, the role whose item rolls all of them
+// earliest.
+function resolveRole(
+  kind: GearKind,
+  subtype: SubtypeInference | PlannerSubtype,
+  statIds: string[],
+): GearSubtype {
+  if (typeof subtype === "string") {
+    if (subtype !== "any") return subtype;
+  } else if (subtype.status === "inferred") {
+    return subtype.subtype;
   }
 
-  return 0;
-}
+  const score = (role: GearSubtype) => {
+    const pool = new Map(
+      STAT_POOLS[kind][role]
+        .filter(([, weight]) => weight > 1)
+        .map(([statId, , unlockGrade]) => [statId, getGradeIndex(unlockGrade)]),
+    );
+    const missing = statIds.filter((statId) => !pool.has(statId)).length;
+    const unlock = statIds.reduce(
+      (total, statId) => total + (pool.get(statId) ?? 0),
+      0,
+    );
+    return missing * 1000 + unlock;
+  };
 
-function getRerollGrade(
-  kind: GearKind,
-  currentGrade: Grade,
-  statId: string,
-): Grade {
-  const stat = statById.get(statId);
-  const unlockGrade = stat?.unlockGradeByKind[kind] ?? currentGrade;
-
-  return getGradeIndex(currentGrade) > getGradeIndex(unlockGrade)
-    ? currentGrade
-    : unlockGrade;
+  return SUBTYPE_ORDER.reduce((best, role) =>
+    score(role) < score(best) ? role : best,
+  );
 }
 
 function buildStrategyCheckpoints({
   baseItemCost,
-  baseRoute,
+  checkpoints: routeCheckpoints,
+  restartGrades,
   serendipityPrice,
   targetGrade,
   targetCost,
 }: {
-  baseRoute: TargetRoute;
+  checkpoints: RouteCheckpoint[];
   baseItemCost: number;
+  restartGrades: Grade[];
   serendipityPrice: number;
   targetGrade: Grade;
   targetCost: CostBreakdown;
@@ -677,10 +1026,14 @@ function buildStrategyCheckpoints({
     },
   ];
 
-  for (const checkpoint of baseRoute.checkpoints) {
+  for (const checkpoint of routeCheckpoints) {
     checkpoints.push({
       grade: checkpoint.grade,
-      action: checkpoint.expectedRerolls > 0 ? "reroll" : "synth",
+      action: restartGrades.includes(checkpoint.grade)
+        ? "restart"
+        : checkpoint.expectedRerolls > 0
+          ? "reroll"
+          : "synth",
       label: checkpoint.action,
       expectedCost: checkpoint.expectedRerolls * serendipityPrice,
     });
@@ -743,205 +1096,50 @@ function buildCurrentStrategyCheckpoints({
   return checkpoints;
 }
 
-function getNextUsefulSynthCheckpoint({
-  current,
-  desiredStatIds,
-  keptTargetStatCount,
-  kind,
-  subtype,
-  targetGrade,
-}: {
-  kind: GearKind;
-  current: CurrentItemInput;
-  targetGrade: Grade;
-  desiredStatIds: string[];
-  keptTargetStatCount: number;
-  subtype: PlannerSubtype;
-}): { grade: Grade; reason: "statLine" | "gradeReroll" } | undefined {
-  const currentStats = new Set(current.statIds);
-
-  for (const grade of GRADES) {
-    const gradeIndex = getGradeIndex(grade);
-    if (gradeIndex <= getGradeIndex(current.grade)) continue;
-    if (gradeIndex > getGradeIndex(targetGrade)) break;
-
-    const available = getAvailableStatIds(kind, grade, subtype).filter(
-      (statId) => !currentStats.has(statId),
-    );
-    const availableSet = new Set(available);
-    const hasUsefulTarget = desiredStatIds.some(
-      (statId) => !currentStats.has(statId) && availableSet.has(statId),
-    );
-
-    if (!hasUsefulTarget) continue;
-
-    const isStatLineThreshold = STAT_LINE_THRESHOLDS[kind].includes(grade);
-    if (
-      isStatLineThreshold &&
-      canReassessAfterStatLine({
-        keptTargetStatCount,
-        kind,
-        synthGrade: grade,
-      })
-    ) {
-      return { grade, reason: "statLine" };
-    }
-
-    if (
-      keptTargetStatCount > 0 &&
-      canReassessAfterGradeUpReroll({
-        currentGrade: current.grade,
-        keptTargetStatCount,
-        kind,
-      })
-    ) {
-      return { grade, reason: "gradeReroll" };
-    }
-  }
-
-  return undefined;
-}
-
-function canReassessAfterStatLine({
-  keptTargetStatCount,
-  kind,
-  synthGrade,
-}: {
-  kind: GearKind;
-  synthGrade: Grade;
-  keptTargetStatCount: number;
-}): boolean {
-  const statLinesAfterSynth = getStatLineCount(kind, synthGrade);
-  return keptTargetStatCount + 1 >= statLinesAfterSynth - 1;
-}
-
-function canReassessAfterGradeUpReroll({
-  currentGrade,
-  keptTargetStatCount,
-  kind,
-}: {
-  kind: GearKind;
-  currentGrade: Grade;
-  keptTargetStatCount: number;
-}): boolean {
-  return keptTargetStatCount + 1 >= getStatLineCount(kind, currentGrade);
-}
-
-function buildSynthCost({
-  current,
-  materialPricing,
-  prices,
-  synthGrade,
-}: {
-  current: CurrentItemInput;
-  synthGrade: Grade;
-  prices: PlannerPrices;
-  materialPricing?: MaterialPricingOptions;
-}): CostBreakdown {
-  const synthesis = getSynthesisDifference(
-    current.grade,
-    current.progress,
-    synthGrade,
-    0,
-  );
-  const materialCost = getMaterialCost(
-    synthesis.materials,
-    prices,
-    materialPricing,
-  );
-
-  return buildCostBreakdown({
-    materials: synthesis.materials,
-    materialCost,
-    craftGold: synthesis.craftGold,
-    expectedRerolls: 0,
-    rerollCost: 0,
-    salvageCredit: 0,
-  });
-}
-
-function getSynthesisDifference(
-  fromGrade: Grade,
+// Stones and fees to synthesize from (fromGrade, fromProgress %) to (toGrade, toProgress %): the rest of the
+// current grade's bar, every bar in between and the part of the target grade's bar. "basic" is a fresh item.
+function getSynthesisRequirement(
+  fromGrade: Grade | "basic",
   fromProgress: number,
   toGrade: Grade,
   toProgress: number,
 ): { materials: PlannerMaterialAmount[]; craftGold: number } {
-  const from = getCumulativeRequirement(fromGrade, fromProgress);
-  const to = getCumulativeRequirement(toGrade, toProgress);
-  const materialTotals = new Map<PlannerMaterialId, number>();
+  const from = clamp(fromProgress, 0, 100) / 100;
+  const to = clamp(toProgress, 0, 100) / 100;
+  const toIndex = getGradeIndex(toGrade);
+  const parts: [SynthesisBar, number][] = [];
 
-  for (const targetMaterial of to.materials) {
-    const currentAmount =
-      from.materials.find((material) => material.id === targetMaterial.id)
-        ?.amount ?? 0;
-    const amount = Math.max(0, targetMaterial.amount - currentAmount);
-    if (amount > 0) materialTotals.set(targetMaterial.id, amount);
+  if (fromGrade === "basic") {
+    parts.push([BASIC_SYNTHESIS_BAR, 1 - from]);
+    for (const grade of GRADES.slice(0, toIndex)) {
+      parts.push([SYNTHESIS_BARS[grade], 1]);
+    }
+    parts.push([SYNTHESIS_BARS[toGrade], to]);
+  } else {
+    const fromIndex = getGradeIndex(fromGrade);
+    if (fromIndex === toIndex) {
+      parts.push([SYNTHESIS_BARS[toGrade], Math.max(0, to - from)]);
+    } else if (fromIndex < toIndex) {
+      parts.push([SYNTHESIS_BARS[fromGrade], 1 - from]);
+      for (const grade of GRADES.slice(fromIndex + 1, toIndex)) {
+        parts.push([SYNTHESIS_BARS[grade], 1]);
+      }
+      parts.push([SYNTHESIS_BARS[toGrade], to]);
+    }
+  }
+
+  const stones = new Map<PlannerMaterialId, number>();
+  let craftGold = 0;
+  for (const [bar, share] of parts) {
+    if (share <= 0) continue;
+    const id = SYNTHIUM_STONE_IDS[bar.stone];
+    stones.set(id, (stones.get(id) ?? 0) + bar.stones * share);
+    craftGold += bar.fee * share;
   }
 
   return {
-    materials: [...materialTotals].map(([id, amount]) => ({ id, amount })),
-    craftGold: Math.max(0, to.craftGold - from.craftGold),
-  };
-}
-
-function getCumulativeRequirement(
-  grade: Grade,
-  progress: number,
-): { materials: PlannerMaterialAmount[]; craftGold: number } {
-  const normalizedProgress = clamp(progress, 0, 100);
-  const exact = SYNTHESIS_MILESTONES.find(
-    (milestone) =>
-      milestone.grade === grade && milestone.progress === normalizedProgress,
-  );
-  if (exact) return exact;
-
-  const gradeMilestone = SYNTHESIS_MILESTONES.find(
-    (milestone) => milestone.grade === grade && milestone.progress === 0,
-  );
-  if (!gradeMilestone) return { materials: [], craftGold: 0 };
-  if (normalizedProgress === 0) return gradeMilestone;
-
-  const next = getNextMilestone(grade);
-  if (!next) return gradeMilestone;
-
-  return interpolateMilestones(gradeMilestone, next, normalizedProgress / 100);
-}
-
-function getNextMilestone(grade: Grade) {
-  const gradeIndex = GRADES.indexOf(grade);
-  if (grade === "mythic") {
-    return SYNTHESIS_MILESTONES.find(
-      (milestone) => milestone.grade === "mythic" && milestone.progress === 100,
-    );
-  }
-  const nextGrade = GRADES[gradeIndex + 1];
-  return SYNTHESIS_MILESTONES.find(
-    (milestone) => milestone.grade === nextGrade && milestone.progress === 0,
-  );
-}
-
-function interpolateMilestones(
-  from: { materials: PlannerMaterialAmount[]; craftGold: number },
-  to: { materials: PlannerMaterialAmount[]; craftGold: number },
-  ratio: number,
-): { materials: PlannerMaterialAmount[]; craftGold: number } {
-  const materialIds = new Set([
-    ...from.materials.map((material) => material.id),
-    ...to.materials.map((material) => material.id),
-  ]);
-
-  return {
-    materials: [...materialIds].map((id) => {
-      const fromAmount =
-        from.materials.find((material) => material.id === id)?.amount ?? 0;
-      const toAmount =
-        to.materials.find((material) => material.id === id)?.amount ?? 0;
-      return {
-        id,
-        amount: fromAmount + (toAmount - fromAmount) * ratio,
-      };
-    }),
-    craftGold: from.craftGold + (to.craftGold - from.craftGold) * ratio,
+    materials: [...stones].map(([id, amount]) => ({ id, amount })),
+    craftGold,
   };
 }
 
@@ -958,7 +1156,7 @@ function getMaterialCost(
   );
 }
 
-function getMaterialPrice(
+export function getMaterialPrice(
   materialId: PlannerMaterialId,
   prices: PlannerPrices,
   materialPricing?: MaterialPricingOptions,
@@ -969,12 +1167,9 @@ function getMaterialPrice(
   ) {
     return materialPricing.serendipityStonePrice;
   }
-  if (
-    materialId === "radiantSynthiumStone" &&
-    materialPricing?.boundSynthiumForEpicPlus
-  ) {
-    return getBoundRadiantSynthiumStonePrice(prices);
-  }
+
+  const tier = SYNTHIUM_TIER_BY_ID.get(materialId);
+  if (tier) return getSynthiumStoneCost(tier, prices, materialPricing).price;
 
   const direct = prices[materialId];
   if (direct != null) return direct;
@@ -995,19 +1190,84 @@ function getMaterialPrice(
   return 0;
 }
 
-export function getBoundRadiantSynthiumStonePrice(
+const SYNTHIUM_TIERS: SynthiumTier[] = ["clear", "vivid", "lucid", "radiant"];
+const SYNTHIUM_TIER_BY_ID = new Map(
+  SYNTHIUM_TIERS.map((tier) => [SYNTHIUM_STONE_IDS[tier], tier]),
+);
+
+// Cheapest way to get one synthium stone of `tier`: buy it, or buy a lower tier and craft it up; with bound
+// synthium on, also make it from Activity Tokens and craft the bound stone up.
+export function getSynthiumStoneCost(
+  tier: SynthiumTier,
   prices: PlannerPrices,
-): number {
-  return (
-    getMaterialPrice("charcoalStabilizer", prices) * 5 +
-    getMaterialPrice("misagonsCrystal", prices) * 2 +
-    10
+  materialPricing?: MaterialPricingOptions,
+): { price: number; source: SynthiumSource } {
+  const { bound, unbound } = getSynthiumChains(
+    tier,
+    prices,
+    materialPricing?.activityTokenPrice ?? 0,
   );
+  if (materialPricing?.boundSynthiumForEpicPlus && bound <= unbound.price) {
+    return { price: bound, source: "activityTokens" };
+  }
+
+  return Number.isFinite(unbound.price)
+    ? unbound
+    : { price: 0, source: "market" };
 }
 
-function resolvePlannerSubtype(subtype: SubtypeInference): PlannerSubtype {
-  if (subtype.status === "inferred") return subtype.subtype;
-  return "any";
+// Bound Radiant Synthium Stone from Activity Tokens: 20 tokens make a Bound Lucid, which takes 10g, 2 Misagon's
+// Crystals and 5 Charcoal Stabilizers to upgrade.
+export function getBoundRadiantSynthiumStonePrice(
+  prices: PlannerPrices,
+  activityTokenPrice = 0,
+): number {
+  return getSynthiumChains("radiant", prices, activityTokenPrice).bound;
+}
+
+function getSynthiumChains(
+  tier: SynthiumTier,
+  prices: PlannerPrices,
+  activityTokenPrice: number,
+): { unbound: { price: number; source: SynthiumSource }; bound: number } {
+  const charcoal = prices.charcoalStabilizer ?? 0;
+  const misagon = prices.misagonsCrystal ?? 0;
+  const craftCost = (recipe: {
+    gold: number;
+    charcoal: number;
+    misagon: number;
+  }) => recipe.gold + recipe.charcoal * charcoal + recipe.misagon * misagon;
+  let unbound: { price: number; source: SynthiumSource } = {
+    price: Infinity,
+    source: "market",
+  };
+  let bound = Infinity;
+
+  for (const current of SYNTHIUM_TIERS) {
+    const market = prices[SYNTHIUM_STONE_IDS[current]] ?? Infinity;
+    const crafted =
+      current === "clear"
+        ? Infinity
+        : unbound.price + craftCost(SYNTHIUM_CRAFTS.upgrade[current]);
+    unbound =
+      crafted < market
+        ? { price: crafted, source: "crafted" }
+        : { price: market, source: "market" };
+
+    const fromTokens =
+      current === "radiant"
+        ? Infinity
+        : SYNTHIUM_CRAFTS.boundFromTokens[current] * activityTokenPrice;
+    const boundCrafted =
+      current === "clear"
+        ? Infinity
+        : bound + craftCost(SYNTHIUM_CRAFTS.boundUpgrade[current]);
+    bound = Math.min(fromTokens, boundCrafted);
+
+    if (current === tier) break;
+  }
+
+  return { unbound, bound };
 }
 
 function getGradeIndex(grade: Grade): number {

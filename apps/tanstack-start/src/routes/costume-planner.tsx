@@ -29,6 +29,7 @@ import type {
   PlannerPrices,
   PlannerStat,
   StrategyCheckpoint,
+  SynthiumTier,
 } from "~/lib/costume-planner";
 import type { CostumePlannerState } from "~/lib/costume-planner-state";
 import type {
@@ -48,9 +49,10 @@ import {
 } from "~/component/recipe-breakdown";
 import {
   compareCurrentStrategy,
-  getBoundRadiantSynthiumStonePrice,
+  getMaterialPrice,
   getPlannerStats,
   getStatLineCount,
+  getSynthiumStoneCost,
   GRADES,
   MATERIAL_LABELS,
   MATERIAL_PRICE_LOOKUP_NAMES,
@@ -277,13 +279,12 @@ function CostumePlannerPage() {
         ? comparison.synthCost
         : comparison.continueCost
     : (route?.targetCost ?? null);
-  const activeBaseItemCost = comparison
-    ? comparison.recommendation === "restart"
-      ? comparison.baseItemCost
-      : 0
-    : (route?.baseItemCost ?? 0);
-  const activeSerendipityUnitCost =
-    materialPricing.serendipityStonePrice ?? prices.serendipityStone ?? 0;
+  const activeBaseItemCost = activeCost?.baseItemCost ?? 0;
+  const activeSerendipityUnitCost = getMaterialPrice(
+    "serendipityStone",
+    prices,
+    materialPricing,
+  );
   const subtype = comparison?.subtype ?? route?.subtype ?? null;
   const conflict = subtype?.status === "conflict";
   const strategyCheckpoints =
@@ -386,7 +387,7 @@ function CostumePlannerPage() {
     <PageShell layout="wide">
       <PageHeading
         title="Costume and Undergarment Planner"
-        subtitle="Pick Target stats, compare a current Item, and estimate whether rerolling or salvaging into a restart is cheaper. Rerolls use a uniform chance over currently unlocked stats."
+        subtitle="Pick Target stats, compare a current Item, and estimate whether rerolling or salvaging into a restart is cheaper. Roll chances, unlock grades and stat lines come from the client's synthesis tables for the item's role."
         badges={<Badge variant="outline">ArcheAge Classic</Badge>}
       />
 
@@ -635,8 +636,8 @@ function CostumePlannerPage() {
                 />
                 <PlannerOptionToggle
                   checked={boundSynthiumForEpicPlus}
-                  label="Bound Synthium for Epic+"
-                  description="Price Radiant Synthium through the bound Radiant recipe."
+                  label="Activity Token synthium"
+                  description="Also make synthium stones from Activity Tokens (bound Clear 5, Vivid 10, Lucid 20 tokens; bound Radiant upgraded from bound Lucid) when that is cheaper. Tokens count as free."
                   onToggle={() =>
                     updatePlannerState({
                       boundSynthiumForEpicPlus: !boundSynthiumForEpicPlus,
@@ -802,11 +803,16 @@ function CostumePlannerPage() {
                         </p>
                         <p className="text-muted-foreground text-xs">
                           {formatNumber(material.amount)} needed
+                          {formatStoneSource(
+                            material.id,
+                            prices,
+                            materialPricing,
+                          )}
                         </p>
                       </div>
                       <p className="text-sm font-medium">
                         {formatGold(
-                          getPlannerMaterialUnitPrice(
+                          getMaterialPrice(
                             material.id,
                             prices,
                             materialPricing,
@@ -1040,10 +1046,16 @@ function CostBreakdownCard({
           value={activeSerendipityUnitCost}
         />
         {activeBaseItemCost > 0 ? (
-          <CostLine label="Fresh base item" value={activeBaseItemCost} />
+          <CostLine label="Fresh base items" value={activeBaseItemCost} />
+        ) : null}
+        {activeCost.salvageCredit > 0 ? (
+          <CostLine label="Salvage credit" value={-activeCost.salvageCredit} />
         ) : null}
         <div className="text-muted-foreground pt-1 text-xs">
           {formatNumber(activeCost.expectedRerolls)} expected serendipity stones
+          {activeCost.expectedRestarts
+            ? `, ${formatNumber(activeCost.expectedRestarts)} expected restarts`
+            : ""}
         </div>
       </div>
     </div>
@@ -1530,25 +1542,27 @@ function getMarketPrice(
   );
 }
 
-function getPlannerMaterialUnitPrice(
+function formatStoneSource(
   materialId: PlannerMaterialId,
   prices: PlannerPrices,
   materialPricing: MaterialPricingOptions,
-): number {
-  if (
-    materialId === "radiantSynthiumStone" &&
-    materialPricing.boundSynthiumForEpicPlus
-  ) {
-    return getBoundRadiantSynthiumStonePrice(prices);
-  }
-  if (
-    materialId === "serendipityStone" &&
-    materialPricing.serendipityStonePrice != null
-  ) {
-    return materialPricing.serendipityStonePrice;
-  }
-  return prices[materialId] ?? 0;
+): string {
+  const tier = SYNTHIUM_TIER_BY_MATERIAL[materialId];
+  if (!tier) return "";
+  const { source } = getSynthiumStoneCost(tier, prices, materialPricing);
+  if (source === "crafted") return ", crafted up from a lower tier";
+  if (source === "activityTokens") return ", from Activity Tokens";
+  return "";
 }
+
+const SYNTHIUM_TIER_BY_MATERIAL: Partial<
+  Record<PlannerMaterialId, SynthiumTier>
+> = {
+  clearSynthiumStone: "clear",
+  vividSynthiumStone: "vivid",
+  lucidSynthiumStone: "lucid",
+  radiantSynthiumStone: "radiant",
+};
 
 function buildPriceMap(
   prices: {
