@@ -1,3 +1,5 @@
+import { STAT_POOLS } from "./costume-planner-pools.ts";
+
 export const GRADES = [
   "grand",
   "rare",
@@ -16,9 +18,11 @@ export type GearKind = "costume" | "undergarment";
 export type GearSubtype = "healing" | "magic" | "melee" | "ranged";
 export type PlannerSubtype = GearSubtype | "any";
 
+// A new stat line opens on reaching these grades (client: item_rnd_attr_category_properties.max_unit_modifier_num
+// is 1 at grand and rare, 2 at arcane, 3 at heroic, 4 from unique to epic and 5 at legendary and mythic).
 export const STAT_LINE_THRESHOLDS: Record<GearKind, Grade[]> = {
-  costume: ["grand", "arcane", "unique", "divine", "legendary"],
-  undergarment: ["grand", "arcane", "unique", "divine", "legendary"],
+  costume: ["grand", "arcane", "heroic", "unique", "legendary"],
+  undergarment: ["grand", "arcane", "heroic", "unique", "legendary"],
 };
 
 export type PlannerMaterialId =
@@ -40,19 +44,22 @@ export interface PlannerMaterialAmount {
   amount: number;
 }
 
-export interface SynthesisMilestone {
-  grade: Grade;
-  progress: number;
-  materials: PlannerMaterialAmount[];
-  craftGold: number;
+export type SynthiumTier = "clear" | "vivid" | "lucid" | "radiant";
+
+export interface SynthesisBar {
+  stone: SynthiumTier;
+  stones: number;
+  fee: number;
 }
 
 export interface PlannerStat {
   id: string;
   label: string;
   kinds: GearKind[];
+  // earliest grade any role's item can roll it at
   unlockGradeByKind: Partial<Record<GearKind, Grade>>;
-  subtypes?: GearSubtype[];
+  // roles this stat ties the item to; absent when every role rolls it alike
+  subtypesByKind: Partial<Record<GearKind, GearSubtype[]>>;
 }
 
 export const SUBTYPE_ORDER: GearSubtype[] = [
@@ -97,111 +104,60 @@ export const PRICE_LOOKUP_ITEM_NAMES = [
   ...new Set(Object.values(MATERIAL_PRICE_LOOKUP_NAMES).flat()),
 ];
 
-export const SYNTHESIS_MILESTONES: SynthesisMilestone[] = [
-  {
-    grade: "grand",
-    progress: 0,
-    materials: [{ id: "clearSynthiumStone", amount: 4 }],
-    craftGold: 100,
-  },
-  {
-    grade: "rare",
-    progress: 0,
-    materials: [{ id: "clearSynthiumStone", amount: 8 }],
-    craftGold: 200,
-  },
-  {
-    grade: "arcane",
-    progress: 0,
-    materials: [
-      { id: "vividSynthiumStone", amount: 12 },
-      { id: "charcoalStabilizer", amount: 240 },
-    ],
-    craftGold: 558,
-  },
-  {
-    grade: "heroic",
-    progress: 0,
-    materials: [
-      { id: "vividSynthiumStone", amount: 16 },
-      { id: "charcoalStabilizer", amount: 320 },
-    ],
-    craftGold: 744,
-  },
-  {
-    grade: "unique",
-    progress: 0,
-    materials: [
-      { id: "lucidSynthiumStone", amount: 20 },
-      { id: "charcoalStabilizer", amount: 800 },
-      { id: "misagonsCrystal", amount: 20 },
-    ],
-    craftGold: 1540,
-  },
-  {
-    grade: "celestial",
-    progress: 0,
-    materials: [
-      { id: "lucidSynthiumStone", amount: 24 },
-      { id: "charcoalStabilizer", amount: 960 },
-      { id: "misagonsCrystal", amount: 24 },
-    ],
-    craftGold: 1848,
-  },
-  {
-    grade: "divine",
-    progress: 0,
-    materials: [
-      { id: "lucidSynthiumStone", amount: 28 },
-      { id: "charcoalStabilizer", amount: 1120 },
-      { id: "misagonsCrystal", amount: 28 },
-    ],
-    craftGold: 2156,
-  },
-  {
-    grade: "epic",
-    progress: 0,
-    materials: [
-      { id: "lucidSynthiumStone", amount: 32 },
-      { id: "charcoalStabilizer", amount: 1280 },
-      { id: "misagonsCrystal", amount: 32 },
-    ],
-    craftGold: 2464,
-  },
-  {
-    grade: "legendary",
-    progress: 0,
-    materials: [
-      { id: "radiantSynthiumStone", amount: 36 },
-      { id: "charcoalStabilizer", amount: 2160 },
-      { id: "misagonsCrystal", amount: 108 },
-    ],
-    craftGold: 4194,
-  },
-  {
-    grade: "mythic",
-    progress: 0,
-    materials: [
-      { id: "radiantSynthiumStone", amount: 40 },
-      { id: "charcoalStabilizer", amount: 2400 },
-      { id: "misagonsCrystal", amount: 120 },
-    ],
-    craftGold: 4780,
-  },
-  {
-    grade: "mythic",
-    progress: 100,
-    materials: [
-      { id: "radiantSynthiumStone", amount: 44 },
-      { id: "charcoalStabilizer", amount: 2640 },
-      { id: "misagonsCrystal", amount: 132 },
-    ],
-    craftGold: 5258,
-  },
-];
+// Experience bar of each grade: what it takes to fill it and reach the next grade. The client's req_exp is
+// cumulative (400, 1,200, 2,400 ... 26,400), so a grade's bar is the difference to the previous grade's, and every
+// synthium stone gives 100 exp (gain_exp): a mythic item shows XP 0/4400, i.e. 44 stones. A fresh item starts at
+// basic. Stone tiers and fees come from the planner's earlier synthesis table, which priced every stone as crafted
+// up from Clear (its charcoal and Misagon's Crystal amounts match those recipes); that crafting, including its 10g
+// per step, is now part of the stone price (see SYNTHIUM_CRAFTS), so the fee here is the remainder.
+export const BASIC_SYNTHESIS_BAR: SynthesisBar = {
+  stone: "clear",
+  stones: 4,
+  fee: 100,
+};
 
+export const SYNTHESIS_BARS: Record<Grade, SynthesisBar> = {
+  grand: { stone: "clear", stones: 8, fee: 200 },
+  rare: { stone: "vivid", stones: 12, fee: 438 },
+  arcane: { stone: "vivid", stones: 16, fee: 584 },
+  heroic: { stone: "lucid", stones: 20, fee: 1140 },
+  unique: { stone: "lucid", stones: 24, fee: 1368 },
+  celestial: { stone: "lucid", stones: 28, fee: 1596 },
+  divine: { stone: "lucid", stones: 32, fee: 1824 },
+  epic: { stone: "radiant", stones: 36, fee: 3114 },
+  legendary: { stone: "radiant", stones: 40, fee: 3580 },
+  mythic: { stone: "radiant", stones: 44, fee: 3938 },
+};
+
+export const SYNTHIUM_STONE_IDS: Record<SynthiumTier, PlannerMaterialId> = {
+  clear: "clearSynthiumStone",
+  vivid: "vividSynthiumStone",
+  lucid: "lucidSynthiumStone",
+  radiant: "radiantSynthiumStone",
+};
+
+// Stone crafting recipes from the client DB: market stones upgrade one tier at a time (8000429, 8000430,
+// 8000597); bound stones come from Activity Tokens (8000551-8000553) or upgrade the same way with less charcoal
+// (8000487, 8000488, 8000598). Bound Radiant has no direct token recipe.
+export const SYNTHIUM_CRAFTS = {
+  upgrade: {
+    vivid: { gold: 10, charcoal: 20, misagon: 0 },
+    lucid: { gold: 10, charcoal: 20, misagon: 1 },
+    radiant: { gold: 10, charcoal: 20, misagon: 2 },
+  },
+  boundUpgrade: {
+    vivid: { gold: 10, charcoal: 5, misagon: 0 },
+    lucid: { gold: 10, charcoal: 5, misagon: 1 },
+    radiant: { gold: 10, charcoal: 5, misagon: 2 },
+  },
+  boundFromTokens: { clear: 5, vivid: 10, lucid: 20 },
+} as const;
+
+// Brilliant Mornstone salvage outputs per grade (client: item_conv_* tables).
 export const SALVAGE_OUTPUTS: Partial<Record<Grade, PlannerMaterialAmount[]>> =
   {
+    grand: [{ id: "clearSynthiumShard", amount: 20 }],
+    rare: [{ id: "clearSynthiumShard", amount: 60 }],
     arcane: [
       { id: "clearSynthiumShard", amount: 60 },
       { id: "vividSynthiumShard", amount: 60 },
@@ -229,240 +185,112 @@ export const SALVAGE_OUTPUTS: Partial<Record<Grade, PlannerMaterialAmount[]>> =
       { id: "clearSynthiumShard", amount: 60 },
       { id: "vividSynthiumShard", amount: 230 },
       { id: "lucidSynthiumShard", amount: 770 },
-      { id: "radiantSynthiumShard", amount: 260 },
+      { id: "radiantSynthiumShard", amount: 280 },
     ],
     mythic: [
       { id: "clearSynthiumShard", amount: 60 },
       { id: "vividSynthiumShard", amount: 230 },
       { id: "lucidSynthiumShard", amount: 770 },
-      { id: "radiantSynthiumShard", amount: 560 },
+      { id: "radiantSynthiumShard", amount: 580 },
     ],
   };
 
-export const PLANNER_STATS: PlannerStat[] = [
-  stat("physical-defense", "Physical Defense", ["costume", "undergarment"], {
-    costume: "grand",
-    undergarment: "grand",
-  }),
-  stat("magic-defense", "Magic Defense", ["costume", "undergarment"], {
-    costume: "grand",
-    undergarment: "grand",
-  }),
-  stat("max-health", "Max Health", ["costume", "undergarment"], {
-    costume: "grand",
-    undergarment: "grand",
-  }),
-  stat("move-speed", "Move Speed", ["costume"], { costume: "grand" }),
-  stat("stealth-detection", "Stealth Detection", ["costume"], {
-    costume: "grand",
-  }),
-  stat("pve-magic-skills", "PvE Magic Skills", ["costume"], {
-    costume: "grand",
-  }),
-  stat("pve-melee-skills", "PvE Melee Skills", ["costume"], {
-    costume: "grand",
-  }),
-  stat("pve-ranged-skills", "PvE Ranged Skills", ["costume"], {
-    costume: "grand",
-  }),
-  stat(
-    "backstab-melee-damage",
-    "Backstab Melee Damage",
-    ["costume", "undergarment"],
-    { costume: "grand", undergarment: "grand" },
-  ),
-  stat(
-    "backstab-magic-damage",
-    "Backstab Magic Damage",
-    ["costume", "undergarment"],
-    { costume: "grand", undergarment: "grand" },
-  ),
-  stat(
-    "backstab-ranged-damage",
-    "Backstab Ranged Damage",
-    ["costume", "undergarment"],
-    { costume: "grand", undergarment: "grand" },
-  ),
-  stat("received-damage", "Received Damage", ["costume"], {
-    costume: "grand",
-  }),
-  stat(
-    "melee-attack",
-    "Melee Attack",
-    ["costume", "undergarment"],
-    { costume: "arcane", undergarment: "grand" },
-    ["melee"],
-  ),
-  stat(
-    "ranged-attack",
-    "Ranged Attack",
-    ["costume", "undergarment"],
-    { costume: "arcane", undergarment: "grand" },
-    ["ranged"],
-  ),
-  stat(
-    "magic-attack",
-    "Magic Attack",
-    ["costume", "undergarment"],
-    { costume: "arcane", undergarment: "grand" },
-    ["magic"],
-  ),
-  stat(
-    "healing-power",
-    "Healing Power",
-    ["costume", "undergarment"],
-    { costume: "arcane", undergarment: "grand" },
-    ["healing"],
-  ),
-  stat("pve-damage-reduction", "PvE Damage Reduction", ["costume"], {
-    costume: "arcane",
-  }),
-  stat("received-healing", "Received Healing", ["costume"], {
-    costume: "arcane",
-  }),
-  stat("cast-time", "Cast Time", ["costume"], { costume: "arcane" }),
-  stat("evasion", "Evasion", ["costume"], { costume: "unique" }),
-  stat("parry-rate", "Parry Rate", ["costume"], {
-    costume: "unique",
-  }),
-  stat("shield-block-rate", "Shield Block Rate", ["costume"], {
-    costume: "unique",
-  }),
-  stat("resilience", "Resilience", ["costume", "undergarment"], {
-    costume: "unique",
-    undergarment: "arcane",
-  }),
-  stat("toughness", "Toughness", ["costume", "undergarment"], {
-    costume: "unique",
-    undergarment: "arcane",
-  }),
-  stat("focus", "Focus", ["costume", "undergarment"], {
-    costume: "unique",
-    undergarment: "arcane",
-  }),
-  stat(
-    "defense-penetration",
-    "Defense Penetration",
-    ["costume", "undergarment"],
-    {
-      costume: "celestial",
-      undergarment: "arcane",
-    },
-  ),
-  stat(
-    "magic-defense-penetration",
-    "Magic Defense Penetration",
-    ["costume", "undergarment"],
-    {
-      costume: "celestial",
-      undergarment: "arcane",
-    },
-  ),
-  stat(
-    "received-magic-damage",
-    "Received Magic Damage",
-    ["costume", "undergarment"],
-    {
-      costume: "divine",
-      undergarment: "unique",
-    },
-  ),
-  stat(
-    "received-melee-damage",
-    "Received Melee Damage",
-    ["costume", "undergarment"],
-    {
-      costume: "divine",
-      undergarment: "unique",
-    },
-  ),
-  stat(
-    "received-ranged-damage",
-    "Received Ranged Damage",
-    ["costume", "undergarment"],
-    {
-      costume: "divine",
-      undergarment: "unique",
-    },
-  ),
-  stat(
-    "shield-defense-penetration-rate",
-    "Shield Defense Penetration Rate",
-    ["undergarment"],
-    { undergarment: "unique" },
-  ),
-  stat("magic-critical-damage", "Magic Critical Damage", ["costume"], {
-    costume: "divine",
-  }),
-  stat("melee-critical-damage", "Melee Critical Damage", ["costume"], {
-    costume: "divine",
-  }),
-  stat("ranged-critical-damage", "Ranged Critical Damage", ["costume"], {
-    costume: "divine",
-  }),
-  stat("critical-heal-bonus", "Critical Heal Bonus", ["costume"], {
-    costume: "divine",
-  }),
-  stat(
-    "melee-skill-damage",
-    "Melee Skill Damage",
-    ["costume", "undergarment"],
-    { costume: "epic", undergarment: "divine" },
-  ),
-  stat(
-    "magic-skill-damage",
-    "Magic Skill Damage",
-    ["costume", "undergarment"],
-    { costume: "epic", undergarment: "divine" },
-  ),
-  stat(
-    "ranged-skill-damage",
-    "Ranged Skill Damage",
-    ["costume", "undergarment"],
-    { costume: "epic", undergarment: "divine" },
-  ),
-  stat("healing", "Healing", ["costume", "undergarment"], {
-    costume: "epic",
-    undergarment: "divine",
-  }),
-  stat(
-    "melee-critical-rate",
-    "Melee Critical Rate",
-    ["costume", "undergarment"],
-    { costume: "legendary", undergarment: "legendary" },
-  ),
-  stat(
-    "magic-critical-rate",
-    "Magic Critical Rate",
-    ["costume", "undergarment"],
-    { costume: "legendary", undergarment: "legendary" },
-  ),
-  stat(
-    "ranged-critical-rate",
-    "Ranged Critical Rate",
-    ["costume", "undergarment"],
-    { costume: "legendary", undergarment: "legendary" },
-  ),
-  stat(
-    "critical-heal-rate",
-    "Critical Heal Rate",
-    ["costume", "undergarment"],
-    { costume: "legendary", undergarment: "legendary" },
-  ),
+const STAT_LABELS: [id: string, label: string][] = [
+  ["physical-defense", "Physical Defense"],
+  ["magic-defense", "Magic Defense"],
+  ["max-health", "Max Health"],
+  ["move-speed", "Move Speed"],
+  ["stealth-detection", "Stealth Detection"],
+  ["pve-magic-skills", "PvE Magic Skills"],
+  ["pve-melee-skills", "PvE Melee Skills"],
+  ["pve-ranged-skills", "PvE Ranged Skills"],
+  ["backstab-melee-damage", "Backstab Melee Damage"],
+  ["backstab-magic-damage", "Backstab Magic Damage"],
+  ["backstab-ranged-damage", "Backstab Ranged Damage"],
+  ["received-damage", "Received Damage"],
+  ["melee-attack", "Melee Attack"],
+  ["ranged-attack", "Ranged Attack"],
+  ["magic-attack", "Magic Attack"],
+  ["healing-power", "Healing Power"],
+  ["pve-damage-reduction", "PvE Damage Reduction"],
+  ["received-healing", "Received Healing"],
+  ["cast-time", "Cast Time"],
+  ["evasion", "Evasion"],
+  ["parry-rate", "Parry Rate"],
+  ["shield-block-rate", "Shield Block Rate"],
+  ["resilience", "Resilience"],
+  ["toughness", "Toughness"],
+  ["focus", "Focus"],
+  ["defense-penetration", "Defense Penetration"],
+  ["magic-defense-penetration", "Magic Defense Penetration"],
+  ["received-magic-damage", "Received Magic Damage"],
+  ["received-melee-damage", "Received Melee Damage"],
+  ["received-ranged-damage", "Received Ranged Damage"],
+  ["shield-defense-penetration-rate", "Shield Defense Penetration Rate"],
+  ["magic-critical-damage", "Magic Critical Damage"],
+  ["melee-critical-damage", "Melee Critical Damage"],
+  ["ranged-critical-damage", "Ranged Critical Damage"],
+  ["critical-heal-bonus", "Critical Heal Bonus"],
+  ["melee-skill-damage", "Melee Skill Damage"],
+  ["magic-skill-damage", "Magic Skill Damage"],
+  ["ranged-skill-damage", "Ranged Skill Damage"],
+  ["healing", "Healing"],
+  ["melee-critical-rate", "Melee Critical Rate"],
+  ["magic-critical-rate", "Magic Critical Rate"],
+  ["ranged-critical-rate", "Ranged Critical Rate"],
+  ["critical-heal-rate", "Critical Heal Rate"],
 ];
 
-function stat(
-  id: string,
-  label: string,
-  kinds: GearKind[],
-  unlockGradeByKind: Partial<Record<GearKind, Grade>>,
-  subtypes?: GearSubtype[],
-): PlannerStat {
-  return {
-    id,
-    label,
-    kinds,
-    unlockGradeByKind,
-    subtypes,
-  };
-}
+// Stats that name a role. Each is tied to the roles whose item rolls it earliest (other roles get it only at a
+// late grade or at weight 1), unless every role gets it at the same grade.
+const ROLE_STAT_IDS = new Set([
+  "melee-attack",
+  "ranged-attack",
+  "magic-attack",
+  "healing-power",
+  "melee-critical-damage",
+  "ranged-critical-damage",
+  "magic-critical-damage",
+  "critical-heal-bonus",
+  "melee-critical-rate",
+  "ranged-critical-rate",
+  "magic-critical-rate",
+  "critical-heal-rate",
+  "pve-melee-skills",
+  "pve-ranged-skills",
+  "pve-magic-skills",
+  "backstab-melee-damage",
+  "backstab-ranged-damage",
+  "backstab-magic-damage",
+]);
+
+export const PLANNER_STATS: PlannerStat[] = STAT_LABELS.map(([id, label]) => {
+  const kinds: GearKind[] = [];
+  const unlockGradeByKind: Partial<Record<GearKind, Grade>> = {};
+  const subtypesByKind: Partial<Record<GearKind, GearSubtype[]>> = {};
+
+  for (const kind of ["costume", "undergarment"] as const) {
+    const byRole = SUBTYPE_ORDER.flatMap((role) => {
+      const entry = STAT_POOLS[kind][role].find(([statId]) => statId === id);
+      return entry ? [{ role, weight: entry[1], unlock: entry[2] }] : [];
+    });
+    if (!byRole.length) continue;
+
+    kinds.push(kind);
+    const earliest = (entries: typeof byRole): number =>
+      Math.min(...entries.map((entry) => GRADES.indexOf(entry.unlock)));
+    const unlockIndex = earliest(byRole);
+    unlockGradeByKind[kind] = GRADES[unlockIndex];
+
+    if (ROLE_STAT_IDS.has(id)) {
+      const rollable = byRole.filter((entry) => entry.weight > 1);
+      const roleIndex = earliest(rollable);
+      const roles = rollable
+        .filter((entry) => GRADES.indexOf(entry.unlock) === roleIndex)
+        .map((entry) => entry.role);
+      if (roles.length < SUBTYPE_ORDER.length) subtypesByKind[kind] = roles;
+    }
+  }
+
+  return { id, label, kinds, unlockGradeByKind, subtypesByKind };
+});

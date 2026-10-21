@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { STAT_POOLS } from "./costume-planner-pools.ts";
 import {
   DEFAULT_COSTUME_PLANNER_STATE,
   normalizeCostumePlannerState,
@@ -13,9 +14,13 @@ import {
   estimateBaseItemCost,
   estimateExpectedRerolls,
   getAvailableStatIds,
+  getBoundRadiantSynthiumStonePrice,
+  getMaterialPrice,
   getNextStatLineThreshold,
   getPlannerStats,
   getStatLineCount,
+  getStatUnlockGrade,
+  getSynthiumStoneCost,
   GRADES,
   inferSubtype,
   planOptimalStrategy,
@@ -34,147 +39,108 @@ const prices = {
   brilliantMornstone: 1,
 };
 
-const expectedCostumeStats = {
-  "Physical Defense": "grand",
-  "Magic Defense": "grand",
-  "Max Health": "grand",
-  "Move Speed": "grand",
-  "Stealth Detection": "grand",
-  "PvE Magic Skills": "grand",
-  "PvE Melee Skills": "grand",
-  "PvE Ranged Skills": "grand",
-  "Backstab Melee Damage": "grand",
-  "Backstab Magic Damage": "grand",
-  "Backstab Ranged Damage": "grand",
-  "Received Damage": "grand",
-  "Melee Attack": "arcane",
-  "Ranged Attack": "arcane",
-  "Magic Attack": "arcane",
-  "Healing Power": "arcane",
-  "PvE Damage Reduction": "arcane",
-  "Received Healing": "arcane",
-  "Cast Time": "arcane",
-  Evasion: "unique",
-  "Parry Rate": "unique",
-  "Shield Block Rate": "unique",
-  Resilience: "unique",
-  Toughness: "unique",
-  Focus: "unique",
-  "Defense Penetration": "celestial",
-  "Magic Defense Penetration": "celestial",
-  "Received Magic Damage": "divine",
-  "Received Melee Damage": "divine",
-  "Received Ranged Damage": "divine",
-  "Magic Critical Damage": "divine",
-  "Melee Critical Damage": "divine",
-  "Ranged Critical Damage": "divine",
-  "Critical Heal Bonus": "divine",
-  "Melee Skill Damage": "epic",
-  "Magic Skill Damage": "epic",
-  "Ranged Skill Damage": "epic",
-  Healing: "epic",
-  "Melee Critical Rate": "legendary",
-  "Magic Critical Rate": "legendary",
-  "Ranged Critical Rate": "legendary",
-  "Critical Heal Rate": "legendary",
-} as const;
+// aac-dashboard market averages on 2026-10-21
+const livePrices = {
+  clearSynthiumStone: 1.32,
+  vividSynthiumStone: 52.85,
+  lucidSynthiumStone: 168.89,
+  radiantSynthiumStone: 191.43,
+  clearSynthiumShard: 0.242,
+  vividSynthiumShard: 4.02,
+  lucidSynthiumShard: 7.0,
+  radiantSynthiumShard: 25.0,
+  charcoalStabilizer: 1.603,
+  misagonsCrystal: 29.44,
+  serendipityStone: 796.48,
+  brilliantMornstone: 0.006,
+};
 
-const expectedUndergarmentStats = {
-  "Physical Defense": "grand",
-  "Magic Defense": "grand",
-  "Max Health": "grand",
-  "Melee Attack": "grand",
-  "Ranged Attack": "grand",
-  "Magic Attack": "grand",
-  "Healing Power": "grand",
-  "Backstab Melee Damage": "grand",
-  "Backstab Magic Damage": "grand",
-  "Backstab Ranged Damage": "grand",
-  Resilience: "arcane",
-  Toughness: "arcane",
-  Focus: "arcane",
-  "Defense Penetration": "arcane",
-  "Magic Defense Penetration": "arcane",
-  "Received Magic Damage": "unique",
-  "Received Melee Damage": "unique",
-  "Received Ranged Damage": "unique",
-  "Shield Defense Penetration Rate": "unique",
-  "Melee Skill Damage": "divine",
-  "Magic Skill Damage": "divine",
-  "Ranged Skill Damage": "divine",
-  Healing: "divine",
-  "Melee Critical Rate": "legendary",
-  "Magic Critical Rate": "legendary",
-  "Ranged Critical Rate": "legendary",
-  "Critical Heal Rate": "legendary",
-} as const;
+const rangedCostumeTarget = [
+  "ranged-attack",
+  "ranged-critical-damage",
+  "ranged-skill-damage",
+  "ranged-critical-rate",
+  "defense-penetration",
+];
 
-void test("costume stats match the builder sheet stat pool and unlock grades", () => {
-  assertStatPool("costume", expectedCostumeStats);
+void test("every stat in the client pools has a planner label, unlocking at its earliest role", () => {
+  for (const kind of ["costume", "undergarment"] as const) {
+    const stats = new Map(getPlannerStats(kind).map((stat) => [stat.id, stat]));
+    const pooled = new Map<string, number>();
+    for (const pool of Object.values(STAT_POOLS[kind])) {
+      for (const [statId, , unlockGrade] of pool) {
+        const index = GRADES.indexOf(unlockGrade);
+        pooled.set(statId, Math.min(pooled.get(statId) ?? 99, index));
+      }
+    }
+
+    assert.deepEqual([...stats.keys()].sort(), [...pooled.keys()].sort());
+    for (const [statId, index] of pooled) {
+      assert.equal(
+        stats.get(statId)?.unlockGradeByKind[kind],
+        GRADES[index],
+        statId,
+      );
+    }
+  }
 });
 
-void test("undergarment stats match the builder sheet stat pool and unlock grades", () => {
-  assertStatPool("undergarment", expectedUndergarmentStats);
+void test("ranged costume unlock grades follow the client tables", () => {
+  const unlock = (statId: string) =>
+    getStatUnlockGrade("costume", "ranged", statId);
+
+  assert.equal(unlock("ranged-attack"), "arcane");
+  assert.equal(unlock("focus"), "heroic");
+  assert.equal(unlock("evasion"), "celestial");
+  assert.equal(unlock("defense-penetration"), "celestial");
+  assert.equal(unlock("ranged-critical-damage"), "divine");
+  assert.equal(unlock("ranged-skill-damage"), "epic");
+  assert.equal(unlock("ranged-critical-rate"), "legendary");
+  assert.equal(unlock("melee-attack"), "legendary");
+  assert.equal(unlock("melee-critical-damage"), undefined);
 });
 
-void test("backstab rolls are available from grand for costumes and undergarments", () => {
-  const costumeGrand = getAvailableStatIds("costume", "grand", "melee");
+void test("each role's item rolls its own pool", () => {
+  const meleeArcane = getAvailableStatIds("costume", "arcane", "melee");
+  const meleeLegendary = getAvailableStatIds("costume", "legendary", "melee");
   const undergarmentGrand = getAvailableStatIds(
     "undergarment",
     "grand",
     "melee",
   );
 
-  assert.ok(costumeGrand.includes("backstab-melee-damage"));
-  assert.ok(undergarmentGrand.includes("backstab-melee-damage"));
+  assert.ok(meleeArcane.includes("melee-attack"));
+  assert.equal(meleeArcane.includes("ranged-attack"), false);
+  assert.ok(meleeLegendary.includes("ranged-attack"));
+  assert.equal(meleeLegendary.includes("ranged-critical-damage"), false);
+  assert.deepEqual(undergarmentGrand.sort(), [
+    "backstab-melee-damage",
+    "magic-defense",
+    "max-health",
+    "melee-attack",
+    "physical-defense",
+  ]);
 });
 
-void test("only attack and healing power stats are exclusive to the selected subtype", () => {
-  const meleeCostumeArcane = getAvailableStatIds("costume", "arcane", "melee");
-  const meleeCostumeDivine = getAvailableStatIds("costume", "divine", "melee");
-  const meleeUndergarmentDivine = getAvailableStatIds(
-    "undergarment",
-    "divine",
-    "melee",
-  );
-
-  assert.ok(meleeCostumeArcane.includes("melee-attack"));
-  assert.equal(meleeCostumeArcane.includes("magic-attack"), false);
-  assert.equal(meleeCostumeArcane.includes("ranged-attack"), false);
-  assert.equal(meleeCostumeArcane.includes("healing-power"), false);
-
-  assert.ok(meleeCostumeDivine.includes("magic-critical-damage"));
-  assert.ok(meleeCostumeDivine.includes("ranged-critical-damage"));
-  assert.ok(meleeCostumeDivine.includes("critical-heal-bonus"));
-
-  assert.ok(meleeUndergarmentDivine.includes("magic-skill-damage"));
-  assert.ok(meleeUndergarmentDivine.includes("ranged-skill-damage"));
-  assert.ok(meleeUndergarmentDivine.includes("healing"));
-});
-
-void test("non-exclusive typed stats do not infer a planner subtype", () => {
-  assert.deepEqual(inferSubtype(["ranged-critical-damage"]), {
-    status: "any",
-    subtype: "any",
-  });
-});
-
-void test("infers ranged subtype from ranged offensive stats", () => {
-  assert.deepEqual(inferSubtype(["ranged-attack", "ranged-critical-damage"]), {
+void test("infers the role from role-named stats", () => {
+  assert.deepEqual(inferSubtype(["ranged-critical-damage"], "costume"), {
     status: "inferred",
     subtype: "ranged",
   });
-});
-
-void test("rejects mixed typed offensive targets", () => {
-  assert.deepEqual(inferSubtype(["magic-attack", "ranged-attack"]), {
+  assert.deepEqual(
+    inferSubtype(["ranged-attack", "ranged-critical-damage"], "costume"),
+    { status: "inferred", subtype: "ranged" },
+  );
+  assert.deepEqual(inferSubtype(["magic-attack", "ranged-attack"], "costume"), {
     status: "conflict",
     subtypes: ["magic", "ranged"],
   });
-});
-
-void test("returns any subtype for tank-only targets", () => {
-  assert.deepEqual(inferSubtype(["max-health", "toughness"]), {
+  assert.deepEqual(inferSubtype(["max-health", "toughness"], "costume"), {
+    status: "any",
+    subtype: "any",
+  });
+  // every undergarment rolls every critical rate at legendary
+  assert.deepEqual(inferSubtype(["melee-critical-rate"], "undergarment"), {
     status: "any",
     subtype: "any",
   });
@@ -185,79 +151,142 @@ void test("grade list stops at mythic and does not expose eternal", () => {
   assert.equal(GRADES.includes("eternal" as (typeof GRADES)[number]), false);
 });
 
-void test("reroll expectation only uses stats unlocked at the current grade", () => {
-  const heroicStats = getAvailableStatIds("costume", "heroic", "ranged");
-  const estimate = estimateExpectedRerolls({
-    kind: "costume",
-    grade: "heroic",
-    subtype: "ranged",
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+void test("stat lines open at grand, arcane, heroic, unique and legendary", () => {
+  for (const kind of ["costume", "undergarment"] as const) {
+    assert.deepEqual(STAT_LINE_THRESHOLDS[kind], [
+      "grand",
+      "arcane",
+      "heroic",
+      "unique",
+      "legendary",
+    ]);
+  }
+  assert.equal(getStatLineCount("costume", "rare"), 1);
+  assert.equal(getStatLineCount("costume", "heroic"), 3);
+  assert.equal(getStatLineCount("costume", "epic"), 4);
+  assert.equal(getStatLineCount("costume", "mythic"), 5);
+  assert.equal(
+    getNextStatLineThreshold("costume", "arcane", "mythic"),
+    "heroic",
+  );
+});
+
+void test("a reroll picks by weight and skips every stat on the item", () => {
+  // grand melee undergarment: five stats of weight 40, one line
+  const grand = estimateExpectedRerolls({
+    kind: "undergarment",
+    grade: "grand",
+    subtype: "melee",
+    desiredStatIds: ["melee-attack"],
     keptStatIds: [],
   });
+  assert.equal(grand.successChance, 40 / 160);
+  assert.equal(grand.expectedAttempts, 4);
 
-  assert.equal(heroicStats.includes("ranged-critical-damage"), false);
-  assert.equal(estimate.favorableOutcomes, 1);
-  assert.equal(estimate.availableOutcomes, heroicStats.length);
-  assert.equal(estimate.expectedAttempts, heroicStats.length);
+  // arcane adds five stats of weight 120 and a second line; the kept attack and the other line are skipped
+  const arcane = estimateExpectedRerolls({
+    kind: "undergarment",
+    grade: "arcane",
+    subtype: "melee",
+    desiredStatIds: ["focus"],
+    keptStatIds: ["melee-attack"],
+  });
+  const junkWeight = (4 * 40 * 40 + 4 * 120 * 120) / (4 * 40 + 4 * 120);
+  assert.equal(arcane.successChance, 120 / (800 - 40 - junkWeight));
 });
 
-void test("already kept target stats are excluded from future reroll outcomes", () => {
-  const divineStats = getAvailableStatIds("costume", "divine", "ranged");
-  const estimate = estimateExpectedRerolls({
-    kind: "costume",
-    grade: "divine",
-    subtype: "ranged",
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    keptStatIds: ["ranged-attack"],
+void test("free rolls reduce the paid attempts", () => {
+  const paid = estimateExpectedRerolls({
+    kind: "undergarment",
+    grade: "grand",
+    subtype: "melee",
+    desiredStatIds: ["melee-attack"],
+    keptStatIds: [],
+    freeAttempts: 1,
+    serendipityPrice: 100,
   });
 
-  assert.equal(estimate.favorableOutcomes, 1);
-  assert.equal(estimate.availableOutcomes, divineStats.length - 1);
-  assert.equal(estimate.expectedAttempts, divineStats.length - 1);
+  assert.equal(paid.expectedAttempts, 3);
+  assert.equal(paid.expectedCost, 300);
 });
 
-void test("current item comparison recommends restart when salvage-adjusted restart is cheaper", () => {
-  const result = compareCurrentItem({
+void test("synthesis costs every grade's exp bar from basic", () => {
+  const grand = planTargetRoute({
+    kind: "costume",
+    targetGrade: "grand",
+    targetProgress: 0,
+    desiredStatIds: [],
+    prices,
+  });
+  assert.deepEqual(grand.targetCost.materials, [
+    { id: "clearSynthiumStone", amount: 4 },
+  ]);
+  assert.equal(grand.targetCost.craftGold, 100);
+
+  const mythic = planTargetRoute({
     kind: "costume",
     targetGrade: "mythic",
     targetProgress: 100,
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    current: {
-      grade: "legendary",
-      progress: 0,
-      statIds: ["physical-defense", "max-health"],
-    },
+    desiredStatIds: [],
     prices,
   });
-
-  assert.equal(result.recommendation, "restart");
-  assert.ok(result.restartCost.totalCost < result.continueCost.totalCost);
+  assert.deepEqual(mythic.targetCost.materials, [
+    { id: "clearSynthiumStone", amount: 12 },
+    { id: "vividSynthiumStone", amount: 28 },
+    { id: "lucidSynthiumStone", amount: 104 },
+    { id: "radiantSynthiumStone", amount: 120 },
+  ]);
 });
 
-void test("current item comparison recommends continue when target stats are already kept", () => {
-  const target = planTargetRoute({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    prices,
+void test("synthium stones cost the cheaper of buying and crafting up", () => {
+  // live prices: Vivid and Lucid are cheaper crafted up from Clear, Radiant is cheaper bought
+  assert.deepEqual(getSynthiumStoneCost("clear", livePrices), {
+    price: 1.32,
+    source: "market",
   });
-  const result = compareCurrentItem({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    current: {
-      grade: "legendary",
-      progress: 0,
-      statIds: ["ranged-attack", "ranged-critical-damage"],
-    },
-    prices,
+  const vivid = getSynthiumStoneCost("vivid", livePrices);
+  assert.equal(vivid.source, "crafted");
+  assert.ok(Math.abs(vivid.price - (1.32 + 10 + 20 * 1.603)) < 1e-9);
+  const lucid = getSynthiumStoneCost("lucid", livePrices);
+  assert.equal(lucid.source, "crafted");
+  assert.ok(
+    Math.abs(lucid.price - (vivid.price + 10 + 29.44 + 20 * 1.603)) < 1e-9,
+  );
+  assert.deepEqual(getSynthiumStoneCost("radiant", livePrices), {
+    price: 191.43,
+    source: "market",
   });
+});
 
-  assert.equal(target.subtype.status, "inferred");
-  assert.equal(result.recommendation, "continue");
-  assert.ok(result.continueCost.totalCost < result.restartCost.totalCost);
+void test("Activity Token synthium makes stones from tokens and upgrades bound Lucid to Radiant", () => {
+  const pricing = { boundSynthiumForEpicPlus: true };
+  assert.deepEqual(getSynthiumStoneCost("lucid", livePrices, pricing), {
+    price: 0,
+    source: "activityTokens",
+  });
+  const radiant = 10 + 2 * 29.44 + 5 * 1.603;
+  assert.ok(
+    Math.abs(
+      getMaterialPrice("radiantSynthiumStone", livePrices, pricing) - radiant,
+    ) < 1e-9,
+  );
+  assert.ok(
+    Math.abs(getBoundRadiantSynthiumStonePrice(livePrices) - radiant) < 1e-9,
+  );
+  // valued tokens: 20 for the Bound Lucid
+  assert.ok(
+    Math.abs(
+      getBoundRadiantSynthiumStonePrice(livePrices, 3) - (60 + radiant),
+    ) < 1e-9,
+  );
+  // when tokens are worth more than the market stone, buy it
+  assert.equal(
+    getSynthiumStoneCost("clear", livePrices, {
+      ...pricing,
+      activityTokenPrice: 1,
+    }).source,
+    "market",
+  );
 });
 
 void test("costume base item cost values 200 prestige at one tenth Misagon crystal", () => {
@@ -280,175 +309,84 @@ void test("undergarment base item cost defaults to 155g", () => {
   );
 });
 
-void test("restart-aware strategy includes base item cost in build from scratch", () => {
+void test("from scratch, the plan restarts where the exact optimizer does", () => {
+  // the exact optimizer (client-DB mechanics, live prices) restarts a ranged costume at heroic when the free rolls
+  // missed Ranged Attack, and a melee undergarment at rare without Melee Attack
+  const costume = planOptimalStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 0,
+    desiredStatIds: rangedCostumeTarget,
+    prices: livePrices,
+  });
+  assert.deepEqual(costume.restartGrades, ["heroic"]);
+  assert.ok(costume.expectedRestarts > 1 && costume.expectedRestarts < 2);
+  assert.equal(costume.strategyCheckpoints[1]?.action, "restart");
+
+  const undergarment = planOptimalStrategy({
+    kind: "undergarment",
+    targetGrade: "mythic",
+    targetProgress: 0,
+    desiredStatIds: [
+      "melee-attack",
+      "focus",
+      "defense-penetration",
+      "melee-skill-damage",
+      "melee-critical-rate",
+    ],
+    prices: livePrices,
+  });
+  assert.deepEqual(undergarment.restartGrades, ["rare"]);
+});
+
+void test("restart-aware cost adds up its parts", () => {
   const strategy = planOptimalStrategy({
     kind: "costume",
     targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack"],
-    prices,
+    targetProgress: 0,
+    desiredStatIds: rangedCostumeTarget,
+    prices: livePrices,
   });
+  const cost = strategy.targetCost;
 
-  assert.equal(strategy.baseItemCost, 100);
-  assert.ok(strategy.targetCost.totalCost > strategy.baseItemCost);
+  assert.ok(
+    Math.abs(
+      cost.materialCost +
+        cost.craftGold +
+        cost.rerollCost +
+        (cost.baseItemCost ?? 0) -
+        cost.salvageCredit -
+        cost.totalCost,
+    ) < 1e-6,
+  );
+  assert.ok(
+    Math.abs(
+      (cost.baseItemCost ?? 0) -
+        strategy.baseItemCost * (1 + (cost.expectedRestarts ?? 0)),
+    ) < 1e-6,
+  );
 });
 
-void test("grade-up rerolls reduce paid serendipity attempts but keep synthesis cost", () => {
+void test("a fresh item that never restarts costs synthesis plus rerolls", () => {
   const route = planTargetRoute({
     kind: "costume",
-    targetGrade: "arcane",
-    targetProgress: 0,
+    targetGrade: "mythic",
+    targetProgress: 100,
     desiredStatIds: ["ranged-attack"],
     prices,
   });
 
-  assert.equal(route.targetCost.expectedRerolls, 15);
-  assert.equal(route.targetCost.rerollCost, 4500);
-  assert.ok(route.targetCost.materialCost > 0);
-  assert.ok(route.targetCost.craftGold > 0);
-});
-
-void test("current continuation uses grade-up rerolls before paid serendipities", () => {
-  const strategy = compareCurrentStrategy({
-    kind: "costume",
-    targetGrade: "arcane",
-    targetProgress: 0,
-    desiredStatIds: ["ranged-attack"],
-    current: {
-      grade: "grand",
-      progress: 0,
-      statIds: ["physical-defense"],
-    },
-    prices,
-  });
-
-  assert.equal(strategy.continueCost.expectedRerolls, 15);
-  assert.equal(strategy.continueCost.rerollCost, 4500);
-  assert.ok(strategy.continueCost.materialCost > 0);
-  assert.ok(strategy.continueCost.craftGold > 0);
-});
-
-void test("stat line thresholds apply to costumes and undergarments", () => {
-  assert.deepEqual(STAT_LINE_THRESHOLDS.costume, [
-    "grand",
-    "arcane",
-    "unique",
-    "divine",
-    "legendary",
-  ]);
-  assert.deepEqual(STAT_LINE_THRESHOLDS.undergarment, [
-    "grand",
-    "arcane",
-    "unique",
-    "divine",
-    "legendary",
-  ]);
-  assert.equal(getStatLineCount("costume", "heroic"), 2);
+  assert.equal(route.subtype.status, "inferred");
+  assert.ok(route.targetCost.expectedRerolls > 0);
   assert.equal(
-    getNextStatLineThreshold("costume", "grand", "mythic"),
-    "arcane",
+    route.targetCost.totalCost,
+    route.targetCost.materialCost +
+      route.targetCost.craftGold +
+      route.targetCost.rerollCost,
   );
 });
 
-void test("grand miss recommends synthesizing to the next stat line before restart", () => {
-  const strategy = compareCurrentStrategy({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    current: {
-      grade: "grand",
-      progress: 0,
-      statIds: ["physical-defense"],
-    },
-    prices,
-  });
-
-  assert.equal(strategy.recommendation, "synth");
-  assert.ok(strategy.synthCost);
-  const firstSynthMaterial = strategy.synthCost.materials[0];
-  const secondSynthMaterial = strategy.synthCost.materials[1];
-  assert.ok(firstSynthMaterial);
-  assert.ok(secondSynthMaterial);
-  assert.equal(firstSynthMaterial.id, "vividSynthiumStone");
-  assert.equal(firstSynthMaterial.amount, 12);
-  assert.equal(secondSynthMaterial.id, "charcoalStabilizer");
-  assert.equal(secondSynthMaterial.amount, 240);
-  assert.equal(strategy.synthCost.craftGold, 458);
-  assert.equal(strategy.strategyCheckpoints[0]?.grade, "arcane");
-});
-
-void test("unique zero-of-three target stats restarts instead of synthesizing to divine", () => {
-  const strategy = compareCurrentStrategy({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: [
-      "physical-defense",
-      "max-health",
-      "received-damage",
-      "received-healing",
-      "resilience",
-    ],
-    current: {
-      grade: "unique",
-      progress: 0,
-      statIds: ["magic-defense", "move-speed", "stealth-detection"],
-    },
-    prices,
-    materialPricing: { boundSynthiumForEpicPlus: true },
-  });
-
-  assert.equal(strategy.recommendation, "restart");
-});
-
-void test("arcane one-of-two target stats synthesizes to grade-up reroll checkpoint", () => {
-  const strategy = compareCurrentStrategy({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: [
-      "physical-defense",
-      "max-health",
-      "received-damage",
-      "received-healing",
-      "resilience",
-    ],
-    current: {
-      grade: "arcane",
-      progress: 0,
-      statIds: ["magic-defense", "max-health"],
-    },
-    prices,
-    materialPricing: { boundSynthiumForEpicPlus: true },
-  });
-
-  assert.equal(strategy.recommendation, "synth");
-  assert.equal(strategy.synthGrade, "heroic");
-  assert.equal(
-    strategy.strategyCheckpoints[0]?.label,
-    "Synth to Heroic and reassess after the grade-up reroll.",
-  );
-});
-
-void test("current continuation keeps newly estimated target stats for later rerolls", () => {
-  const strategy = compareCurrentStrategy({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
-    current: {
-      grade: "grand",
-      progress: 0,
-      statIds: ["physical-defense"],
-    },
-    prices,
-  });
-
-  assert.equal(strategy.continueCost.expectedRerolls, 44);
-});
-
-void test("restart-aware comparison restarts bad upgraded states when rerolls are expensive", () => {
+void test("current item with junk lines at legendary restarts", () => {
   const strategy = compareCurrentStrategy({
     kind: "costume",
     targetGrade: "mythic",
@@ -463,9 +401,33 @@ void test("restart-aware comparison restarts bad upgraded states when rerolls ar
   });
 
   assert.equal(strategy.recommendation, "restart");
+  assert.ok(strategy.restartCost.totalCost <= strategy.continueCost.totalCost);
+  assert.equal(
+    strategy.strategyCheckpoints[1]?.label,
+    "Salvage and start over rather than buy Ranged Attack.",
+  );
 });
 
-void test("restart-aware comparison continues when target stats are already kept", () => {
+void test("current item that has its targets continues", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: ["ranged-attack", "ranged-critical-damage"],
+    current: {
+      grade: "legendary",
+      progress: 0,
+      statIds: ["ranged-attack", "ranged-critical-damage"],
+    },
+    prices,
+  });
+
+  assert.equal(strategy.recommendation, "continue");
+  assert.equal(strategy.continueCost.expectedRerolls, 0);
+  assert.ok(strategy.continueCost.totalCost < strategy.restartCost.totalCost);
+});
+
+void test("current item synthesizes on when nothing it needs can roll yet", () => {
   const strategy = compareCurrentStrategy({
     kind: "costume",
     targetGrade: "mythic",
@@ -474,13 +436,39 @@ void test("restart-aware comparison continues when target stats are already kept
     current: {
       grade: "grand",
       progress: 0,
-      statIds: ["ranged-attack"],
+      statIds: ["physical-defense"],
     },
-    prices: { ...prices, serendipityStone: 5000 },
+    prices,
   });
 
-  assert.equal(strategy.recommendation, "continue");
-  assert.ok(strategy.continueCost.totalCost < strategy.restartCost.totalCost);
+  assert.equal(strategy.recommendation, "synth");
+  assert.equal(strategy.synthGrade, "rare");
+  assert.ok(strategy.synthCost);
+  assert.deepEqual(strategy.synthCost.materials, [
+    { id: "clearSynthiumStone", amount: 8 },
+  ]);
+  assert.equal(strategy.synthCost.craftGold, 200);
+});
+
+void test("restart credits the salvage of the current grade", () => {
+  const restartAt = (grade: "grand" | "mythic") =>
+    compareCurrentItem({
+      kind: "costume",
+      targetGrade: "mythic",
+      targetProgress: 100,
+      desiredStatIds: ["ranged-attack"],
+      current: { grade, progress: 0, statIds: ["max-health"] },
+      prices: livePrices,
+    }).restartCost.totalCost;
+  // Brilliant Mornstone salvage: grand 20 Clear shards, mythic 60 Clear, 230 Vivid, 770 Lucid and 580 Radiant
+  const mythicSalvage = 60 * 0.242 + 230 * 4.02 + 770 * 7 + 580 * 25;
+  const grandSalvage = 20 * 0.242;
+
+  assert.ok(
+    Math.abs(
+      restartAt("grand") - restartAt("mythic") - (mythicSalvage - grandSalvage),
+    ) < 1e-6,
+  );
 });
 
 void test("crafted serendipity price replaces the market reroll price", () => {
@@ -500,51 +488,17 @@ void test("crafted serendipity price replaces the market reroll price", () => {
     materialPricing: { serendipityStonePrice: 42 },
   });
 
-  assert.equal(marketRoute.targetCost.rerollCost, 4500);
-  assert.equal(craftedRoute.targetCost.expectedRerolls, 15);
-  assert.equal(craftedRoute.targetCost.rerollCost, 630);
-});
-
-void test("bound synthium pricing changes radiant synthesis without changing lucid synthesis", () => {
-  const epicMarketRoute = planTargetRoute({
-    kind: "costume",
-    targetGrade: "epic",
-    targetProgress: 0,
-    desiredStatIds: ["ranged-attack"],
-    prices,
-  });
-  const epicBoundRoute = planTargetRoute({
-    kind: "costume",
-    targetGrade: "epic",
-    targetProgress: 0,
-    desiredStatIds: ["ranged-attack"],
-    prices,
-    materialPricing: { boundSynthiumForEpicPlus: true },
-  });
-  const mythicMarketRoute = planTargetRoute({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack"],
-    prices,
-  });
-  const mythicBoundRoute = planTargetRoute({
-    kind: "costume",
-    targetGrade: "mythic",
-    targetProgress: 100,
-    desiredStatIds: ["ranged-attack"],
-    prices,
-    materialPricing: { boundSynthiumForEpicPlus: true },
-  });
-
   assert.equal(
-    epicBoundRoute.targetCost.materialCost,
-    epicMarketRoute.targetCost.materialCost,
+    marketRoute.targetCost.rerollCost,
+    marketRoute.targetCost.expectedRerolls * 300,
   );
   assert.equal(
-    mythicMarketRoute.targetCost.materialCost -
-      mythicBoundRoute.targetCost.materialCost,
-    44 * (80 - 25),
+    craftedRoute.targetCost.expectedRerolls,
+    marketRoute.targetCost.expectedRerolls,
+  );
+  assert.equal(
+    craftedRoute.targetCost.rerollCost,
+    craftedRoute.targetCost.expectedRerolls * 42,
   );
 });
 
@@ -671,21 +625,3 @@ void test("costume planner search serialization round-trips full planner state",
     scs: "16323:118,19410:4297",
   });
 });
-
-function assertStatPool(
-  kind: "costume" | "undergarment",
-  expected: Record<string, (typeof GRADES)[number]>,
-) {
-  const actual = new Map(
-    getPlannerStats(kind).map((stat) => [
-      stat.label,
-      stat.unlockGradeByKind[kind],
-    ]),
-  );
-
-  assert.deepEqual([...actual.keys()].sort(), Object.keys(expected).sort());
-
-  for (const [label, unlockGrade] of Object.entries(expected)) {
-    assert.equal(actual.get(label), unlockGrade, label);
-  }
-}
