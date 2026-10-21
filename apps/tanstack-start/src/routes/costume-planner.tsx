@@ -22,6 +22,7 @@ import type {
   CostBreakdown,
   CurrentStrategyComparison,
   GearKind,
+  GearSubtype,
   Grade,
   MaterialPricingOptions,
   OptimalStrategyRoute,
@@ -49,9 +50,11 @@ import {
 } from "~/component/recipe-breakdown";
 import {
   compareCurrentStrategy,
+  getAvailableStatIds,
   getMaterialPrice,
   getPlannerStats,
   getStatLineCount,
+  getStatUnlockGrade,
   getSynthiumStoneCost,
   GRADES,
   MATERIAL_LABELS,
@@ -129,6 +132,7 @@ function CostumePlannerPage() {
     craftedSerendipities,
     honorGoldPerThousand,
     kind,
+    role,
     serendipityOverride,
     serendipityCraftModes,
     serendipitySelectedCrafts,
@@ -142,7 +146,10 @@ function CostumePlannerPage() {
   });
   const [selectedLoadoutId, setSelectedLoadoutId] = useState("");
   const [loadoutName, setLoadoutName] = useState("");
-  const statOptions = useMemo(() => getPlannerStats(kind), [kind]);
+  const statOptions = useMemo(() => {
+    const rollable = new Set(getAvailableStatIds(kind, "mythic", role));
+    return getPlannerStats(kind).filter((stat) => rollable.has(stat.id));
+  }, [kind, role]);
   const currentStatOptions = statOptions;
   const honorRate = parseOptionalNumber(honorGoldPerThousand) ?? 10;
   const serendipityCraftData = serendipityCraftQuery.data ?? null;
@@ -228,6 +235,7 @@ function CostumePlannerPage() {
             prices,
             honorGoldPerThousand: honorRate,
             materialPricing,
+            role,
           })
         : null,
     [
@@ -235,6 +243,7 @@ function CostumePlannerPage() {
       kind,
       materialPricing,
       prices,
+      role,
       targetGrade,
       targetProgress,
       targetStats,
@@ -257,6 +266,7 @@ function CostumePlannerPage() {
       prices,
       honorGoldPerThousand: honorRate,
       materialPricing,
+      role,
     });
   }, [
     currentEnabled,
@@ -268,6 +278,7 @@ function CostumePlannerPage() {
     kind,
     materialPricing,
     prices,
+    role,
     targetGrade,
     targetProgress,
     targetStats,
@@ -417,7 +428,7 @@ function CostumePlannerPage() {
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-4">
+              <div className="grid gap-4 md:grid-cols-5">
                 <Field label="Kind">
                   <Select
                     value={kind}
@@ -428,6 +439,22 @@ function CostumePlannerPage() {
                   >
                     <option value="costume">Costume</option>
                     <option value="undergarment">Undergarments</option>
+                  </Select>
+                </Field>
+                <Field label="Role">
+                  <Select
+                    value={role}
+                    onChange={(event) =>
+                      updatePlannerState({
+                        role: event.target.value as GearSubtype,
+                      })
+                    }
+                    className={selectClassName}
+                  >
+                    <option value="melee">Melee</option>
+                    <option value="ranged">Ranged</option>
+                    <option value="magic">Magic</option>
+                    <option value="healing">Healing</option>
                   </Select>
                 </Field>
                 <Field label="Target grade">
@@ -545,14 +572,16 @@ function CostumePlannerPage() {
             <CardHeader>
               <CardTitle>Target stats</CardTitle>
               <CardDescription>
-                Stats are grouped by unlock grade. The selected target grade
-                controls how many lines can be planned.
+                Stats are grouped by the grade they unlock at on this role's
+                item. The selected target grade controls how many lines can be
+                planned.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <StatPicker
                 grade={targetGrade}
                 kind={kind}
+                role={role}
                 options={statOptions}
                 selected={targetStats}
                 onToggle={(statId) =>
@@ -560,14 +589,13 @@ function CostumePlannerPage() {
                     targetStats: toggleStat(
                       targetStats,
                       statId,
-                      statOptions,
                       kind,
+                      role,
                       targetGrade,
                     ),
                   })
                 }
               />
-              <SubtypeBadge subtype={subtype} />
             </CardContent>
           </Card>
 
@@ -584,6 +612,7 @@ function CostumePlannerPage() {
                 <StatPicker
                   grade={currentGrade}
                   kind={kind}
+                  role={role}
                   options={currentStatOptions}
                   selected={currentStats}
                   onToggle={(statId) =>
@@ -591,8 +620,8 @@ function CostumePlannerPage() {
                       currentStats: toggleStat(
                         currentStats,
                         statId,
-                        currentStatOptions,
                         kind,
+                        role,
                         currentGrade,
                       ),
                     })
@@ -1358,10 +1387,12 @@ function StatPicker({
   kind,
   onToggle,
   options,
+  role,
   selected,
 }: {
   grade: Grade;
   kind: GearKind;
+  role: GearSubtype;
   options: PlannerStat[];
   selected: string[];
   onToggle: (statId: string) => void;
@@ -1370,7 +1401,7 @@ function StatPicker({
   const grouped = GRADES.map((unlockGrade) => ({
     grade: unlockGrade,
     stats: options.filter(
-      (stat) => getStatUnlockGrade(stat, kind) === unlockGrade,
+      (stat) => getStatUnlockGrade(kind, role, stat.id) === unlockGrade,
     ),
   })).filter((group) => group.stats.length > 0);
 
@@ -1388,7 +1419,12 @@ function StatPicker({
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {group.stats.map((stat) => {
               const checked = selected.includes(stat.id);
-              const unlocked = isStatUnlockedAtGrade(stat, kind, grade);
+              const unlocked = isStatUnlockedAtGrade(
+                stat.id,
+                kind,
+                role,
+                grade,
+              );
               const disabled =
                 !checked && (!unlocked || selected.length >= max);
 
@@ -1429,16 +1465,13 @@ function GradeBadge({ grade }: { grade: Grade }) {
   );
 }
 
-function getStatUnlockGrade(stat: PlannerStat, kind: GearKind): Grade | null {
-  return stat.unlockGradeByKind[kind] ?? null;
-}
-
 function isStatUnlockedAtGrade(
-  stat: PlannerStat,
+  statId: string,
   kind: GearKind,
+  role: GearSubtype,
   grade: Grade,
 ): boolean {
-  const unlockGrade = getStatUnlockGrade(stat, kind);
+  const unlockGrade = getStatUnlockGrade(kind, role, statId);
   if (!unlockGrade) return false;
   return GRADES.indexOf(unlockGrade) <= GRADES.indexOf(grade);
 }
@@ -1468,33 +1501,6 @@ function getGradeBadgeClassName(grade: Grade): string {
   }
 }
 
-function SubtypeBadge({
-  subtype,
-}: {
-  subtype:
-    | { status: "inferred"; subtype: string }
-    | { status: "any"; subtype: "any" }
-    | { status: "conflict"; subtypes: string[] }
-    | null;
-}) {
-  if (!subtype) return null;
-
-  if (subtype.status === "conflict") {
-    return (
-      <Badge variant="destructive" className="w-fit">
-        Conflicting subtypes: {subtype.subtypes.join(", ")}
-      </Badge>
-    );
-  }
-
-  return (
-    <Badge variant="secondary" className="w-fit">
-      Inferred subtype:{" "}
-      {subtype.status === "any" ? "Any" : capitalize(subtype.subtype)}
-    </Badge>
-  );
-}
-
 function CostLine({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between gap-4 text-sm">
@@ -1515,15 +1521,14 @@ function formatRecommendation(comparison: CurrentStrategyComparison): string {
 function toggleStat(
   current: string[],
   statId: string,
-  options: PlannerStat[],
   kind: GearKind,
+  role: GearSubtype,
   grade: Grade,
 ): string[] {
   if (current.includes(statId)) {
     return current.filter((id) => id !== statId);
   }
-  const stat = options.find((option) => option.id === statId);
-  if (!stat || !isStatUnlockedAtGrade(stat, kind, grade)) return current;
+  if (!isStatUnlockedAtGrade(statId, kind, role, grade)) return current;
   if (current.length >= getStatLineCount(kind, grade)) return current;
   return [...current, statId];
 }

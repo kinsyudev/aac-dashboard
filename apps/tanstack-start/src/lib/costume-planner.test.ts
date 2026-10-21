@@ -502,6 +502,59 @@ void test("crafted serendipity price replaces the market reroll price", () => {
   );
 });
 
+void test("the chosen role sets the stat pool and is kept in links only when the stats don't imply it", () => {
+  const healing = normalizeCostumePlannerState({
+    kind: "costume",
+    role: "healing",
+    targetGrade: "mythic",
+    targetStats: ["evasion", "ranged-critical-damage", "healing-power"],
+  });
+  assert.deepEqual(healing.targetStats, ["evasion", "healing-power"]);
+  assert.equal(serializeCostumePlannerSearch(healing).r, undefined);
+
+  const magicTank = normalizeCostumePlannerState({
+    kind: "costume",
+    role: "magic",
+    targetStats: ["toughness", "focus"],
+  });
+  assert.equal(serializeCostumePlannerSearch(magicTank).r, "magic");
+  assert.deepEqual(
+    parseCostumePlannerSearch(serializeCostumePlannerSearch(magicTank)),
+    magicTank,
+  );
+
+  // saved states without a role take the one their stats imply
+  assert.equal(
+    normalizeCostumePlannerState({
+      kind: "costume",
+      targetStats: ["magic-attack", "focus"],
+    }).role,
+    "magic",
+  );
+});
+
+void test("a chosen role changes the plan's unlock grades", () => {
+  const plan = (role: "melee" | "magic") =>
+    planOptimalStrategy({
+      kind: "costume",
+      targetGrade: "mythic",
+      targetProgress: 0,
+      desiredStatIds: ["focus"],
+      prices: livePrices,
+      role,
+    });
+
+  assert.equal(getStatUnlockGrade("costume", "melee", "focus"), "heroic");
+  assert.equal(getStatUnlockGrade("costume", "magic", "focus"), "celestial");
+  assert.deepEqual(plan("magic").subtype, {
+    status: "inferred",
+    subtype: "magic",
+  });
+  assert.ok(
+    plan("magic").checkpoints[0]?.grade !== plan("melee").checkpoints[0]?.grade,
+  );
+});
+
 void test("costume planner state defaults match the route defaults", () => {
   assert.deepEqual(normalizeCostumePlannerState({}), {
     ...DEFAULT_COSTUME_PLANNER_STATE,
@@ -532,14 +585,15 @@ void test("costume planner state clamps numbers and filters stats for selected k
     {
       ...DEFAULT_COSTUME_PLANNER_STATE,
       kind: "undergarment",
+      role: "ranged",
       targetProgress: 100,
       currentProgress: 0,
+      // melee attack never rolls on a ranged undergarment
       targetStats: [
         "ranged-attack",
         "ranged-skill-damage",
         "ranged-critical-rate",
         "defense-penetration",
-        "melee-attack",
       ],
       currentStats: ["max-health"],
     },
