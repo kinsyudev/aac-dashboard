@@ -54,6 +54,7 @@ import {
   getMaterialPrice,
   getPlannerStats,
   getStatLineCount,
+  getStatRollOdds,
   getStatUnlockGrade,
   getSynthiumStoneCost,
   GRADES,
@@ -630,6 +631,16 @@ function CostumePlannerPage() {
               </CardContent>
             </Card>
           ) : null}
+
+          <StatRollOddsCard
+            key={`${kind}-${role}`}
+            kind={kind}
+            role={role}
+            defaultGrade={currentEnabled ? currentGrade : targetGrade}
+            itemStats={currentEnabled ? currentStats : []}
+            targetStats={targetStats}
+            statOptions={statOptions}
+          />
         </div>
 
         <aside className="flex flex-col gap-6">
@@ -1451,6 +1462,126 @@ function StatPicker({
   );
 }
 
+function StatRollOddsCard({
+  defaultGrade,
+  itemStats,
+  kind,
+  role,
+  statOptions,
+  targetStats,
+}: {
+  kind: GearKind;
+  role: GearSubtype;
+  defaultGrade: Grade;
+  itemStats: string[];
+  targetStats: string[];
+  statOptions: PlannerStat[];
+}) {
+  const [gradeOverride, setGradeOverride] = useState<Grade | null>(null);
+  const [excludeItemStats, setExcludeItemStats] = useState(true);
+  const grade = gradeOverride ?? defaultGrade;
+  const excludedStatIds = excludeItemStats ? itemStats : [];
+  const odds = getStatRollOdds({ kind, role, grade, excludedStatIds });
+  const labelOf = new Map(statOptions.map((stat) => [stat.id, stat.label]));
+  const missingTargets = new Set(
+    targetStats.filter((statId) => !excludedStatIds.includes(statId)),
+  );
+  const anyTargetChance = odds
+    .filter((entry) => missingTargets.has(entry.statId))
+    .reduce((sum, entry) => sum + entry.chance, 0);
+  const maxChance = odds[0]?.chance ?? 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Roll odds</CardTitle>
+        <CardDescription>
+          Chance of each stat on one roll (grade-up roll or Serendipity Stone)
+          on a {formatGrade(grade)} {role} {formatKind(kind).toLowerCase()}. A
+          roll never gives a stat that is already on the item.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Grade">
+            <Select
+              value={grade}
+              onChange={(event) =>
+                setGradeOverride(event.target.value as Grade)
+              }
+              className={selectClassName}
+            >
+              {GRADES.map((option) => (
+                <option key={option} value={option}>
+                  {formatGrade(option)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {itemStats.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setExcludeItemStats(!excludeItemStats)}
+              className="flex items-center gap-3 self-end rounded-md border px-3 py-2 text-left text-sm"
+            >
+              <Checkbox checked={excludeItemStats} tabIndex={-1} aria-hidden />
+              <span>Skip the current item's stats</span>
+            </button>
+          ) : null}
+        </div>
+
+        {missingTargets.size > 0 ? (
+          <div className="text-sm">
+            Any target stat not on the item:{" "}
+            <span className="font-semibold">
+              {formatPercent(anyTargetChance)}
+            </span>{" "}
+            per roll
+          </div>
+        ) : null}
+
+        {odds.length === 0 ? (
+          <div className="text-muted-foreground text-sm">
+            No stats can roll at this grade.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {odds.map((entry) => {
+              const isTarget = missingTargets.has(entry.statId);
+              return (
+                <div
+                  key={entry.statId}
+                  className={cn(
+                    "grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 rounded-md px-2 py-1 text-sm",
+                    isTarget && "bg-primary/10",
+                  )}
+                >
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className={cn("truncate", isTarget && "font-medium")}>
+                      {labelOf.get(entry.statId) ?? entry.statId}
+                    </span>
+                    <div className="bg-muted h-1.5 overflow-hidden rounded">
+                      <div
+                        className="bg-primary h-full"
+                        style={{
+                          width: `${maxChance > 0 ? (entry.chance / maxChance) * 100 : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-right tabular-nums">
+                    {formatPercent(entry.chance)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function GradeBadge({ grade }: { grade: Grade }) {
   return (
     <span
@@ -1616,6 +1747,10 @@ function formatGold(value: number): string {
   return `${value.toLocaleString(undefined, {
     maximumFractionDigits: 2,
   })}g`;
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1)}%`;
 }
 
 function formatNumber(value: number): string {

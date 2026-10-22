@@ -19,6 +19,7 @@ import {
   getNextStatLineThreshold,
   getPlannerStats,
   getStatLineCount,
+  getStatRollOdds,
   getStatUnlockGrade,
   getSynthiumStoneCost,
   GRADES,
@@ -678,4 +679,39 @@ void test("costume planner search serialization round-trips full planner state",
     scm: "16323:craft,19410:buy",
     scs: "16323:118,19410:4297",
   });
+});
+
+void test("roll odds are weight shares of the stats unlocked at the grade, skipping the item's stats", () => {
+  const pool = STAT_POOLS.costume.healing.filter(([, , unlock]) =>
+    ["grand", "arcane", "heroic"].includes(unlock),
+  );
+  const total = pool.reduce((sum, [, weight]) => sum + weight, 0);
+  const odds = getStatRollOdds({
+    kind: "costume",
+    role: "healing",
+    grade: "heroic",
+  });
+
+  assert.equal(odds.length, pool.length);
+  assert.ok(Math.abs(odds.reduce((sum, e) => sum + e.chance, 0) - 1) < 1e-9);
+  assert.equal(
+    odds.find((e) => e.statId === "healing-power")?.chance,
+    50 / total,
+  );
+  assert.equal(
+    odds.find((e) => e.statId === "evasion"),
+    undefined,
+  );
+
+  const skipped = getStatRollOdds({
+    kind: "costume",
+    role: "healing",
+    grade: "heroic",
+    excludedStatIds: ["healing-power", "move-speed"],
+  });
+  assert.equal(skipped.length, pool.length - 2);
+  assert.equal(
+    skipped.find((e) => e.statId === "resilience")?.chance,
+    50 / (total - 100),
+  );
 });
