@@ -213,6 +213,42 @@ export function getStatUnlockGrade(
   return STAT_POOLS[kind][subtype].find(([id]) => id === statId)?.[2];
 }
 
+export interface StatRollOdds {
+  statId: string;
+  weight: number;
+  chance: number;
+}
+
+// Chance of each stat on one roll at `grade`: weight / total weight of the stats unlocked at that grade, skipping
+// stats already on the item (pass the item's lines, including the one being rerolled). Highest chance first.
+export function getStatRollOdds({
+  excludedStatIds = [],
+  grade,
+  kind,
+  role,
+}: {
+  kind: GearKind;
+  role: GearSubtype;
+  grade: Grade;
+  excludedStatIds?: string[];
+}): StatRollOdds[] {
+  const gradeIndex = getGradeIndex(grade);
+  const excluded = new Set(excludedStatIds);
+  const pool = STAT_POOLS[kind][role].filter(
+    ([statId, , unlockGrade]) =>
+      getGradeIndex(unlockGrade) <= gradeIndex && !excluded.has(statId),
+  );
+  const total = pool.reduce((sum, [, weight]) => sum + weight, 0);
+
+  return pool
+    .map(([statId, weight]) => ({
+      statId,
+      weight,
+      chance: total > 0 ? weight / total : 0,
+    }))
+    .sort((a, b) => b.chance - a.chance);
+}
+
 export function getStatLineCount(kind: GearKind, grade: Grade): number {
   const gradeIndex = getGradeIndex(grade);
 
