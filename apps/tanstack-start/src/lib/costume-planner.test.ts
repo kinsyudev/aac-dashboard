@@ -814,3 +814,20 @@ void test("free grade-up roll chances", () => {
       (mythic.get("melee-critical-rate") ?? 0),
   );
 });
+
+void test("salvage that outpays free Activity Token stones doesn't loop restarts", () => {
+  const route = planOptimalStrategy({
+    kind: "costume",
+    role: "ranged",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: rangedCostumeTarget,
+    prices: livePrices,
+    materialPricing: { boundSynthiumForEpicPlus: true, activityTokenPrice: 0 },
+  });
+
+  assert.equal(route.salvageLoop, true);
+  assert.equal(route.expectedRestarts, 0);
+  assert.ok(Number.isFinite(route.targetCost.totalCost));
+  assert.ok(route.targetCost.totalCost > 0);
+});

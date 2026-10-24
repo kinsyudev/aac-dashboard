@@ -122,6 +122,8 @@ export interface OptimalStrategyRoute extends TargetRoute {
   restartGrades: Grade[];
   expectedRestarts: number;
   strategyCheckpoints: StrategyCheckpoint[];
+  // salvage outpays the synthesis at these prices, so the route is planned without restarts
+  salvageLoop: boolean;
 }
 
 export interface CurrentItemInput {
@@ -140,6 +142,8 @@ export interface CurrentComparison {
   synthReason?: "statLine" | "gradeReroll";
   subtype: SubtypeInference;
   checkpoints: RouteCheckpoint[];
+  // salvage outpays the synthesis at these prices, so the plans never restart
+  salvageLoop: boolean;
 }
 
 export interface CurrentStrategyComparison extends CurrentComparison {
@@ -533,6 +537,7 @@ export function planOptimalStrategy({
     targetCost: fresh.cost,
     restartGrades: fresh.restartGrades,
     expectedRestarts: fresh.expectedRestarts,
+    salvageLoop: fresh.salvageLoop,
     strategyCheckpoints: buildStrategyCheckpoints({
       checkpoints: fresh.checkpoints,
       baseItemCost,
@@ -570,9 +575,11 @@ export function compareCurrentItem(
       currentStats.has(statId),
     ),
   };
-  // the best plan, which may salvage right away, and the best one that keeps the item for now
-  const plan = planFromState(context, start, fresh.cost.totalCost);
-  const keepPlan = planFromState(context, start, fresh.cost.totalCost, false);
+  // the best plan, which may salvage right away, and the best one that keeps the item for now; with salvage
+  // outpaying the synthesis, restarts would never stop, so the plans don't restart
+  const restartAt = fresh.salvageLoop ? Infinity : fresh.cost.totalCost;
+  const plan = planFromState(context, start, restartAt);
+  const keepPlan = planFromState(context, start, restartAt, false);
   const continueCost = combineAttempts(
     keepPlan,
     fresh.cost,
@@ -632,6 +639,7 @@ export function compareCurrentItem(
       : undefined,
     subtype: context.subtype,
     checkpoints: plan.checkpoints,
+    salvageLoop: fresh.salvageLoop,
   };
 }
 
@@ -733,6 +741,8 @@ interface FreshRoute {
   checkpoints: RouteCheckpoint[];
   restartGrades: Grade[];
   expectedRestarts: number;
+  // salvage pays more than making the item again, so restarting would never stop; the route never restarts
+  salvageLoop: boolean;
 }
 
 // the same fresh route is asked for again for every current-item comparison
@@ -767,12 +777,22 @@ function solveFreshRoute(
   const start = { grade: "basic" as const, progress: 0, keptStatIds: [] };
   // The plan's cost grows with the fresh cost at a rate equal to its restart chance, piecewise linearly, so
   // Newton steps reach the fixed point in a few iterations.
-  let freshCost = baseItemCost + planFromState(context, start, Infinity).cost;
+  const noRestart = planFromState(context, start, Infinity);
+  let freshCost = baseItemCost + noRestart.cost;
   let plan = planFromState(context, start, freshCost);
+  let salvageLoop = false;
   for (let iteration = 0; iteration < 50; iteration += 1) {
     const slope = Math.min(plan.restartChance, 1 - 1e-9);
     const updated =
       (baseItemCost + plan.cost - slope * freshCost) / (1 - slope);
+    // a fresh start can't cost less than its base item: salvage outpays the synthesis (stones made from free
+    // Activity Tokens, say), and the route would restart forever
+    if (!(updated >= baseItemCost)) {
+      salvageLoop = true;
+      plan = noRestart;
+      freshCost = baseItemCost + noRestart.cost;
+      break;
+    }
     const converged = Math.abs(updated - freshCost) < 1e-6;
     freshCost = updated;
     plan = planFromState(context, start, freshCost);
@@ -805,6 +825,7 @@ function solveFreshRoute(
     checkpoints: plan.checkpoints,
     restartGrades: plan.restartGrades,
     expectedRestarts: attempts - 1,
+    salvageLoop,
   };
 }
 

@@ -955,6 +955,13 @@ function DecisionDashboard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {!conflict && (comparison ?? route)?.salvageLoop ? (
+          <p className="text-muted-foreground rounded-md border px-3 py-2 text-sm">
+            At these prices salvaging a finished item pays more than making it
+            again (Activity Token stones count as free), so restarting would
+            never stop. The plan below never restarts.
+          </p>
+        ) : null}
         {conflict ? (
           <p className="text-destructive text-sm">
             Selected stats require conflicting subtypes. Remove mixed typed
