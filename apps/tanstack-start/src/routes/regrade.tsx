@@ -22,6 +22,7 @@ import type {
   ConsumableLaborMap,
   ConsumablePriceMap,
   GradeSaleValueMap,
+  MagnificentUpgradeTier,
   RegradeActionChoice,
   RegradeSearchState,
   SupportedRegradeItem,
@@ -35,6 +36,7 @@ import {
   RecipeItemRow,
   RecipeLegend,
 } from "~/component/recipe-breakdown";
+import { canCraftProcGlowing } from "~/lib/glowing-crafts";
 import { resolveTieredManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
@@ -46,7 +48,6 @@ import {
   getObsidianT2Name,
   getObsidianT3Name,
   getObtainableRegradeCharms,
-  getReachableRegradeResults,
   getRegradeTapProjection,
   getResplendentScrollRightClickRecipe,
   getSupportedRegradeItems,
@@ -123,7 +124,7 @@ interface UpgradeStageSummary {
 }
 
 interface RerollCostSummary {
-  tier: "delphinad" | "ayanad";
+  tier: "epherium" | "delphinad" | "ayanad";
   itemId: number;
   itemName: string;
   sealName: string;
@@ -418,25 +419,28 @@ function RegradePage() {
   });
   const ayanadSealRows = ayanadSealQuery.data ?? [];
   const ayanadSealItem = ayanadSealRows[0]?.item ?? null;
+  // Epherium and Delphinad seals: both intermediate variants may need rerolling.
   const delphinadSealNames = useMemo(() => {
     if (!selectedMagnificentType) return [] as string[];
     return [
       ...new Set(
-        getMagnificentVariantNames(
-          selectedMagnificentType.piece,
-          "Delphinad",
-        ).flatMap((name) => {
-          const item = exactUpgradeMap.get(name);
-          if (!item) return [];
-          const equip = detectPieceAndTier(item.name);
-          if (!equip) return [];
-          const sealName = resolveTieredManaSealName("delphinad", {
-            name: item.name,
-            category: item.category,
-            equip,
-          });
-          return sealName ? [sealName] : [];
-        }),
+        INTERMEDIATE_REROLL_TIERS.flatMap((tier) =>
+          getMagnificentVariantNames(
+            selectedMagnificentType.piece,
+            INTERMEDIATE_REROLL_TIER_NAMES[tier],
+          ).flatMap((name) => {
+            const item = exactUpgradeMap.get(name);
+            if (!item) return [];
+            const equip = detectPieceAndTier(item.name);
+            if (!equip) return [];
+            const sealName = resolveTieredManaSealName(tier, {
+              name: item.name,
+              category: item.category,
+              equip,
+            });
+            return sealName ? [sealName] : [];
+          }),
+        ),
       ),
     ];
   }, [exactUpgradeMap, selectedMagnificentType]);
@@ -590,8 +594,13 @@ function RegradePage() {
       baseCraftData.subcraftsByItemId,
       manualCraftModes,
     );
+    // Unseal/reveal crafts list no materials; they'd price the recraft at 0.
+    const recipes = baseCraftData.crafts.filter(
+      (entry) => entry.materials.length > 0,
+    );
+    if (!recipes.length) return null;
     const craft = pickCheapestCraftForItem(
-      baseCraftData.crafts,
+      recipes,
       selectedItem.id,
       baseCraftData.subcraftsByItemId,
       priceMap,
@@ -733,13 +742,30 @@ function RegradePage() {
     });
     if (!finalStage) return null;
 
+    // Each sealed upgrade unseals into a random variant, but the next upgrade takes one specific
+    // variant, so both intermediate tiers need expected reseals. Glowing only helps when that
+    // tier's sealed craft is a workbench recipe.
+    const epheriumReroll = resolveIntermediateRerollCost({
+      tier: "epherium",
+      itemName: stage2.consumedItemName,
+      itemCategory: stage2.consumedItemCategory,
+      sealItemsByName: delphinadSealItemsByName,
+      sealCraftDataByItemId: delphinadSealCraftDataByItemId,
+      glowingProcEnabled:
+        glowingProcEnabled && canCraftProcGlowing(stage1.craft.craft.id),
+      manualCraftModes,
+      overrideMap,
+      proficiencyMap,
+    });
+    if (!epheriumReroll) return null;
     const delphinadReroll = resolveIntermediateRerollCost({
       tier: "delphinad",
       itemName: finalStage.consumedItemName,
       itemCategory: finalStage.consumedItemCategory,
       sealItemsByName: delphinadSealItemsByName,
       sealCraftDataByItemId: delphinadSealCraftDataByItemId,
-      glowingProcEnabled,
+      glowingProcEnabled:
+        glowingProcEnabled && canCraftProcGlowing(stage2.craft.craft.id),
       manualCraftModes,
       overrideMap,
       proficiencyMap,
@@ -748,7 +774,7 @@ function RegradePage() {
 
     let ayanadRerollCostGold = 0;
     let ayanadRerollLabor = 0;
-    const rerolls: RerollCostSummary[] = [delphinadReroll];
+    const rerolls: RerollCostSummary[] = [epheriumReroll, delphinadReroll];
     if (ayanadTargetMode === "specific") {
       const sealSummary = resolveAyanadSealSummary({
         craftData: ayanadSealCraftData,
@@ -758,10 +784,10 @@ function RegradePage() {
         proficiencyMap,
       });
       if (!sealSummary) return null;
-      const procRate = glowingProcEnabled ? GLOWING_PROC_RATE : 0;
+      // There is no Glowing Sealed Ayanad, so the Ayanad craft never procs.
       const successRate = getEffectiveCraftSuccessRate(
         variantsByTier.ayanad,
-        procRate,
+        0,
       );
       const expectedFailedRerolls = getExpectedResealRetries(
         variantsByTier.ayanad,
@@ -791,12 +817,14 @@ function RegradePage() {
         stage1.costGold +
         stage2.costGold +
         finalStage.costGold +
+        epheriumReroll.costGold +
         delphinadReroll.costGold +
         ayanadRerollCostGold,
       labor:
         stage1.labor +
         stage2.labor +
         finalStage.labor +
+        epheriumReroll.labor +
         delphinadReroll.labor +
         ayanadRerollLabor,
       stages: [stage1, stage2, finalStage],
@@ -852,28 +880,24 @@ function RegradePage() {
     selectedItem,
     upgradeCost,
   ]);
-  const reachableRegradeResults = useMemo(
-    () => getReachableRegradeResults(regradeResults, saleValuesByGrade),
-    [regradeResults, saleValuesByGrade],
-  );
   const saleValuedRegradeResults = useMemo(
     () =>
-      reachableRegradeResults.filter((result) =>
+      regradeResults.filter((result) =>
         saleValuesByGrade.has(result.targetGrade),
       ),
-    [reachableRegradeResults, saleValuesByGrade],
+    [regradeResults, saleValuesByGrade],
   );
 
   const effectiveSelectedResultGrade = getEffectiveSelectedRegradeTarget(
-    reachableRegradeResults,
+    regradeResults,
     selectedResultGrade,
     saleValuedRegradeResults,
   );
   const selectedResult =
-    reachableRegradeResults.find(
+    regradeResults.find(
       (result) => result.targetGrade === effectiveSelectedResultGrade,
     ) ??
-    reachableRegradeResults[0] ??
+    regradeResults[0] ??
     null;
   const projectionSteps = selectedResult?.selectedSteps ?? [];
   const defaultProjectionStep = projectionSteps.at(-1) ?? null;
@@ -1084,7 +1108,7 @@ function RegradePage() {
                   >
                     Any Ayanad
                   </Button>
-                  <InfoTooltip text="Specific Ayanad values a named Ayanad variant and adds expected Ayanad mana-seal failures. Any Ayanad stops at Sealed Ayanad, but the chain still includes expected Delphinad rerolls needed to craft Sealed Ayanad." />
+                  <InfoTooltip text="Specific Ayanad values a named Ayanad variant and adds expected Ayanad mana-seal failures. Any Ayanad stops at Sealed Ayanad, but the chain still includes the expected Epherium and Delphinad rerolls needed to reach the one variant each upgrade accepts." />
                   {ayanadTargetMode === "specific" ? (
                     <Select
                       className="bg-background rounded-md border px-3 py-2 text-sm"
@@ -1115,7 +1139,7 @@ function RegradePage() {
                       }
                     />
                     Glowing proc
-                    <InfoTooltip text="Adds the configured glowing proc chance to mana-seal variant rolls. This affects expected Delphinad and Ayanad reroll counts." />
+                    <InfoTooltip text="Adds the 1/20 Glowing chance to the Sealed Epherium and Sealed Delphinad crafts, which cuts the expected reseals at that tier. Only Equipment Designer's Workbench recipes can glow, and there is no Glowing Sealed Ayanad, so forge recipes and the Ayanad stage are unaffected." />
                   </label>
                 </div>
               ) : null}
@@ -1170,7 +1194,7 @@ function RegradePage() {
                           ? `${upgradeCost.rerolls.length} reroll stage${upgradeCost.rerolls.length === 1 ? "" : "s"} included`
                           : "No reroll cost"
                       }
-                      helpText="The Ayanad result being valued. Any Ayanad stops at the sealed Ayanad item. Specific Ayanad also adds expected Ayanad mana-seal failures. The chain always includes expected Delphinad variant rerolls when a specific Delphinad variant is needed for sealed Ayanad."
+                      helpText="The Ayanad result being valued. Any Ayanad stops at the sealed Ayanad item. Specific Ayanad also adds expected Ayanad mana-seal failures. The chain always includes the expected Epherium and Delphinad variant rerolls, since Sealed Delphinad and Sealed Ayanad each accept one specific variant."
                     />
                   </div>
 
@@ -1187,7 +1211,7 @@ function RegradePage() {
                         <tr className="text-left">
                           <TableHeader
                             label="Target"
-                            helpText="Grade you are trying to reach before selling or stopping. Rows without sale values still show expected cost; higher selected sale tiers reached by great-success overshoot are included in the earlier row's revenue."
+                            helpText="Highest grade the strategy regrades toward; landing here or above always stops. Selected sale tiers below the target are optional stops: the solver sells there whenever that beats regrading on, so a higher target never does worse than a lower one. Rows without sale values still show expected cost."
                           />
                           <TableHeader
                             label="Expected cost"
@@ -1216,7 +1240,7 @@ function RegradePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {reachableRegradeResults.map((result) => {
+                        {regradeResults.map((result) => {
                           return (
                             <tr
                               key={result.targetGrade}
@@ -1433,6 +1457,19 @@ function RegradePage() {
                             </div>
                           </div>
                         ))}
+                        {selectedResult.stopGrades.length ? (
+                          <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
+                            Sell instead of regrading on at{" "}
+                            {selectedResult.stopGrades
+                              .map(
+                                (grade) =>
+                                  regradeData.grades[grade]?.name ??
+                                  `Grade ${grade}`,
+                              )
+                              .join(", ")}
+                            .
+                          </div>
+                        ) : null}
                       </div>
                       {projectionStep && tapProjection ? (
                         <div className="mt-4 rounded-md border p-3">
@@ -2677,17 +2714,22 @@ function RegradeCostOverview({
   const sealNames = [
     ...new Set(
       visibleTypes.flatMap((type) =>
-        getMagnificentVariantNames(type.piece, "Delphinad").flatMap((name) => {
-          const item = exactMap.get(name);
-          const equip = item ? detectPieceAndTier(item.name) : null;
-          if (!item || !equip) return [];
-          const sealName = resolveTieredManaSealName("delphinad", {
-            name: item.name,
-            category: item.category,
-            equip,
-          });
-          return sealName ? [sealName] : [];
-        }),
+        INTERMEDIATE_REROLL_TIERS.flatMap((tier) =>
+          getMagnificentVariantNames(
+            type.piece,
+            INTERMEDIATE_REROLL_TIER_NAMES[tier],
+          ).flatMap((name) => {
+            const item = exactMap.get(name);
+            const equip = item ? detectPieceAndTier(item.name) : null;
+            if (!item || !equip) return [];
+            const sealName = resolveTieredManaSealName(tier, {
+              name: item.name,
+              category: item.category,
+              equip,
+            });
+            return sealName ? [sealName] : [];
+          }),
+        ),
       ),
     ),
   ];
@@ -2943,11 +2985,14 @@ function getRegradeOverviewRow(input: {
   const baseData = craftDataById.get(type.representativeItem.id);
   let baseGold = Number.NaN;
   let baseLabor = Number.NaN;
-  if (baseData?.crafts.length) {
+  // Unseal/reveal crafts list no materials; they'd price the recraft at 0.
+  const baseRecipes =
+    baseData?.crafts.filter((entry) => entry.materials.length > 0) ?? [];
+  if (baseData && baseRecipes.length) {
     const priceMap = buildPriceMap(baseData.prices);
     const buyModes = getDefaultBuyCraftModes(baseData.subcraftsByItemId, modes);
     const craft = pickCheapestCraftForItem(
-      baseData.crafts,
+      baseRecipes,
       type.representativeItem.id,
       baseData.subcraftsByItemId,
       priceMap,
@@ -3024,26 +3069,51 @@ function getRegradeOverviewRow(input: {
         proficiencyMap,
       })
     : null;
-  const reroll = stage3
-    ? resolveIntermediateRerollCost({
-        tier: "delphinad",
-        itemName: stage3.consumedItemName,
-        itemCategory: stage3.consumedItemCategory,
-        sealItemsByName,
-        sealCraftDataByItemId: craftDataById,
-        glowingProcEnabled: glowing,
-        manualCraftModes: modes,
-        overrideMap,
-        proficiencyMap,
-      })
-    : null;
+  const epheriumReroll =
+    stage1 && stage2
+      ? resolveIntermediateRerollCost({
+          tier: "epherium",
+          itemName: stage2.consumedItemName,
+          itemCategory: stage2.consumedItemCategory,
+          sealItemsByName,
+          sealCraftDataByItemId: craftDataById,
+          glowingProcEnabled:
+            glowing && canCraftProcGlowing(stage1.craft.craft.id),
+          manualCraftModes: modes,
+          overrideMap,
+          proficiencyMap,
+        })
+      : null;
+  const reroll =
+    stage2 && stage3
+      ? resolveIntermediateRerollCost({
+          tier: "delphinad",
+          itemName: stage3.consumedItemName,
+          itemCategory: stage3.consumedItemCategory,
+          sealItemsByName,
+          sealCraftDataByItemId: craftDataById,
+          glowingProcEnabled:
+            glowing && canCraftProcGlowing(stage2.craft.craft.id),
+          manualCraftModes: modes,
+          overrideMap,
+          proficiencyMap,
+        })
+      : null;
   const upgradeGold =
-    stage1 && stage2 && stage3 && reroll
-      ? stage1.costGold + stage2.costGold + stage3.costGold + reroll.costGold
+    stage1 && stage2 && stage3 && epheriumReroll && reroll
+      ? stage1.costGold +
+        stage2.costGold +
+        stage3.costGold +
+        epheriumReroll.costGold +
+        reroll.costGold
       : Number.NaN;
   const upgradeLabor =
-    stage1 && stage2 && stage3 && reroll
-      ? stage1.labor + stage2.labor + stage3.labor + reroll.labor
+    stage1 && stage2 && stage3 && epheriumReroll && reroll
+      ? stage1.labor +
+        stage2.labor +
+        stage3.labor +
+        epheriumReroll.labor +
+        reroll.labor
       : Number.NaN;
   const results = new Map(
     grades.map((grade) => [
@@ -3394,6 +3464,15 @@ function sumRerollCost(rerolls: RerollCostSummary[]): number {
   return rerolls.reduce((sum, reroll) => sum + reroll.costGold, 0);
 }
 
+const INTERMEDIATE_REROLL_TIERS = ["epherium", "delphinad"] as const;
+const INTERMEDIATE_REROLL_TIER_NAMES = {
+  epherium: "Epherium",
+  delphinad: "Delphinad",
+} as const satisfies Record<
+  (typeof INTERMEDIATE_REROLL_TIERS)[number],
+  MagnificentUpgradeTier
+>;
+
 function formatTierName(tier: RerollCostSummary["tier"]): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
@@ -3633,7 +3712,7 @@ function resolveUpgradeStage(input: {
 }
 
 function resolveIntermediateRerollCost(input: {
-  tier: "delphinad";
+  tier: (typeof INTERMEDIATE_REROLL_TIERS)[number];
   itemName: string;
   itemCategory: string;
   sealItemsByName: ReadonlyMap<string, { id: number; name: string }>;

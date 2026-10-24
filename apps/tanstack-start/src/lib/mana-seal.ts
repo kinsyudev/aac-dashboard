@@ -11,7 +11,7 @@ export const weaponMap = {
   "1h": ["Dagger", "Sword", "Katana", "Axe", "Club", "Shortspear"],
   "2h": ["Greatsword", "Nodachi", "Greataxe", "Greatclub", "Longspear"],
   Musical: ["Lute", "Flute"],
-  Wooden: ["Bow", "Scepter", "Staff", "Shield"],
+  Wooden: ["Bow", "Scepter", "Staff", "Shield", "Scythe"],
 } as const satisfies WeaponMap;
 
 type SealMap =
@@ -46,7 +46,7 @@ export interface ManaSealItemContext {
   equip: DetectedEquip;
 }
 
-export type ManaSealTier = "delphinad" | "ayanad";
+export type ManaSealTier = "epherium" | "delphinad" | "ayanad";
 
 function getArmorMaterial(
   category: string,
@@ -82,8 +82,14 @@ function getAccessoryType(
   return null;
 }
 
-function titleCaseTier(tier: ManaSealTier): "Delphinad" | "Ayanad" {
-  return tier === "delphinad" ? "Delphinad" : "Ayanad";
+function titleCaseTier(
+  tier: ManaSealTier,
+): "Epherium" | "Delphinad" | "Ayanad" {
+  return tier === "epherium"
+    ? "Epherium"
+    : tier === "delphinad"
+      ? "Delphinad"
+      : "Ayanad";
 }
 
 export function resolveTieredManaSealName(

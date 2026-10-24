@@ -451,7 +451,7 @@ function SimulatorDashboardCard({
       wispPrice: wisp.price,
       costPerAttempt,
       sealedUpgradeCost,
-      laborPerAttempt: laborPerAttempt + seedLabor,
+      laborPerAttempt,
       sealedUpgradeLabor,
       seedWispsPerAttempt,
     });
@@ -498,9 +498,8 @@ function SimulatorDashboardCard({
     }
 
     const result =
-      reseal && reseal.expectedValueSalvage > salvage.expectedValueSalvage
-        ? reseal
-        : salvage;
+      // Both strategies end with one finished item, so compare profit per item, not per attempt.
+      reseal && reseal.profitSalvage > salvage.profitSalvage ? reseal : salvage;
     const delphinadCost =
       result.strategy === "reseal"
         ? result.initialSealedCraftCost

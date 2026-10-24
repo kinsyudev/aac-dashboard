@@ -83667,8 +83667,8 @@
       "id": 38757,
       "name": "White Regrade Charm",
       "icon": "icon_item_2738.png",
-      "gradeMin": 2,
-      "gradeMax": 2,
+      "gradeMin": -1,
+      "gradeMax": -1,
       "successMul": 50,
       "successRatio": 0,
       "breakMul": 0,
@@ -83682,8 +83682,8 @@
       "id": 38758,
       "name": "Superior White Regrade Charm",
       "icon": "icon_item_2738.png",
-      "gradeMin": 3,
-      "gradeMax": 3,
+      "gradeMin": -1,
+      "gradeMax": -1,
       "successMul": 100,
       "successRatio": 0,
       "breakMul": 0,
@@ -83720,7 +83720,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "weapon"
     },
     {
@@ -83735,7 +83735,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "armor"
     },
     {
@@ -83750,7 +83750,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "accessory"
     },
     {
@@ -83765,7 +83765,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "weapon"
     },
     {
@@ -83780,7 +83780,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "armor"
     },
     {
@@ -83795,7 +83795,7 @@
       "downgradeMul": 0,
       "greatMul": 0,
       "preventDestroy": true,
-      "preventDowngrade": false,
+      "preventDowngrade": true,
       "slot": "accessory"
     }
   ],
