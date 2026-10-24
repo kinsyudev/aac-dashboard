@@ -401,7 +401,9 @@ void test("current item with junk lines at legendary restarts", () => {
   });
 
   assert.equal(strategy.recommendation, "restart");
-  assert.ok(strategy.restartCost.totalCost <= strategy.continueCost.totalCost);
+  // continuing keeps the item and buys the targets, so it costs more than salvaging rather than matching it
+  assert.ok(strategy.restartCost.totalCost < strategy.continueCost.totalCost);
+  assert.ok(strategy.continueCost.expectedRerolls > 0);
   assert.equal(
     strategy.strategyCheckpoints[1]?.label,
     "Salvage and start over rather than buy Ranged Attack.",

@@ -431,22 +431,21 @@ export function compareCurrentItem(
   const context = createPlanContext(input);
   const fresh = planFreshRoute(context, baseItemCost);
   const currentStats = new Set(current.statIds);
-  const plan = planFromState(
-    context,
-    {
-      grade: current.grade,
-      progress: current.progress,
-      keptStatIds: input.desiredStatIds.filter((statId) =>
-        currentStats.has(statId),
-      ),
-    },
-    fresh.cost.totalCost,
-  );
+  const start = {
+    grade: current.grade,
+    progress: current.progress,
+    keptStatIds: input.desiredStatIds.filter((statId) =>
+      currentStats.has(statId),
+    ),
+  };
+  // the best plan, which may salvage right away, and the best one that keeps the item for now
+  const plan = planFromState(context, start, fresh.cost.totalCost);
+  const keepPlan = planFromState(context, start, fresh.cost.totalCost, false);
   const continueCost = combineAttempts(
-    plan,
+    keepPlan,
     fresh.cost,
     context,
-    plan.restartChance,
+    keepPlan.restartChance,
   );
   const salvageCredit =
     salvageValue(current.grade, context) + (current.currentItemValue ?? 0);
@@ -724,6 +723,8 @@ function planFromState(
     keptStatIds: string[];
   },
   freshCost: number,
+  // false: the item is never salvaged at its current grade (the "continue" cost); later grades may still restart
+  salvageNow = true,
 ): StatePlan {
   const { kind, prices, materialPricing, role, serendipityPrice } = context;
   const { targetGrade, targetProgress } = context;
@@ -835,7 +836,10 @@ function planFromState(
         const payRerolls = 1 / chance;
         const after = best(step + 1, index).cost;
         const keepGoing = payRerolls * serendipityPrice + after;
-        const startOver = freshCost - salvageValue(gradeOf(index), context);
+        const startOver =
+          salvageNow || index > startIndex
+            ? freshCost - salvageValue(gradeOf(index), context)
+            : Infinity;
         const cost =
           (index > fromIndex ? synthCost(fromIndex, index, false) : 0) +
           (1 - missChance) * after +
