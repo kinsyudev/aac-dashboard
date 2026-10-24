@@ -122,6 +122,8 @@ export interface OptimalStrategyRoute extends TargetRoute {
   restartGrades: Grade[];
   expectedRestarts: number;
   strategyCheckpoints: StrategyCheckpoint[];
+  // salvage outpays the synthesis at these prices, so the route is planned without restarts
+  salvageLoop: boolean;
 }
 
 export interface CurrentItemInput {
@@ -140,6 +142,8 @@ export interface CurrentComparison {
   synthReason?: "statLine" | "gradeReroll";
   subtype: SubtypeInference;
   checkpoints: RouteCheckpoint[];
+  // salvage outpays the synthesis at these prices, so the plans never restart
+  salvageLoop: boolean;
 }
 
 export interface CurrentStrategyComparison extends CurrentComparison {
@@ -247,6 +251,102 @@ export function getStatRollOdds({
       chance: total > 0 ? weight / total : 0,
     }))
     .sort((a, b) => b.chance - a.chance);
+}
+
+// Chance each stat is on the item by `grade` from the free grade-up rolls alone, synthesizing from `fromGrade`
+// ("basic" is a fresh item) with `itemStatIds` on it. Each grade-up rolls its new lines, then the free replacement of
+// a line that isn't the stat. A roll picks by weight among the unlocked stats not on the item. The item's other
+// lines are tracked exactly, by how many of them hold a stat of each (weight, unlock grade) group.
+export function getFreeRollChances({
+  fromGrade = "basic",
+  grade,
+  itemStatIds = [],
+  kind,
+  role,
+}: {
+  kind: GearKind;
+  role: GearSubtype;
+  grade: Grade;
+  fromGrade?: Grade | "basic";
+  itemStatIds?: string[];
+}): Map<string, number> {
+  const fromIndex = fromGrade === "basic" ? -1 : getGradeIndex(fromGrade);
+  const toIndex = getGradeIndex(grade);
+  const lines = (index: number) =>
+    index < 0 ? 0 : getStatLineCount(kind, GRADES[index] ?? grade);
+  const pool = STAT_POOLS[kind][role];
+  const chances = new Map<string, number>();
+
+  for (const [statId, weight, unlockGrade] of pool) {
+    if (itemStatIds.includes(statId)) {
+      chances.set(statId, 1);
+      continue;
+    }
+    const unlockIndex = getGradeIndex(unlockGrade);
+    // the other stats by weight: once unlocked, stats of the same weight are interchangeable
+    const groups = new Map<number, number[]>();
+    for (const [id, w, unlock] of pool) {
+      if (id === statId || itemStatIds.includes(id)) continue;
+      groups.set(w, [...(groups.get(w) ?? []), getGradeIndex(unlock)]);
+    }
+    // lightest first: the free replacement goes on the lightest line, which puts the least weight back
+    const list = [...groups]
+      .sort(([a], [b]) => a - b)
+      .map(([w, unlocks]) => ({ weight: w, unlocks }));
+    // a state is how many rolled lines hold a stat of each group, packed in base 8 (at most 5 lines)
+    const countsOf = (key: number) =>
+      list.map((_, at) => Math.floor(key / 8 ** at) % 8);
+
+    // chance of each item state without the stat yet
+    let states = new Map<number, number>([[0, 1]]);
+    const roll = (
+      from: Map<number, number>,
+      index: number,
+      replace: boolean,
+    ) => {
+      const next = new Map<number, number>();
+      const unlocked = list.map(
+        (group) => group.unlocks.filter((unlock) => unlock <= index).length,
+      );
+      for (const [key, chance] of from) {
+        const counts = countsOf(key);
+        // every line on the item is excluded from the roll, the one being replaced included
+        const open = list.map(
+          (group, at) =>
+            ((unlocked[at] ?? 0) - (counts[at] ?? 0)) * group.weight,
+        );
+        const total =
+          (unlockIndex <= index ? weight : 0) +
+          open.reduce((sum, value) => sum + value, 0);
+        if (total <= 0) {
+          next.set(key, (next.get(key) ?? 0) + chance);
+          continue;
+        }
+        // with no rolled line to replace, the free replacement goes on one of the item's own stats
+        const replaced = replace ? counts.findIndex((count) => count > 0) : -1;
+        const base = replaced >= 0 ? key - 8 ** replaced : key;
+        open.forEach((value, at) => {
+          if (value <= 0) return;
+          const id = base + 8 ** at;
+          next.set(id, (next.get(id) ?? 0) + (chance * value) / total);
+        });
+      }
+      return next;
+    };
+
+    for (let index = fromIndex + 1; index <= toIndex; index += 1) {
+      const before = lines(index - 1);
+      for (let line = before; line < lines(index); line += 1) {
+        states = roll(states, index, false);
+      }
+      if (before > 0) states = roll(states, index, true);
+    }
+    let miss = 0;
+    for (const chance of states.values()) miss += chance;
+    chances.set(statId, 1 - miss);
+  }
+
+  return chances;
 }
 
 export function getStatLineCount(kind: GearKind, grade: Grade): number {
@@ -437,6 +537,7 @@ export function planOptimalStrategy({
     targetCost: fresh.cost,
     restartGrades: fresh.restartGrades,
     expectedRestarts: fresh.expectedRestarts,
+    salvageLoop: fresh.salvageLoop,
     strategyCheckpoints: buildStrategyCheckpoints({
       checkpoints: fresh.checkpoints,
       baseItemCost,
@@ -474,17 +575,22 @@ export function compareCurrentItem(
       currentStats.has(statId),
     ),
   };
-  // the best plan, which may salvage right away, and the best one that keeps the item for now
-  const plan = planFromState(context, start, fresh.cost.totalCost);
-  const keepPlan = planFromState(context, start, fresh.cost.totalCost, false);
+  // the best plan, which may salvage right away, and the best one that keeps the item for now; with salvage
+  // outpaying the synthesis, restarts would never stop, so the plans don't restart
+  const restartAt = fresh.salvageLoop ? Infinity : fresh.cost.totalCost;
+  const plan = planFromState(context, start, restartAt);
+  const keepPlan = planFromState(context, start, restartAt, false);
   const continueCost = combineAttempts(
     keepPlan,
     fresh.cost,
     context,
     keepPlan.restartChance,
   );
-  const salvageCredit =
-    salvageValue(current.grade, context) + (current.currentItemValue ?? 0);
+  // the item is either salvaged or sold, whichever pays more
+  const salvageCredit = Math.max(
+    salvageValue(current.grade, context),
+    current.currentItemValue ?? 0,
+  );
   const restartCost: CostBreakdown = {
     ...fresh.cost,
     salvageCredit: fresh.cost.salvageCredit + salvageCredit,
@@ -533,6 +639,7 @@ export function compareCurrentItem(
       : undefined,
     subtype: context.subtype,
     checkpoints: plan.checkpoints,
+    salvageLoop: fresh.salvageLoop,
   };
 }
 
@@ -634,6 +741,8 @@ interface FreshRoute {
   checkpoints: RouteCheckpoint[];
   restartGrades: Grade[];
   expectedRestarts: number;
+  // salvage pays more than making the item again, so restarting would never stop; the route never restarts
+  salvageLoop: boolean;
 }
 
 // the same fresh route is asked for again for every current-item comparison
@@ -668,12 +777,22 @@ function solveFreshRoute(
   const start = { grade: "basic" as const, progress: 0, keptStatIds: [] };
   // The plan's cost grows with the fresh cost at a rate equal to its restart chance, piecewise linearly, so
   // Newton steps reach the fixed point in a few iterations.
-  let freshCost = baseItemCost + planFromState(context, start, Infinity).cost;
+  const noRestart = planFromState(context, start, Infinity);
+  let freshCost = baseItemCost + noRestart.cost;
   let plan = planFromState(context, start, freshCost);
+  let salvageLoop = false;
   for (let iteration = 0; iteration < 50; iteration += 1) {
     const slope = Math.min(plan.restartChance, 1 - 1e-9);
     const updated =
       (baseItemCost + plan.cost - slope * freshCost) / (1 - slope);
+    // a fresh start can't cost less than its base item: salvage outpays the synthesis (stones made from free
+    // Activity Tokens, say), and the route would restart forever
+    if (!(updated >= baseItemCost)) {
+      salvageLoop = true;
+      plan = noRestart;
+      freshCost = baseItemCost + noRestart.cost;
+      break;
+    }
     const converged = Math.abs(updated - freshCost) < 1e-6;
     freshCost = updated;
     plan = planFromState(context, start, freshCost);
@@ -706,6 +825,7 @@ function solveFreshRoute(
     checkpoints: plan.checkpoints,
     restartGrades: plan.restartGrades,
     expectedRestarts: attempts - 1,
+    salvageLoop,
   };
 }
 
@@ -830,6 +950,50 @@ function planFromState(
       keptStatIds: [...kept, ...missingIds.slice(0, step)],
     }).successChance;
   };
+  // Serendipity Stones to roll every target from `step` on at `gradeIndex`, taking whichever comes first: a roll
+  // hits any target still missing, so collecting several at one grade costs less than buying them one by one
+  const collectMemo = new Map<string, number>();
+  const collectRolls = (step: number, gradeIndex: number): number => {
+    const remaining = missing.slice(step);
+    if (
+      remaining.some((entry) => entry.unlockIndex > gradeIndex) ||
+      lines(gradeIndex) < kept.length + missing.length
+    ) {
+      return Infinity;
+    }
+    const rolls = (needed: typeof remaining): number => {
+      if (!needed.length) return 0;
+      const key = `${gradeIndex}:${needed.map((entry) => entry.statId).join()}`;
+      const cached = collectMemo.get(key);
+      if (cached != null) return cached;
+      const neededIds = new Set(needed.map((entry) => entry.statId));
+      const { successChance } = estimateExpectedRerolls({
+        kind,
+        grade: gradeOf(gradeIndex),
+        subtype: role,
+        desiredStatIds: [...neededIds],
+        keptStatIds: [
+          ...kept,
+          ...missingIds.filter((statId) => !neededIds.has(statId)),
+        ],
+      });
+      const totalWeight = needed.reduce((sum, entry) => sum + entry.weight, 0);
+      const result =
+        successChance > 0
+          ? 1 / successChance +
+            needed.reduce(
+              (sum, entry) =>
+                sum +
+                (entry.weight / totalWeight) *
+                  rolls(needed.filter((other) => other !== entry)),
+              0,
+            )
+          : Infinity;
+      collectMemo.set(key, result);
+      return result;
+    };
+    return rolls(remaining);
+  };
   const freeRolls = (step: number, gradeIndex: number) => {
     const owned = kept.length + step;
     const before = lines(gradeIndex - 1);
@@ -852,6 +1016,7 @@ function planFromState(
         missChance: 0,
         payRerolls: 0,
         restart: false,
+        collectAll: false,
       };
     } else {
       result = {
@@ -860,6 +1025,7 @@ function planFromState(
         missChance: 1,
         payRerolls: Infinity,
         restart: false,
+        collectAll: false,
       };
       let missChance = 1;
       const firstIndex = Math.max(fromIndex, 0);
@@ -869,9 +1035,16 @@ function planFromState(
           missChance *= Math.pow(1 - chance, freeRolls(step, index));
         }
         if (chance <= 0) continue;
-        const payRerolls = 1 / chance;
         const after = best(step + 1, index).cost;
-        const keepGoing = payRerolls * serendipityPrice + after;
+        const oneByOne = serendipityPrice / chance + after;
+        const allRolls = collectRolls(step, index);
+        const collectAll =
+          allRolls * serendipityPrice + synthCost(index, targetIndex, true) <
+          oneByOne;
+        const payRerolls = collectAll ? allRolls : 1 / chance;
+        const keepGoing = collectAll
+          ? allRolls * serendipityPrice + synthCost(index, targetIndex, true)
+          : oneByOne;
         const startOver =
           salvageNow || index > startIndex
             ? freshCost - salvageValue(gradeOf(index), context)
@@ -887,6 +1060,7 @@ function planFromState(
             missChance,
             payRerolls,
             restart: startOver < keepGoing,
+            collectAll,
           };
         }
       }
@@ -940,7 +1114,9 @@ function planFromState(
     if (decisionIndex > fromIndex)
       addSynthesis(fromIndex, decisionIndex, reach);
     const miss = reach * choice.missChance;
-    const statList = formatStatList(missingIds.slice(step, step + 1));
+    const statList = formatStatList(
+      missingIds.slice(step, choice.collectAll ? undefined : step + 1),
+    );
 
     if (step === 0) {
       plan.rerollNow = decisionIndex === startIndex && !choice.restart;
@@ -975,8 +1151,14 @@ function planFromState(
           expectedRerolls: rerolls / Math.max(reach, 1e-9),
         });
       }
+      if (choice.collectAll) {
+        // the misses buy every remaining target here and finish; only the hits go on to the next step
+        addSynthesis(decisionIndex, targetIndex, miss, true);
+        reach -= miss;
+      }
     }
     fromIndex = decisionIndex;
+    if (reach <= 1e-12) break;
   }
   addSynthesis(fromIndex, targetIndex, reach, true);
 
@@ -989,6 +1171,8 @@ interface PlanChoice {
   missChance: number;
   payRerolls: number;
   restart: boolean;
+  // on a miss, buy every remaining target at this grade (payRerolls covers them all) and finish
+  collectAll: boolean;
 }
 
 function salvageValue(grade: Grade, context: PlanContext): number {

@@ -15,6 +15,7 @@ import {
   estimateExpectedRerolls,
   getAvailableStatIds,
   getBoundRadiantSynthiumStonePrice,
+  getFreeRollChances,
   getMaterialPrice,
   getNextStatLineThreshold,
   getPlannerStats,
@@ -407,7 +408,7 @@ void test("current item with junk lines at legendary restarts", () => {
   assert.ok(strategy.continueCost.expectedRerolls > 0);
   assert.equal(
     strategy.strategyCheckpoints[1]?.label,
-    "Salvage and start over rather than buy Ranged Attack.",
+    "Salvage and start over rather than buy Ranged Attack, Ranged Critical Damage.",
   );
 });
 
@@ -716,4 +717,117 @@ void test("roll odds are weight shares of the stats unlocked at the grade, skipp
     skipped.find((e) => e.statId === "resilience")?.chance,
     50 / (total - 100),
   );
+});
+
+void test("restart at epic credits its salvage", () => {
+  const restartAt = (grade: "grand" | "epic", currentItemValue?: number) =>
+    compareCurrentItem({
+      kind: "costume",
+      targetGrade: "mythic",
+      targetProgress: 100,
+      desiredStatIds: ["ranged-attack"],
+      current: {
+        grade,
+        progress: 0,
+        statIds: ["max-health"],
+        currentItemValue,
+      },
+      prices: livePrices,
+    }).restartCost.totalCost;
+  // epic: 60 Clear, 230 Vivid and 770 Lucid shards
+  const epicSalvage = 60 * 0.242 + 230 * 4.02 + 770 * 7;
+  const grandSalvage = 20 * 0.242;
+
+  assert.ok(
+    Math.abs(
+      restartAt("grand") - restartAt("epic") - (epicSalvage - grandSalvage),
+    ) < 1e-6,
+  );
+  // the item is sold or salvaged, not both
+  assert.ok(
+    Math.abs(
+      restartAt("grand", 10000) - restartAt("epic", 10000) - (10000 - 10000),
+    ) < 1e-6,
+  );
+});
+
+void test("missing targets at the target grade are rolled together", () => {
+  const strategy = compareCurrentStrategy({
+    kind: "costume",
+    role: "ranged",
+    targetGrade: "mythic",
+    targetProgress: 0,
+    desiredStatIds: ["ranged-attack", "ranged-skill-damage"],
+    current: {
+      grade: "mythic",
+      progress: 0,
+      statIds: ["max-health", "move-speed", "magic-defense"],
+    },
+    prices: livePrices,
+  });
+  const oneByOne = ["ranged-attack", "ranged-skill-damage"].reduce(
+    (sum, statId, index, all) =>
+      sum +
+      1 /
+        estimateExpectedRerolls({
+          kind: "costume",
+          grade: "mythic",
+          subtype: "ranged",
+          desiredStatIds: [statId],
+          keptStatIds: all.slice(0, index),
+        }).successChance,
+    0,
+  );
+
+  assert.ok(strategy.continueCost.expectedRerolls < oneByOne * 0.95);
+});
+
+void test("free grade-up roll chances", () => {
+  // grand: the first line is one roll among the eight grand stats, all weight 50
+  const grand = getFreeRollChances({
+    kind: "costume",
+    role: "melee",
+    grade: "grand",
+  });
+  assert.ok(Math.abs((grand.get("physical-defense") ?? 0) - 1 / 8) < 1e-12);
+  assert.equal(grand.get("melee-attack"), 0);
+
+  const mythic = getFreeRollChances({
+    kind: "costume",
+    role: "melee",
+    grade: "mythic",
+  });
+  for (const [statId, chance] of mythic) {
+    assert.ok(chance >= (grand.get(statId) ?? 0) && chance < 1, statId);
+  }
+
+  const fromItem = getFreeRollChances({
+    kind: "costume",
+    role: "melee",
+    grade: "mythic",
+    fromGrade: "legendary",
+    itemStatIds: ["melee-attack"],
+  });
+  assert.equal(fromItem.get("melee-attack"), 1);
+  assert.ok(
+    (fromItem.get("melee-critical-rate") ?? 0) <
+      (mythic.get("melee-critical-rate") ?? 0),
+  );
+});
+
+void test("salvage that outpays free Activity Token stones doesn't loop restarts", () => {
+  const route = planOptimalStrategy({
+    kind: "costume",
+    role: "ranged",
+    targetGrade: "mythic",
+    targetProgress: 100,
+    desiredStatIds: rangedCostumeTarget,
+    prices: livePrices,
+    materialPricing: { boundSynthiumForEpicPlus: true, activityTokenPrice: 0 },
+  });
+
+  assert.equal(route.salvageLoop, true);
+  assert.equal(route.expectedRestarts, 0);
+  assert.ok(Number.isFinite(route.targetCost.totalCost));
+  assert.ok(route.targetCost.totalCost > 0);
 });

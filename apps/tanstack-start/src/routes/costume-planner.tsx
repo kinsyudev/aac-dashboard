@@ -51,6 +51,7 @@ import {
 import {
   compareCurrentStrategy,
   getAvailableStatIds,
+  getFreeRollChances,
   getMaterialPrice,
   getPlannerStats,
   getStatLineCount,
@@ -637,6 +638,7 @@ function CostumePlannerPage() {
             kind={kind}
             role={role}
             defaultGrade={currentEnabled ? currentGrade : targetGrade}
+            itemGrade={currentEnabled ? currentGrade : "basic"}
             itemStats={currentEnabled ? currentStats : []}
             targetStats={targetStats}
             statOptions={statOptions}
@@ -953,6 +955,13 @@ function DecisionDashboard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {!conflict && (comparison ?? route)?.salvageLoop ? (
+          <p className="text-muted-foreground rounded-md border px-3 py-2 text-sm">
+            At these prices salvaging a finished item pays more than making it
+            again (Activity Token stones count as free), so restarting would
+            never stop. The plan below never restarts.
+          </p>
+        ) : null}
         {conflict ? (
           <p className="text-destructive text-sm">
             Selected stats require conflicting subtypes. Remove mixed typed
@@ -1464,6 +1473,7 @@ function StatPicker({
 
 function StatRollOddsCard({
   defaultGrade,
+  itemGrade,
   itemStats,
   kind,
   role,
@@ -1473,6 +1483,8 @@ function StatRollOddsCard({
   kind: GearKind;
   role: GearSubtype;
   defaultGrade: Grade;
+  // the current item's grade, or "basic" when planning from scratch
+  itemGrade: Grade | "basic";
   itemStats: string[];
   targetStats: string[];
   statOptions: PlannerStat[];
@@ -1490,6 +1502,26 @@ function StatRollOddsCard({
     .filter((entry) => missingTargets.has(entry.statId))
     .reduce((sum, entry) => sum + entry.chance, 0);
   const maxChance = odds[0]?.chance ?? 0;
+  // free grade-up rolls from the current item (or a fresh one) up to the selected grade
+  const freeFrom =
+    excludeItemStats && itemStats.length > 0 ? itemGrade : "basic";
+  const showFree =
+    freeFrom === "basic" || GRADES.indexOf(grade) > GRADES.indexOf(freeFrom);
+  const freeItemStats = freeFrom === "basic" ? [] : itemStats;
+  const freeKey = freeItemStats.join();
+  const freeChances = useMemo(
+    () =>
+      showFree
+        ? getFreeRollChances({
+            kind,
+            role,
+            grade,
+            fromGrade: freeFrom,
+            itemStatIds: freeKey ? freeKey.split(",") : [],
+          })
+        : null,
+    [showFree, kind, role, grade, freeFrom, freeKey],
+  );
 
   return (
     <Card>
@@ -1498,7 +1530,14 @@ function StatRollOddsCard({
         <CardDescription>
           Chance of each stat on one roll (grade-up roll or Serendipity Stone)
           on a {formatGrade(grade)} {role} {formatKind(kind).toLowerCase()}. A
-          roll never gives a stat that is already on the item.
+          roll never gives a stat that is already on the item.{" "}
+          {showFree
+            ? `"By ${formatGrade(grade)}" is the chance the stat is on ${
+                freeFrom === "basic"
+                  ? "a fresh item"
+                  : `your item (from ${formatGrade(freeFrom)})`
+              } by the time it reaches ${formatGrade(grade)}, from the free grade-up rolls alone, using each free replacement on another line.`
+            : `Pick a grade above ${formatGrade(freeFrom)} to also see the chance of each stat from the free grade-up rolls on the way.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -1546,13 +1585,30 @@ function StatRollOddsCard({
           </div>
         ) : (
           <div className="flex flex-col gap-1">
+            <div
+              className={cn(
+                "text-muted-foreground grid items-center gap-3 px-2 text-xs",
+                freeChances
+                  ? "grid-cols-[minmax(0,1fr)_4.5rem_4.5rem]"
+                  : "grid-cols-[minmax(0,1fr)_4.5rem]",
+              )}
+            >
+              <span>Stat</span>
+              <span className="text-right">Per roll</span>
+              {freeChances ? (
+                <span className="text-right">By {formatGrade(grade)}</span>
+              ) : null}
+            </div>
             {odds.map((entry) => {
               const isTarget = missingTargets.has(entry.statId);
               return (
                 <div
                   key={entry.statId}
                   className={cn(
-                    "grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 rounded-md px-2 py-1 text-sm",
+                    "grid items-center gap-3 rounded-md px-2 py-1 text-sm",
+                    freeChances
+                      ? "grid-cols-[minmax(0,1fr)_4.5rem_4.5rem]"
+                      : "grid-cols-[minmax(0,1fr)_4.5rem]",
                     isTarget && "bg-primary/10",
                   )}
                 >
@@ -1572,6 +1628,11 @@ function StatRollOddsCard({
                   <span className="text-right tabular-nums">
                     {formatPercent(entry.chance)}
                   </span>
+                  {freeChances ? (
+                    <span className="text-right tabular-nums">
+                      {formatPercent(freeChances.get(entry.statId) ?? 0)}
+                    </span>
+                  ) : null}
                 </div>
               );
             })}
