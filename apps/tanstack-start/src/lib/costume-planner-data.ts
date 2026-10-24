@@ -181,6 +181,11 @@ export const SALVAGE_OUTPUTS: Partial<Record<Grade, PlannerMaterialAmount[]>> =
       { id: "vividSynthiumShard", amount: 230 },
       { id: "lucidSynthiumShard", amount: 530 },
     ],
+    epic: [
+      { id: "clearSynthiumShard", amount: 60 },
+      { id: "vividSynthiumShard", amount: 230 },
+      { id: "lucidSynthiumShard", amount: 770 },
+    ],
     legendary: [
       { id: "clearSynthiumShard", amount: 60 },
       { id: "vividSynthiumShard", amount: 230 },
