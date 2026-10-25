@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  canCraftProcGlowing,
+  GLOWING_ELIGIBLE_CRAFT_IDS,
+} from "./glowing-crafts.ts";
+import {
   computeResealLoopSimulation,
   computeSalvageLoopSimulation,
   getExpectedResealRetries,
+  MANA_SEAL_USE_LABOR,
 } from "./simulator.ts";
 
 const delphinadCuirass = {
@@ -115,4 +120,48 @@ void test("reseal loop with glowing applies the proc only to the initial sealed 
   assert.equal(result.glowingProcChance, 1 / 20);
   assertClose(result.totalManaSealRetryCost, 114);
   assertClose(result.expectedValueSalvage, 262 / (67 / 10));
+});
+
+void test("reseal loop charges the labor to use each mana seal", () => {
+  const result = computeResealLoopSimulation({
+    rngTier: "delphinad",
+    equip: delphinadCuirass,
+    wispPrice: 1,
+    initialSeedCost: 24,
+    initialSealedCraftCost: 100,
+    initialSeedLabor: 5,
+    initialSealedCraftLabor: 10,
+    manaSealCost: 20,
+    manaSealLabor: 2,
+    sealedUpgradeCost: 200,
+    sealedUpgradeLabor: 20,
+  });
+
+  assert.equal(MANA_SEAL_USE_LABOR, 10);
+  assert.equal(result.totalLabor, 5 + 10 + (2 + 10) * 6 + 20);
+});
+
+void test("salvage loop charges a seed deficit when salvage returns fewer wisps", () => {
+  const result = computeSalvageLoopSimulation({
+    rngTier: "delphinad",
+    equip: delphinadCuirass,
+    wispPrice: 2,
+    costPerAttempt: 100,
+    sealedUpgradeCost: 200,
+    laborPerAttempt: 10,
+    sealedUpgradeLabor: 20,
+    seedWispsPerAttempt: 150,
+  });
+
+  // Delphinad chest salvage gives 120 wisps, 30 short of the next 150-wisp seed.
+  assert.equal(result.failSurplusWisps, -30);
+  assert.equal(result.totalFailNetRecovery, -30 * 2 * 6);
+  assert.equal(result.totalCost, 150 * 2 + 700 + 200 + 360);
+});
+
+void test("only workbench sealed crafts below Ayanad can proc Glowing", () => {
+  assert.equal(GLOWING_ELIGIBLE_CRAFT_IDS.size, 168);
+  // Sealed Delphinad Cuirass: workbench recipe vs forge recipe.
+  assert.equal(canCraftProcGlowing(8207), true);
+  assert.equal(canCraftProcGlowing(4794), false);
 });

@@ -32,6 +32,7 @@ import {
 } from "~/component/recipe-breakdown";
 import { StatCard } from "~/component/stat-card";
 import { pickCheapestCraft } from "~/lib/craft-helpers";
+import { canCraftProcGlowing } from "~/lib/glowing-crafts";
 import { resolveDelphinadManaSealName } from "~/lib/mana-seal";
 import { buildMetaTags, buildPageTitle, getItemIconUrl } from "~/lib/metadata";
 import { getDiscountedLabor } from "~/lib/proficiency";
@@ -703,6 +704,15 @@ function SimulatorDetail() {
   ]);
   const mainCraft = selectedRecipe?.selected ?? null;
 
+  // Only the Equipment Designer's Workbench recipe can come out Glowing; forge recipes never do.
+  const glowingProcApplies =
+    glowingProcEnabled &&
+    mainCraft != null &&
+    canCraftProcGlowing(mainCraft.craft.id);
+  const glowingRecipeAvailable = data.crafts.some((entry) =>
+    canCraftProcGlowing(entry.craft.id),
+  );
+
   const simulationData = useMemo(() => {
     if (!equip || !mainCraft || !wisp) return null;
 
@@ -820,7 +830,7 @@ function SimulatorDetail() {
       laborPerAttempt,
       sealedUpgradeLabor,
       seedWispsPerAttempt,
-      glowingProcEnabled,
+      glowingProcEnabled: glowingProcApplies,
     });
 
     let reseal: ResealStrategyData = {
@@ -882,7 +892,7 @@ function SimulatorDetail() {
                 manaSealLabor,
                 sealedUpgradeCost,
                 sealedUpgradeLabor,
-                glowingProcEnabled,
+                glowingProcEnabled: glowingProcApplies,
               })
             : null,
         sealName: manaSealName,
@@ -922,7 +932,7 @@ function SimulatorDetail() {
     priceMap,
     proficiencyMap,
     wisp,
-    glowingProcEnabled,
+    glowingProcApplies,
     ayanadCraft,
     ayanadSubcraftMap,
     upgradePriceMap,
@@ -1045,7 +1055,7 @@ function SimulatorDetail() {
             ),
           }
         : null,
-      glowingProcEnabled,
+      glowingProcEnabled: glowingProcApplies,
       salvage: simulationData?.salvage ?? null,
       reseal: {
         result: reseal ?? null,
@@ -1241,10 +1251,18 @@ function SimulatorDetail() {
           <span className="flex min-w-0 flex-col gap-1">
             <span className="text-sm font-medium">Glowing proc</span>
             <span className="text-muted-foreground text-xs">
-              Adds an independent 1/20 house-crafting chance to make a sealed
-              Delphinad craft upgradable. Shoplist exports keep the existing
-              full attempt counts.
+              Adds an independent 1/20 chance that the sealed Delphinad craft
+              comes out Glowing (any variant upgradable). Only the Equipment
+              Designer&apos;s Workbench recipe can proc it. Shoplist exports
+              keep the existing full attempt counts.
             </span>
+            {glowingProcEnabled && !glowingProcApplies ? (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                {glowingRecipeAvailable
+                  ? "The selected recipe can't proc Glowing, so it is not applied. Pick the workbench recipe below to use it."
+                  : "No recipe for this item can proc Glowing, so it is not applied."}
+              </span>
+            ) : null}
           </span>
         </label>
       ) : null}

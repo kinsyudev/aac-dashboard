@@ -79,7 +79,7 @@ export interface SupportedRegradeItem extends RegradeItem {
 }
 
 export const RECRAFT_START_GRADE = 2;
-export const MANA_SEAL_USE_LABOR = 10;
+export { MANA_SEAL_USE_LABOR } from "./simulator.ts";
 const REGRADE_FEE_K = 0.0041636529;
 const REGRADE_FEE_BASE_COPPER = 160000;
 const COPPER_PER_GOLD = 10000;
@@ -197,6 +197,8 @@ export interface ExpectedRegradeResult {
   revenueBreakdown: ExpectedRevenueBreakdownEntry[];
   silverPerLabor: number;
   selectedSteps: RegradeActionChoice[];
+  /** Sale grades below the target where the optimal strategy sells instead of regrading on. */
+  stopGrades: number[];
   skippedReasons: string[];
 }
 
@@ -387,19 +389,6 @@ export function getEffectiveSelectedRegradeTarget(
   );
 
   return best?.targetGrade ?? null;
-}
-
-export function getReachableRegradeResults<T extends { targetGrade: number }>(
-  results: T[],
-  saleValuesByGrade: GradeSaleValueMap,
-): T[] {
-  const saleGrades = [...saleValuesByGrade.keys()].sort((a, b) => a - b);
-  return results.filter((result) => {
-    const blockingSaleGrade = saleGrades.find(
-      (grade) => grade < result.targetGrade,
-    );
-    return blockingSaleGrade == null;
-  });
 }
 
 export interface MagnificentVariantParts {
@@ -705,7 +694,9 @@ function mergeScaledTapProjectionValue(
 }
 
 interface SolverAction {
-  step: RegradeStep;
+  /** null for the "sell here" action at an optional stop grade. */
+  step: RegradeStep | null;
+  fromGrade: number;
   attemptCostGold: number;
   attemptLabor: number;
 }
@@ -941,6 +932,57 @@ export function getMagnificentSealedUpgradeNames(
   };
 }
 
+/**
+ * The one Magnificent variant per piece that has a mana-wisp recipe and that the Sealed Epherium craft
+ * consumes (client DB, 2026-10-19). The other variants only come from unsealing, so they can't be
+ * recrafted directly and can't be upgraded without a reseal.
+ */
+export const MAGNIFICENT_UPGRADE_VARIANT_BY_PIECE: Readonly<
+  Record<string, string>
+> = {
+  Axe: "Typhoon",
+  Belt: "Typhoon",
+  Boots: "Typhoon",
+  Bow: "Volcano",
+  Breeches: "Typhoon",
+  Cap: "Typhoon",
+  Club: "Autumn",
+  Cuirass: "Quake",
+  Dagger: "Mountain",
+  Earring: "Earth",
+  Fists: "Typhoon",
+  Flute: "Lake",
+  Gauntlets: "Quake",
+  Gloves: "Ocean",
+  Greataxe: "Desert",
+  Greatclub: "Sunset",
+  Greatsword: "Desert",
+  Greaves: "Quake",
+  Guards: "Typhoon",
+  Helm: "Quake",
+  Hood: "Ocean",
+  Jerkin: "Typhoon",
+  Katana: "Sky",
+  Longspear: "Squall",
+  Lute: "Meadow",
+  Necklace: "Earth",
+  Nodachi: "Lightning",
+  Pants: "Ocean",
+  Ring: "Earth",
+  Sabatons: "Quake",
+  Sash: "Ocean",
+  Scepter: "Meadow",
+  Shield: "Quake",
+  Shirt: "Ocean",
+  Shoes: "Ocean",
+  Shortspear: "Winter",
+  Sleeves: "Ocean",
+  Staff: "Ocean",
+  Sword: "Summer",
+  Tassets: "Quake",
+  Vambraces: "Quake",
+};
+
 export function getMagnificentGearTypes(
   data: RegradeData = regradeData,
 ): MagnificentGearType[] {
@@ -960,9 +1002,11 @@ export function getMagnificentGearTypes(
       const sortedItems = [...items].sort((a, b) =>
         a.name.localeCompare(b.name),
       );
+      const upgradeVariant = MAGNIFICENT_UPGRADE_VARIANT_BY_PIECE[piece];
       const representativeItem =
-        sortedItems.find((item) => item.name.includes("Squall ")) ??
-        sortedItems[0];
+        sortedItems.find(
+          (item) => item.name === `Magnificent ${upgradeVariant} ${piece}`,
+        ) ?? sortedItems[0];
 
       if (!representativeItem) return null;
 
@@ -1120,8 +1164,14 @@ export function solveExpectedRegradeToTarget(
   const data = input.data ?? regradeData;
   const startGrade = input.startGrade ?? RECRAFT_START_GRADE;
   const skippedReasons: string[] = [];
+  // Landing on the target (or above) always ends the run. A priced sale grade below the target is an
+  // optional stop: the solver sells there only when that beats regrading on (optimal stopping).
   const isTerminalGrade = (grade: number): boolean =>
-    grade >= input.targetGrade || input.saleValuesByGrade.has(grade);
+    grade >= input.targetGrade;
+  const isStopGrade = (grade: number): boolean =>
+    grade >= startGrade &&
+    grade < input.targetGrade &&
+    input.saleValuesByGrade.has(grade);
   const unavailableResult = (reason: string): ExpectedRegradeResult => ({
     item: input.item,
     targetGrade: input.targetGrade,
@@ -1133,6 +1183,7 @@ export function solveExpectedRegradeToTarget(
     revenueBreakdown: [],
     silverPerLabor: 0,
     selectedSteps: [],
+    stopGrades: [],
     skippedReasons: [...new Set([...skippedReasons, reason])],
   });
 
@@ -1164,6 +1215,7 @@ export function solveExpectedRegradeToTarget(
           ? ((saleValueGold - input.upgradeCostGold) * 100) / input.upgradeLabor
           : 0,
       selectedSteps: [],
+      stopGrades: [],
       skippedReasons: [],
     };
   }
@@ -1171,11 +1223,11 @@ export function solveExpectedRegradeToTarget(
   const stateGrades = Array.from(
     { length: Math.max(0, input.targetGrade - startGrade) },
     (_, index) => startGrade + index,
-  ).filter((grade) => !isTerminalGrade(grade));
+  );
   const terminalGrades = Array.from(
     { length: input.item.maxGrade + 1 },
     (_, grade) => grade,
-  ).filter(isTerminalGrade);
+  ).filter((grade) => isTerminalGrade(grade) || isStopGrade(grade));
   const stateIndexByGrade = new Map(
     stateGrades.map((grade, index) => [grade, index] as const),
   );
@@ -1193,11 +1245,6 @@ export function solveExpectedRegradeToTarget(
 
   const actionsByGrade = new Map<number, SolverAction[]>();
   for (const grade of stateGrades) {
-    if (isTerminalGrade(grade)) {
-      actionsByGrade.set(grade, []);
-      continue;
-    }
-
     const scrollModes = [false, true];
     const charmIds = [
       null,
@@ -1205,7 +1252,10 @@ export function solveExpectedRegradeToTarget(
         obtainableCharmIds.has(charmId),
       ),
     ] as (number | null)[];
-    const actions: SolverAction[] = [];
+    // Selling comes first so the starting policy always terminates.
+    const actions: SolverAction[] = isStopGrade(grade)
+      ? [{ step: null, fromGrade: grade, attemptCostGold: 0, attemptLabor: 0 }]
+      : [];
 
     for (const resplendent of scrollModes) {
       for (const charmId of charmIds) {
@@ -1232,6 +1282,7 @@ export function solveExpectedRegradeToTarget(
 
         actions.push({
           step,
+          fromGrade: grade,
           attemptCostGold: step.feeGold + scrollPrice + charmPrice,
           attemptLabor:
             (input.consumableLabor?.get(step.scroll.id) ?? 0) +
@@ -1252,10 +1303,22 @@ export function solveExpectedRegradeToTarget(
     probability: number;
     extraCostGold: number;
     extraLabor: number;
+    terminal: boolean;
   }
 
   const getTransitions = (action: SolverAction): SolverTransition[] => {
     const { step } = action;
+    if (!step) {
+      return [
+        {
+          grade: action.fromGrade,
+          probability: 1,
+          extraCostGold: 0,
+          extraLabor: 0,
+          terminal: true,
+        },
+      ];
+    }
     return [
       {
         grade: step.fromGrade,
@@ -1287,7 +1350,12 @@ export function solveExpectedRegradeToTarget(
         extraCostGold: 0,
         extraLabor: 0,
       },
-    ].filter((transition) => transition.probability > 0);
+    ]
+      .filter((transition) => transition.probability > 0)
+      .map((transition) => ({
+        ...transition,
+        terminal: isTerminalGrade(transition.grade),
+      }));
   };
 
   const evaluatePolicy = (
@@ -1316,7 +1384,7 @@ export function solveExpectedRegradeToTarget(
           transition.probability * transition.extraCostGold;
         immediateLabor[stateIndex] +=
           transition.probability * transition.extraLabor;
-        if (isTerminalGrade(transition.grade)) {
+        if (transition.terminal) {
           const terminalIndex = terminalIndexByGrade.get(transition.grade);
           const terminalRow = terminalTransitions[stateIndex];
           if (terminalIndex == null || !terminalRow) return null;
@@ -1350,11 +1418,11 @@ export function solveExpectedRegradeToTarget(
     );
     const factorization = factorLinearSystem(matrix);
     if (!factorization) return null;
-    const rightHandSides = stateGrades.map((_, stateIndex) => [
+    const rightHandSides = stateGrades.map((grade, stateIndex) => [
       immediateCosts[stateIndex] ?? 0,
       immediateRevenue[stateIndex] ?? 0,
       immediateLabor[stateIndex] ?? 0,
-      1,
+      policy.get(grade)?.step ? 1 : 0,
       ...(terminalTransitions[stateIndex] ?? []),
     ]);
     const solved = solveFactoredLinearSystem(factorization, rightHandSides);
@@ -1402,7 +1470,7 @@ export function solveExpectedRegradeToTarget(
           action.attemptCostGold *
           (landingProbabilities[stateIndex]?.[terminalIndex] ?? 0);
         for (const transition of getTransitions(action)) {
-          if (isTerminalGrade(transition.grade)) {
+          if (transition.terminal) {
             if (transition.grade === terminalGrade) {
               contribution +=
                 transition.probability *
@@ -1490,7 +1558,7 @@ export function solveExpectedRegradeToTarget(
     let score = -action.attemptCostGold;
     for (const transition of getTransitions(action)) {
       score -= transition.probability * transition.extraCostGold;
-      if (isTerminalGrade(transition.grade)) {
+      if (transition.terminal) {
         score +=
           transition.probability *
           (getSaleValueForLandingGrade(
@@ -1581,10 +1649,9 @@ export function solveExpectedRegradeToTarget(
   const seenStepGrades = new Set<number>();
   let stepGrade = startGrade;
   while (stepGrade < input.targetGrade && !seenStepGrades.has(stepGrade)) {
-    if (input.saleValuesByGrade.has(stepGrade)) break;
     seenStepGrades.add(stepGrade);
     const action = selectedActions.get(stepGrade);
-    if (!action?.step.scroll) break;
+    if (!action?.step?.scroll) break;
     const solvedAtGradeIndex = stateIndexByGrade.get(stepGrade);
     if (solvedAtGradeIndex == null) break;
     steps.push({
@@ -1603,6 +1670,9 @@ export function solveExpectedRegradeToTarget(
     stepGrade = action.step.normalToGrade;
   }
 
+  const stopGrades = stateGrades.filter(
+    (grade) => selectedActions.get(grade)?.step == null,
+  );
   const expectedCostGold = evaluation.costs[startIndex] ?? 0;
   const expectedRevenueGold = evaluation.revenues[startIndex] ?? 0;
   const expectedProfitGold = expectedRevenueGold - expectedCostGold;
@@ -1646,6 +1716,7 @@ export function solveExpectedRegradeToTarget(
         ? (expectedProfitGold * 100) / expectedLabor
         : 0,
     selectedSteps: steps,
+    stopGrades,
     skippedReasons: [...new Set(skippedReasons)],
   };
 }

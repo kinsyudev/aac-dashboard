@@ -11,6 +11,8 @@ import {
 export type EquipCategory = "armor" | "weapon" | "jewelry";
 
 export const GLOWING_PROC_RATE = 1 / 20;
+/** Labor to use one mana seal on a sealed item (client DB skill 9000071, consume_lp). */
+export const MANA_SEAL_USE_LABOR = 10;
 
 export interface DetectedEquip {
   tier: Tier;
@@ -158,7 +160,7 @@ export interface SalvageLoopSimulationResult extends BaseSimulationResult {
   failRecoveryPerAttempt: number;
   /** Total gross gold value recovered from all expected failures. */
   totalFailRecovery: number;
-  /** Surplus wisps after recreating the next attempt's base item. */
+  /** Wisps left after recreating the next attempt's base item (negative = wisps to buy). */
   failSurplusWisps: number;
   /** Net gold value kept per failed attempt after reseeding. */
   failNetRecoveryPerAttempt: number;
@@ -181,7 +183,7 @@ export interface ResealLoopSimulationInput extends BaseSimulationInput {
   initialSealedCraftLabor: number;
   /** Cost of one Delphinad mana seal consumed per failed retry. */
   manaSealCost: number;
-  /** Labor to obtain one Delphinad mana seal when crafted. */
+  /** Labor to obtain one Delphinad mana seal when crafted (using it adds MANA_SEAL_USE_LABOR). */
   manaSealLabor: number;
   /** Material cost to go from the successful revealed Delphinad to Ayanad. */
   sealedUpgradeCost: number;
@@ -288,10 +290,8 @@ export function computeSalvageLoopSimulation(
   );
   const failRecoveryPerAttempt = failSalvageWisps * input.wispPrice;
   const totalFailRecovery = failRecoveryPerAttempt * failedAttempts;
-  const failSurplusWisps = Math.max(
-    0,
-    failSalvageWisps - input.seedWispsPerAttempt,
-  );
+  // A salvage that yields fewer wisps than the next seed needs leaves a deficit to buy.
+  const failSurplusWisps = failSalvageWisps - input.seedWispsPerAttempt;
   const failNetRecoveryPerAttempt = failSurplusWisps * input.wispPrice;
   const totalFailNetRecovery = failNetRecoveryPerAttempt * failedAttempts;
   const initialSeedCost = input.seedWispsPerAttempt * input.wispPrice;
@@ -343,7 +343,7 @@ export function computeResealLoopSimulation(
   const totalLabor =
     input.initialSeedLabor +
     input.initialSealedCraftLabor +
-    input.manaSealLabor * failedRetries +
+    (input.manaSealLabor + MANA_SEAL_USE_LABOR) * failedRetries +
     input.sealedUpgradeLabor;
 
   return {

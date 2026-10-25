@@ -15,7 +15,6 @@ import {
   getMagnificentSealedUpgradeNames,
   getMagnificentVariantNames,
   getObsidianT3Name,
-  getReachableRegradeResults,
   getRegradeFeeGold,
   getRegradeStep,
   getRegradeTapProjection,
@@ -24,6 +23,7 @@ import {
   getUpgradeFamilyForItem,
   isSupportedMagnificentBase,
   isSupportedObsidianT1Base,
+  MAGNIFICENT_UPGRADE_VARIANT_BY_PIECE,
   parseMagnificentVariant,
   parseRegradeSearch,
   regradeData,
@@ -470,7 +470,7 @@ void test("solver reports expected regrade attempts", () => {
   assert.ok(result.expectedAttempts > 0);
 });
 
-void test("solver stops at selected sale tiers before higher targets", () => {
+void test("solver treats lower sale tiers as optional stops", () => {
   const item = {
     id: 34615,
     name: "Obsidian Bow",
@@ -481,27 +481,43 @@ void test("solver stops at selected sale tiers before higher targets", () => {
     level: 46,
     slot: 13,
   };
-  const result = solveExpectedRegradeToTarget({
-    item,
-    targetGrade: 10,
-    baseRecraftCostGold: 100,
-    baseRecraftLabor: 50,
-    upgradeCostGold: 500,
-    upgradeLabor: 100,
-    saleValuesByGrade: new Map([
-      [9, 10000],
-      [10, 50000],
-    ]),
-    consumablePrices: new Map([
-      [28296, 100],
-      [28298, 10],
-      [42084, 200],
-    ]),
-    candidateCharmIds: [42084],
-  });
+  const solve = (saleValuesByGrade: Map<number, number>, targetGrade = 10) =>
+    solveExpectedRegradeToTarget({
+      item,
+      targetGrade,
+      baseRecraftCostGold: 100,
+      baseRecraftLabor: 50,
+      upgradeCostGold: 500,
+      upgradeLabor: 100,
+      saleValuesByGrade,
+      consumablePrices: new Map([
+        [28296, 100],
+        [28298, 10],
+        [42084, 200],
+      ]),
+      candidateCharmIds: [42084],
+    });
 
-  assert.ok(result.selectedSteps.length > 0);
-  assert.ok(!result.selectedSteps.some((step) => step.fromGrade >= 9));
+  // Pushing past Epic is barely worth more than selling there: stop at Epic.
+  const stopEarly = solve(
+    new Map([
+      [9, 10000],
+      [10, 10001],
+    ]),
+  );
+  assert.deepEqual(stopEarly.stopGrades, [9]);
+  assert.ok(!stopEarly.selectedSteps.some((step) => step.fromGrade >= 9));
+
+  // Legendary is worth far more: keep regrading through the Epic sale tier.
+  const sale = new Map([
+    [9, 10000],
+    [10, 5_000_000],
+  ]);
+  const pushOn = solve(sale);
+  assert.deepEqual(pushOn.stopGrades, []);
+  assert.ok(pushOn.selectedSteps.some((step) => step.fromGrade === 9));
+  // A higher target can still sell at a lower tier, so it is never worse.
+  assert.ok(pushOn.expectedProfitGold >= solve(sale, 9).expectedProfitGold);
 });
 
 void test("solver includes crafted consumable labor in regrade attempts", () => {
@@ -619,6 +635,7 @@ void test("effective selected target follows best EV when no target is pinned", 
         revenueBreakdown: [],
         silverPerLabor: -42,
         selectedSteps: [],
+        stopGrades: [],
         skippedReasons: [],
       },
       {
@@ -632,6 +649,7 @@ void test("effective selected target follows best EV when no target is pinned", 
         revenueBreakdown: [],
         silverPerLabor: 124,
         selectedSteps: [],
+        stopGrades: [],
         skippedReasons: [],
       },
     ],
@@ -656,6 +674,7 @@ void test("effective selected target keeps an explicitly pinned target", () => {
         revenueBreakdown: [],
         silverPerLabor: -42,
         selectedSteps: [],
+        stopGrades: [],
         skippedReasons: [],
       },
       {
@@ -669,6 +688,7 @@ void test("effective selected target keeps an explicitly pinned target", () => {
         revenueBreakdown: [],
         silverPerLabor: 124,
         selectedSteps: [],
+        stopGrades: [],
         skippedReasons: [],
       },
     ],
@@ -691,6 +711,7 @@ void test("effective selected target can prefer sale-valued targets by default",
     revenueBreakdown: [],
     silverPerLabor: -68,
     selectedSteps: [],
+    stopGrades: [],
     skippedReasons: [],
   };
   const saleResult = {
@@ -704,6 +725,7 @@ void test("effective selected target can prefer sale-valued targets by default",
     revenueBreakdown: [],
     silverPerLabor: -41,
     selectedSteps: [],
+    stopGrades: [],
     skippedReasons: [],
   };
 
@@ -712,30 +734,6 @@ void test("effective selected target can prefer sale-valued targets by default",
       saleResult,
     ]),
     9,
-  );
-});
-
-void test("reachable regrade results hide targets blocked by earlier sale tiers", () => {
-  const item = getFirstRegradeItem();
-  const results = [8, 9, 10, 11].map((targetGrade) => ({
-    item,
-    targetGrade,
-    expectedProfitGold: targetGrade * 100,
-    expectedCostGold: 0,
-    expectedRevenueGold: 0,
-    expectedLabor: 0,
-    expectedAttempts: 0,
-    revenueBreakdown: [],
-    silverPerLabor: 0,
-    selectedSteps: [],
-    skippedReasons: [],
-  }));
-
-  assert.deepEqual(
-    getReachableRegradeResults(results, new Map([[9, 10000]])).map(
-      (result) => result.targetGrade,
-    ),
-    [8, 9],
   );
 });
 
@@ -895,6 +893,31 @@ void test("Magnificent gear types collapse variants by piece", () => {
   assert.ok(
     !types.some((type) => type.displayName === "Magnificent Earth Longspear"),
   );
+});
+
+void test("Magnificent gear types use the wisp-craftable upgrade variant", () => {
+  const types = getMagnificentGearTypes();
+  const byPiece = new Map(types.map((type) => [type.piece, type]));
+
+  assert.equal(
+    byPiece.get("Cuirass")?.representativeItem.name,
+    "Magnificent Quake Cuirass",
+  );
+  assert.equal(
+    byPiece.get("Sword")?.representativeItem.name,
+    "Magnificent Summer Sword",
+  );
+  assert.equal(
+    byPiece.get("Bow")?.representativeItem.name,
+    "Magnificent Volcano Bow",
+  );
+  for (const type of types) {
+    assert.equal(
+      type.representativeItem.name,
+      `Magnificent ${MAGNIFICENT_UPGRADE_VARIANT_BY_PIECE[type.piece]} ${type.piece}`,
+      type.piece,
+    );
+  }
 });
 
 void test("Magnificent sealed upgrade names are derived from gear type", () => {
