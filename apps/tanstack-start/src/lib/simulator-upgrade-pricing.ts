@@ -228,14 +228,29 @@ export function pickCheapestCraftForItem<T extends CraftEntryLike>(
   );
 }
 
+export interface RecommendedModeOptions {
+  /**
+   * Gold one point of labor is worth. 0 picks the cheapest gold option; a positive value only crafts a
+   * material when the gold saved beats the labor spent at this rate (used to maximize silver per labor).
+   */
+  laborValueGold?: number;
+  /** Labor for one run of a craft, e.g. after proficiency discounts. Defaults to the listed labor. */
+  getCraftLabor?: (craft: CraftInfo) => number;
+}
+
 export function buildRecommendedModes<T extends CraftEntryLike>(
   materials: { item: { id: number; name: string } }[],
   subcraftMap: SubcraftMap<T>,
   priceMap: PriceMap,
   overrideMap: OverrideMap,
+  options: RecommendedModeOptions = {},
 ): Record<number, CraftMode> {
+  const laborValueGold = Math.max(0, options.laborValueGold ?? 0);
+  const getCraftLabor = options.getCraftLabor ?? ((craft) => craft.labor);
   const acc: Record<number, CraftMode> = {};
   const visited = new Set<number>();
+  // Labor of one crafted unit under the modes decided so far (children are decided first).
+  const unitLabor = new Map<number, number>();
 
   const visit = (item: { id: number; name: string }) => {
     if (visited.has(item.id)) return;
@@ -266,13 +281,45 @@ export function buildRecommendedModes<T extends CraftEntryLike>(
     }
 
     const buyUnit = getItemPrice(item.id, priceMap, overrideMap);
-    const craftUnit = deepCraftCost(
+    if (laborValueGold === 0) {
+      const craftUnit = deepCraftCost(
+        item.id,
+        subcraftMap,
+        priceMap,
+        overrideMap,
+      );
+      acc[item.id] = buyUnit > 0 && craftUnit < buyUnit ? "craft" : "buy";
+      return;
+    }
+
+    const produced =
+      entry.products.find((product) => product.item.id === item.id)?.amount ??
+      1;
+    const craftLabor =
+      (getCraftLabor(entry.craft) +
+        entry.materials.reduce(
+          (sum, { item: material, amount }) =>
+            sum +
+            (acc[material.id] === "craft"
+              ? (unitLabor.get(material.id) ?? 0)
+              : 0) *
+              amount,
+          0,
+        )) /
+      produced;
+    const craftUnit = getCraftEntryUnitCost(
+      entry,
       item.id,
       subcraftMap,
       priceMap,
       overrideMap,
+      acc,
     );
-    acc[item.id] = buyUnit > 0 && craftUnit < buyUnit ? "craft" : "buy";
+    unitLabor.set(item.id, craftLabor);
+    acc[item.id] =
+      buyUnit > 0 && craftUnit + laborValueGold * craftLabor < buyUnit
+        ? "craft"
+        : "buy";
   };
 
   for (const mat of materials) {

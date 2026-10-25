@@ -231,6 +231,8 @@ function serializeCraftEntry(entry: CraftEntry | null) {
   };
 }
 
+const MAX_LABOR_VALUE_STEPS = 10;
+
 function isManaWisp(name: string): boolean {
   return name.toLowerCase().includes("mana wisp");
 }
@@ -641,6 +643,16 @@ function SimulatorDetail() {
     overrideMap,
   ]);
 
+  // Gold per labor that buy-vs-craft picks trade against. It follows the best strategy's own silver per
+  // labor (Dinkelbach iteration, settled over a few renders), so the defaults maximize silver per labor.
+  const [laborValue, setLaborValue] = useState({
+    itemId: data.item.id,
+    gold: 0,
+    steps: 0,
+  });
+  const laborValueGold =
+    laborValue.itemId === data.item.id ? laborValue.gold : 0;
+
   const recommendedModes = useMemo(() => {
     if (!preferredMainCraft || !equip) return {};
     const materials = [
@@ -660,14 +672,20 @@ function SimulatorDetail() {
       ...manaSealPriceMap,
       ...ayanadPriceMap,
     ]);
-    return buildRecommendedModes(materials, subcraftMap, prices, overrideMap);
+    return buildRecommendedModes(materials, subcraftMap, prices, overrideMap, {
+      laborValueGold,
+      getCraftLabor: (craft) =>
+        getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap),
+    });
   }, [
     ayanadCraft,
     ayanadCraftData,
     ayanadPriceMap,
     data,
     equip,
+    laborValueGold,
     preferredMainCraft,
+    proficiencyMap,
     manaSealCraft,
     manaSealCraftQuery.data,
     manaSealPriceMap,
@@ -942,6 +960,29 @@ function SimulatorDetail() {
     manaSealName,
     manaSealPriceMap,
   ]);
+
+  const bestSilverPerLabor = simulationData
+    ? Math.max(
+        simulationData.salvage.silverPerLaborSalvage,
+        simulationData.reseal.result?.silverPerLaborSalvage ??
+          Number.NEGATIVE_INFINITY,
+      )
+    : 0;
+  const nextLaborValueGold = Math.max(0, bestSilverPerLabor / 100);
+  const laborValueSettled =
+    Math.abs(nextLaborValueGold - laborValueGold) <=
+    1e-4 * Math.max(1, nextLaborValueGold);
+  if (laborValue.itemId !== data.item.id) {
+    setLaborValue({ itemId: data.item.id, gold: 0, steps: 0 });
+  } else if (!laborValueSettled && laborValue.steps < MAX_LABOR_VALUE_STEPS) {
+    setLaborValue({
+      itemId: data.item.id,
+      gold: nextLaborValueGold,
+      steps: laborValue.steps + 1,
+    });
+  } else if (laborValueSettled && laborValue.steps > 0) {
+    setLaborValue({ ...laborValue, steps: 0 });
+  }
 
   if (!simulatorTarget) {
     return (
@@ -1701,9 +1742,11 @@ function resultVariant(value: number) {
 function StrategySummaryCard({
   title,
   result,
+  best = false,
 }: {
   title: string;
   result: SimulationResult;
+  best?: boolean;
 }) {
   const hasInitialOnlyGlowingProc =
     result.strategy === "reseal" && result.glowingProcChance > 0;
@@ -1714,9 +1757,16 @@ function StrategySummaryCard({
       : `1/${result.variants} (${pct(result.successRate)})`;
 
   return (
-    <div className="rounded-md border p-4">
+    <div className={`rounded-md border p-4 ${best ? "border-primary" : ""}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="font-semibold">{title}</h3>
+        <h3 className="font-semibold">
+          {title}
+          {best ? (
+            <span className="text-primary ml-2 text-xs font-medium">
+              Best silver/labor
+            </span>
+          ) : null}
+        </h3>
         <span className="text-muted-foreground text-sm">{successLabel}</span>
       </div>
       {result.glowingProcChance > 0 ? (
@@ -1823,12 +1873,31 @@ function SimulationResults({
   reseal: ResealStrategyData;
   sealedUpgradeCostDetail: string | null;
 }) {
+  const bestStrategy =
+    reseal.result &&
+    reseal.result.silverPerLaborSalvage > salvage.silverPerLaborSalvage
+      ? "reseal"
+      : "salvage";
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-muted-foreground text-sm">
+        Strategies are ranked by silver per labor, and the default buy or craft
+        choice for each material is the one that maximizes it: a material is
+        crafted only when the gold saved beats the labor at the best
+        strategy&apos;s own silver per labor.
+      </p>
       <div className="grid gap-4 lg:grid-cols-2">
-        <StrategySummaryCard title="Salvage Loop" result={salvage} />
+        <StrategySummaryCard
+          title="Salvage Loop"
+          result={salvage}
+          best={bestStrategy === "salvage"}
+        />
         {reseal.result ? (
-          <StrategySummaryCard title="Reseal Loop" result={reseal.result} />
+          <StrategySummaryCard
+            title="Reseal Loop"
+            result={reseal.result}
+            best={bestStrategy === "reseal"}
+          />
         ) : (
           <div className="rounded-md border border-dashed p-4">
             <div className="mb-2 flex items-center justify-between gap-3">

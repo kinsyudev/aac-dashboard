@@ -105,3 +105,44 @@ void test("Ayanad craft costing buys conversion scrolls even when craft mode is 
 
   assert.equal(cost, 100);
 });
+
+void test("recommended modes only craft when the gold saved beats the labor value", () => {
+  const ingot = { item: { id: 1, name: "Sunridge Ingot" } };
+  const ore = { item: { id: 2, name: "Ore" } };
+  const subcraftMap = {
+    [ingot.item.id]: [
+      {
+        craft: {
+          id: 10,
+          name: "Sunridge Ingot",
+          labor: 100,
+          proficiency: null,
+        },
+        materials: [{ ...ore, amount: 1 }],
+        products: [{ item: { id: ingot.item.id }, amount: 1 }],
+      },
+    ],
+  };
+  const prices = new Map([
+    [ingot.item.id, { avg24h: "100", avg7d: null, avg30d: null }],
+    [ore.item.id, { avg24h: "60", avg7d: null, avg30d: null }],
+  ]);
+
+  // Crafting saves 40g for 100 labor: worth it at 0.3g per labor, not at 0.5g.
+  assert.equal(
+    buildRecommendedModes([ingot], subcraftMap, prices, new Map())[1],
+    "craft",
+  );
+  assert.equal(
+    buildRecommendedModes([ingot], subcraftMap, prices, new Map(), {
+      laborValueGold: 0.3,
+    })[1],
+    "craft",
+  );
+  assert.equal(
+    buildRecommendedModes([ingot], subcraftMap, prices, new Map(), {
+      laborValueGold: 0.5,
+    })[1],
+    "buy",
+  );
+});

@@ -1,5 +1,5 @@
 import type { inferProcedureOutput } from "@trpc/server";
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
@@ -280,6 +280,10 @@ function SimulatorDashboardCard({
     modes,
     overrideMap,
   ]);
+  // Buy-vs-craft defaults trade gold against labor at the card's own silver per labor (see the detail page).
+  const [laborValue, setLaborValue] = useState({ gold: 0, steps: 0 });
+  const laborValueGold = laborValue.gold;
+
   const recommendedModes = useMemo(() => {
     if (!data || !preferredMainCraft || !equip) return {};
     const materials = [
@@ -299,13 +303,19 @@ function SimulatorDashboardCard({
       ...manaSealPriceMap,
       ...ayanadPriceMap,
     ]);
-    return buildRecommendedModes(materials, subcraftMap, prices, overrideMap);
+    return buildRecommendedModes(materials, subcraftMap, prices, overrideMap, {
+      laborValueGold,
+      getCraftLabor: (craft) =>
+        getDiscountedLabor(craft.labor, craft.proficiency, proficiencyMap),
+    });
   }, [
     ayanadCraft,
     ayanadCraftData,
     ayanadPriceMap,
     data,
     equip,
+    laborValueGold,
+    proficiencyMap,
     manaSealCraft,
     manaSealCraftQuery.data,
     manaSealPriceMap,
@@ -498,8 +508,9 @@ function SimulatorDashboardCard({
     }
 
     const result =
-      // Both strategies end with one finished item, so compare profit per item, not per attempt.
-      reseal && reseal.profitSalvage > salvage.profitSalvage ? reseal : salvage;
+      reseal && reseal.silverPerLaborSalvage > salvage.silverPerLaborSalvage
+        ? reseal
+        : salvage;
     const delphinadCost =
       result.strategy === "reseal"
         ? result.initialSealedCraftCost
@@ -527,6 +538,19 @@ function SimulatorDashboardCard({
     upgradePriceMap,
     wisp,
   ]);
+
+  const nextLaborValueGold = Math.max(
+    0,
+    (card?.result.silverPerLaborSalvage ?? 0) / 100,
+  );
+  const laborValueSettled =
+    Math.abs(nextLaborValueGold - laborValueGold) <=
+    1e-4 * Math.max(1, nextLaborValueGold);
+  if (!laborValueSettled && laborValue.steps < MAX_LABOR_VALUE_STEPS) {
+    setLaborValue({ gold: nextLaborValueGold, steps: laborValue.steps + 1 });
+  } else if (laborValueSettled && laborValue.steps > 0) {
+    setLaborValue({ ...laborValue, steps: 0 });
+  }
 
   return (
     <Link
@@ -568,6 +592,9 @@ function SimulatorDashboardCard({
             label="Silver per labor"
             value={card.result.silverPerLaborSalvage.toFixed(2)}
             variant={resultVariant(card.result.silverPerLaborSalvage)}
+            detail={
+              card.result.strategy === "reseal" ? "Reseal loop" : "Salvage loop"
+            }
           />
         </div>
       ) : (
@@ -578,6 +605,8 @@ function SimulatorDashboardCard({
     </Link>
   );
 }
+
+const MAX_LABOR_VALUE_STEPS = 10;
 
 function findWispInChain(
   data: ForItemOutput,
